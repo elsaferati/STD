@@ -1,4 +1,13 @@
 output/
 __pycache__/
-*.pyc
+*.py[cod]
 .env
+.venv/
+venv/
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+.cache/
