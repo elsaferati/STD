@@ -1,0 +1,1726 @@
+<!-- Operations Overview Dashboard -->
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Operations Overview Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13daec",
+                        "primary-dark": "#0eaab9",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#102022",
+                        "neutral-surface": "#ffffff",
+                        "neutral-surface-dark": "#1a2c2e",
+                        "success": "#10b981",
+                        "warning": "#f59e0b",
+                        "danger": "#ef4444",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar for table container */
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        /* Chart placeholders using gradients since JS is forbidden */
+        .bar-segment {
+            transition: all 0.3s ease;
+        }
+        .bar-segment:hover {
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-100 font-display min-h-screen flex flex-col">
+<!-- Navbar -->
+<header class="bg-white dark:bg-neutral-surface-dark border-b border-slate-200 dark:border-slate-700 sticky top-0 z-30">
+<div class="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center text-primary font-bold text-xl">
+                    XL
+                </div>
+<div>
+<h1 class="text-lg font-bold tracking-tight">XXLUTZ Operations Control</h1>
+<p class="text-xs text-slate-500 dark:text-slate-400">Order Extraction Dashboard • v2.4</p>
+</div>
+</div>
+<div class="flex items-center gap-6">
+<!-- Search -->
+<div class="relative hidden md:block w-64">
+<span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+<span class="material-icons text-lg">search</span>
+</span>
+<input class="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 transition-shadow" placeholder="Search ticket #..." type="text"/>
+</div>
+<!-- Notifications -->
+<button class="relative p-2 text-slate-500 hover:text-primary transition-colors">
+<span class="material-icons">notifications</span>
+<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white dark:ring-neutral-surface-dark"></span>
+</button>
+<!-- Profile -->
+<div class="flex items-center gap-3 pl-6 border-l border-slate-200 dark:border-slate-700">
+<div class="text-right hidden sm:block">
+<div class="text-sm font-medium">Alex Chen</div>
+<div class="text-xs text-slate-500">Senior Agent</div>
+</div>
+<img alt="User Avatar" class="w-9 h-9 rounded-full border border-slate-200 dark:border-slate-600" data-alt="Profile avatar for Alex Chen" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD0f8yeavLitAGHRceDw29t3351bNSJQW9zf-D18pzsgFieCixVmDvxqYmH1wIMyzicOcL6KiUfQUX-fahclxsDCSAp7M62DVX9mbZzzmMp39Nsd7V1ojA4Ab3Uo-P05Ip79X7RTyNuP3rLBDD6aylpI-SjLGnLcrf1AQiedtfYU0uFRg44VsT5_7zPXf7yQ7GmYQ2OFxRgfNGbHbcKpXIitHu_IZfGFg4GmMJMDnBYdOfwVVzoFqY7eQBhisUP5tKwQ1GoKYJZVW8n"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 max-w-[1600px] mx-auto w-full p-6 space-y-6">
+<!-- Top Section: KPI Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+<!-- Aggregate Metrics Group (Spans 4 columns on large screens) -->
+<div class="col-span-1 md:col-span-2 lg:col-span-4 grid grid-cols-2 lg:grid-cols-4 gap-4">
+<!-- Total Orders -->
+<div class="bg-white dark:bg-neutral-surface-dark p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<span class="text-slate-500 text-sm font-medium">Total Orders</span>
+<span class="material-icons text-primary bg-primary/10 p-1 rounded text-lg">inventory_2</span>
+</div>
+<div>
+<div class="text-2xl font-bold">1,245</div>
+<div class="text-xs text-slate-500 mt-1 flex items-center gap-1">
+<span class="text-success flex items-center">
+<span class="material-icons text-sm">arrow_upward</span> 12%
+                            </span> 
+                            vs yesterday
+                        </div>
+</div>
+</div>
+<!-- OK Rate -->
+<div class="bg-white dark:bg-neutral-surface-dark p-4 rounded-xl border-l-4 border-l-success border-y border-r border-slate-200 dark:border-slate-700 dark:border-l-success flex flex-col justify-between shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<span class="text-slate-500 text-sm font-medium">OK Rate</span>
+<span class="material-icons text-success bg-success/10 p-1 rounded text-lg">check_circle</span>
+</div>
+<div>
+<div class="text-2xl font-bold text-slate-800 dark:text-white">85.2%</div>
+<div class="text-xs text-slate-500 mt-1">Target: &gt;85%</div>
+</div>
+</div>
+<!-- Partial Rate -->
+<div class="bg-white dark:bg-neutral-surface-dark p-4 rounded-xl border-l-4 border-l-warning border-y border-r border-slate-200 dark:border-slate-700 dark:border-l-warning flex flex-col justify-between shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<span class="text-slate-500 text-sm font-medium">Partial Rate</span>
+<span class="material-icons text-warning bg-warning/10 p-1 rounded text-lg">warning</span>
+</div>
+<div>
+<div class="text-2xl font-bold text-slate-800 dark:text-white">9.8%</div>
+<div class="text-xs text-slate-500 mt-1">Target: &lt;10%</div>
+</div>
+</div>
+<!-- Failed Rate -->
+<div class="bg-white dark:bg-neutral-surface-dark p-4 rounded-xl border-l-4 border-l-danger border-y border-r border-slate-200 dark:border-slate-700 dark:border-l-danger flex flex-col justify-between shadow-sm">
+<div class="flex justify-between items-start mb-2">
+<span class="text-slate-500 text-sm font-medium">Failed Rate</span>
+<span class="material-icons text-danger bg-danger/10 p-1 rounded text-lg">error</span>
+</div>
+<div>
+<div class="text-2xl font-bold text-slate-800 dark:text-white">5.0%</div>
+<div class="text-xs text-slate-500 mt-1">Critical above 5%</div>
+</div>
+</div>
+</div>
+<!-- Queue Metrics Group (Spans 3 columns on large screens) -->
+<div class="col-span-1 md:col-span-2 lg:col-span-4 xl:col-span-3 grid grid-cols-3 gap-4">
+<!-- Reply Needed -->
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 dark:bg-primary/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="text-xs font-semibold uppercase tracking-wider text-primary mb-1">Reply Needed</span>
+<div class="text-3xl font-bold text-slate-800 dark:text-white">12</div>
+<span class="text-[10px] text-slate-400 mt-1">Wait time: ~2h</span>
+</div>
+<!-- Human Review -->
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 dark:bg-primary/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="text-xs font-semibold uppercase tracking-wider text-primary mb-1">Review</span>
+<div class="text-3xl font-bold text-slate-800 dark:text-white">34</div>
+<span class="text-[10px] text-slate-400 mt-1">Wait time: ~45m</span>
+</div>
+<!-- Post Case -->
+<div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 dark:bg-primary/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+<span class="text-xs font-semibold uppercase tracking-wider text-primary mb-1">Post Case</span>
+<div class="text-3xl font-bold text-slate-800 dark:text-white">5</div>
+<span class="text-[10px] text-slate-400 mt-1">High Priority</span>
+</div>
+</div>
+</div>
+<!-- Middle Section: Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<!-- Chart A: Order Status Distribution (Stacked Bar) -->
+<div class="lg:col-span-2 bg-white dark:bg-neutral-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
+<div class="flex items-center justify-between mb-6">
+<div>
+<h3 class="font-bold text-lg">Extraction Performance</h3>
+<p class="text-sm text-slate-500">Last 7 Days by Status</p>
+</div>
+<div class="flex gap-2 text-xs font-medium">
+<div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-success"></span> OK</div>
+<div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-warning"></span> Partial</div>
+<div class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-danger"></span> Failed</div>
+</div>
+</div>
+<!-- CSS-only Bar Chart visualization -->
+<div class="w-full h-48 flex items-end justify-between gap-2 sm:gap-4 px-2">
+<!-- Day 1 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[10%] w-full bar-segment" title="Failed: 10%"></div>
+<div class="bg-warning h-[15%] w-full bar-segment" title="Partial: 15%"></div>
+<div class="bg-success h-[60%] w-full rounded-t-sm bar-segment" title="OK: 60%"></div>
+</div>
+<span class="text-xs text-slate-400">Mon</span>
+</div>
+<!-- Day 2 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[5%] w-full bar-segment"></div>
+<div class="bg-warning h-[10%] w-full bar-segment"></div>
+<div class="bg-success h-[75%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Tue</span>
+</div>
+<!-- Day 3 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[8%] w-full bar-segment"></div>
+<div class="bg-warning h-[12%] w-full bar-segment"></div>
+<div class="bg-success h-[80%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Wed</span>
+</div>
+<!-- Day 4 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[15%] w-full bar-segment"></div>
+<div class="bg-warning h-[20%] w-full bar-segment"></div>
+<div class="bg-success h-[50%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Thu</span>
+</div>
+<!-- Day 5 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[4%] w-full bar-segment"></div>
+<div class="bg-warning h-[8%] w-full bar-segment"></div>
+<div class="bg-success h-[85%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Fri</span>
+</div>
+<!-- Day 6 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[2%] w-full bar-segment"></div>
+<div class="bg-warning h-[5%] w-full bar-segment"></div>
+<div class="bg-success h-[90%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Sat</span>
+</div>
+<!-- Day 7 -->
+<div class="flex-1 flex flex-col items-center gap-2 group">
+<div class="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
+<div class="bg-danger h-[6%] w-full bar-segment"></div>
+<div class="bg-warning h-[14%] w-full bar-segment"></div>
+<div class="bg-success h-[72%] w-full rounded-t-sm bar-segment"></div>
+</div>
+<span class="text-xs text-slate-400">Sun</span>
+</div>
+</div>
+</div>
+<!-- Chart B: Queue Trends (Line Chart Sim) -->
+<div class="bg-white dark:bg-neutral-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm flex flex-col">
+<div class="flex items-center justify-between mb-6">
+<div>
+<h3 class="font-bold text-lg">Queue Velocity</h3>
+<p class="text-sm text-slate-500">Incoming vs Processed (24h)</p>
+</div>
+<span class="material-icons text-primary/50">ssid_chart</span>
+</div>
+<div class="relative flex-1 w-full min-h-[160px] flex items-end">
+<!-- Grid Lines -->
+<div class="absolute inset-0 flex flex-col justify-between pointer-events-none">
+<div class="w-full h-px bg-slate-100 dark:bg-slate-800"></div>
+<div class="w-full h-px bg-slate-100 dark:bg-slate-800"></div>
+<div class="w-full h-px bg-slate-100 dark:bg-slate-800"></div>
+<div class="w-full h-px bg-slate-100 dark:bg-slate-800"></div>
+</div>
+<!-- CSS Gradient Line Chart Visualization -->
+<div aria-label="Line chart showing queue trends" class="w-full h-full relative">
+<!-- Filled Area -->
+<div class="absolute bottom-0 left-0 right-0 h-3/4 opacity-10 bg-gradient-to-t from-primary to-transparent" style="clip-path: polygon(0% 80%, 15% 60%, 30% 70%, 45% 40%, 60% 50%, 75% 20%, 90% 30%, 100% 10%, 100% 100%, 0% 100%);">
+</div>
+<!-- Line -->
+<div class="absolute inset-0 bg-primary" style="clip-path: polygon(0% 79%, 15% 59%, 30% 69%, 45% 39%, 60% 49%, 75% 19%, 90% 29%, 100% 9%, 100% 11%, 90% 31%, 75% 21%, 60% 51%, 45% 41%, 30% 71%, 15% 61%, 0% 81%);">
+</div>
+<!-- Data Points -->
+<div class="absolute left-[45%] top-[40%] w-2 h-2 bg-primary rounded-full shadow-[0_0_10px_rgba(19,218,236,0.5)]"></div>
+<div class="absolute left-[75%] top-[20%] w-2 h-2 bg-primary rounded-full shadow-[0_0_10px_rgba(19,218,236,0.5)]"></div>
+</div>
+</div>
+<div class="flex justify-between text-xs text-slate-400 mt-2">
+<span>00:00</span>
+<span>06:00</span>
+<span>12:00</span>
+<span>18:00</span>
+<span>Now</span>
+</div>
+</div>
+</div>
+<!-- Bottom Section: Latest Orders Table -->
+<div class="bg-white dark:bg-neutral-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden flex flex-col">
+<div class="p-6 border-b border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+<div class="flex items-center gap-3">
+<h3 class="font-bold text-lg">Latest Orders</h3>
+<span class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded text-xs font-medium">Live Feed</span>
+</div>
+<div class="flex gap-2">
+<button class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+<span class="material-icons text-sm">filter_list</span> Filter
+                    </button>
+<button class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors shadow-lg shadow-primary/20">
+<span class="material-icons text-sm">refresh</span> Refresh
+                    </button>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left text-sm">
+<thead class="bg-slate-50 dark:bg-slate-800/50 text-slate-500 font-medium border-b border-slate-200 dark:border-slate-700">
+<tr>
+<th class="px-6 py-4 whitespace-nowrap">Received At</th>
+<th class="px-6 py-4 whitespace-nowrap">Status</th>
+<th class="px-6 py-4 whitespace-nowrap">Ticket #</th>
+<th class="px-6 py-4 whitespace-nowrap">Client / Store</th>
+<th class="px-6 py-4 whitespace-nowrap">Items</th>
+<th class="px-6 py-4 whitespace-nowrap">Action Flags</th>
+<th class="px-6 py-4 text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+<!-- Row 1 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                10:42 AM <span class="text-xs text-slate-400 ml-1">Today</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span> OK
+                                </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap font-medium text-primary hover:underline cursor-pointer">#T-9982</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="font-medium text-slate-800 dark:text-slate-200">Vienna Central</div>
+<div class="text-xs text-slate-500">XXLUTZ AT</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-400">3 Items</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="text-slate-400 italic text-xs">-</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-icons text-lg">more_horiz</span></button>
+</td>
+</tr>
+<!-- Row 2 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors bg-warning/5">
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                10:40 AM <span class="text-xs text-slate-400 ml-1">Today</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning border border-warning/20">
+<span class="w-1.5 h-1.5 rounded-full bg-warning"></span> Partial
+                                </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap font-medium text-primary hover:underline cursor-pointer">#T-9981</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="font-medium text-slate-800 dark:text-slate-200">Munich Hub</div>
+<div class="text-xs text-slate-500">MÖMAX DE</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-400">12 Items</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                                    Needs Reply
+                                </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-primary hover:text-primary-dark transition-colors bg-primary/10 px-2 py-1 rounded text-xs font-bold uppercase">Open</button>
+</td>
+</tr>
+<!-- Row 3 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors bg-danger/5">
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                10:35 AM <span class="text-xs text-slate-400 ml-1">Today</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-danger/10 text-danger border border-danger/20">
+<span class="w-1.5 h-1.5 rounded-full bg-danger"></span> Failed
+                                </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap font-medium text-primary hover:underline cursor-pointer">#T-9978</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="font-medium text-slate-800 dark:text-slate-200">Graz South</div>
+<div class="text-xs text-slate-500">XXLUTZ AT</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-400">1 Item</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                                    Review
+                                </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-primary hover:text-primary-dark transition-colors bg-primary/10 px-2 py-1 rounded text-xs font-bold uppercase">Fix</button>
+</td>
+</tr>
+<!-- Row 4 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                10:22 AM <span class="text-xs text-slate-400 ml-1">Today</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span> OK
+                                </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap font-medium text-primary hover:underline cursor-pointer">#T-9975</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="font-medium text-slate-800 dark:text-slate-200">Berlin Flagship</div>
+<div class="text-xs text-slate-500">MÖMAX DE</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-400">8 Items</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="text-slate-400 italic text-xs">-</span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-icons text-lg">more_horiz</span></button>
+</td>
+</tr>
+<!-- Row 5 -->
+<tr class="group hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
+                                10:15 AM <span class="text-xs text-slate-400 ml-1">Today</span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
+<span class="w-1.5 h-1.5 rounded-full bg-success"></span> OK
+                                </span>
+</td>
+<td class="px-6 py-4 whitespace-nowrap font-medium text-primary hover:underline cursor-pointer">#T-9972</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<div class="font-medium text-slate-800 dark:text-slate-200">Zurich North</div>
+<div class="text-xs text-slate-500">XXLUTZ CH</div>
+</td>
+<td class="px-6 py-4 whitespace-nowrap text-slate-600 dark:text-slate-400">2 Items</td>
+<td class="px-6 py-4 whitespace-nowrap">
+<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300">
+                                    Post Case
+                                </span>
+</td>
+<td class="px-6 py-4 text-right">
+<button class="text-slate-400 hover:text-primary transition-colors"><span class="material-icons text-lg">more_horiz</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+<span class="text-xs text-slate-500">Showing <span class="font-medium text-slate-800 dark:text-slate-200">1-5</span> of <span class="font-medium text-slate-800 dark:text-slate-200">1245</span> orders</span>
+<div class="flex gap-1">
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-primary hover:border-primary transition-colors disabled:opacity-50" disabled="">
+<span class="material-icons text-sm">chevron_left</span>
+</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-primary bg-primary text-white text-xs font-medium">1</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary hover:text-primary transition-colors text-xs font-medium">2</button>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary hover:text-primary transition-colors text-xs font-medium">3</button>
+<span class="w-8 h-8 flex items-center justify-center text-slate-400">...</span>
+<button class="w-8 h-8 flex items-center justify-center rounded border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-primary hover:border-primary transition-colors">
+<span class="material-icons text-sm">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+</body></html>
+
+<!-- Orders Management Workspace -->
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>XXLUTZ Order Agent Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13daec",
+                        "primary-dark": "#0eaab9",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#102022",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#162a2d",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        /* Custom scrollbar for dense data tables */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-100 font-display h-screen flex overflow-hidden">
+<!-- Left Sidebar -->
+<aside class="w-72 bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 flex flex-col z-20 shadow-sm flex-shrink-0">
+<!-- Logo Area -->
+<div class="h-16 flex items-center px-6 border-b border-slate-100 dark:border-slate-800">
+<div class="w-8 h-8 rounded bg-gradient-to-br from-primary to-cyan-600 flex items-center justify-center mr-3 shadow-lg shadow-primary/20">
+<span class="text-white font-bold text-lg">X</span>
+</div>
+<span class="font-bold text-xl tracking-tight text-slate-900 dark:text-white">XXLUTZ <span class="text-primary font-normal">Agent</span></span>
+</div>
+<!-- Filter Content -->
+<div class="flex-1 overflow-y-auto p-6 space-y-8">
+<!-- Date Range Filter -->
+<div>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+<span class="material-icons-outlined text-sm mr-1">date_range</span> Extraction Date
+                </h3>
+<div class="space-y-3">
+<div class="relative">
+<label class="text-xs text-slate-500 mb-1 block">From</label>
+<input class="w-full bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded text-sm px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow" type="date" value="2023-10-24"/>
+</div>
+<div class="relative">
+<label class="text-xs text-slate-500 mb-1 block">To</label>
+<input class="w-full bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded text-sm px-3 py-2 focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-shadow" type="date" value="2023-10-25"/>
+</div>
+</div>
+</div>
+<!-- Status Filter -->
+<div>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+<span class="material-icons-outlined text-sm mr-1">rule</span> Extraction Status
+                </h3>
+<div class="space-y-3">
+<label class="flex items-center group cursor-pointer">
+<input checked="" class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-slate-50 dark:bg-slate-800" type="checkbox"/>
+<span class="ml-3 text-sm text-slate-600 dark:text-slate-300 group-hover:text-primary transition-colors">Success (OK)</span>
+<span class="ml-auto text-xs bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 px-1.5 py-0.5 rounded">84</span>
+</label>
+<label class="flex items-center group cursor-pointer">
+<input checked="" class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-slate-50 dark:bg-slate-800" type="checkbox"/>
+<span class="ml-3 text-sm text-slate-600 dark:text-slate-300 group-hover:text-primary transition-colors">Partial Data</span>
+<span class="ml-auto text-xs bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 px-1.5 py-0.5 rounded">12</span>
+</label>
+<label class="flex items-center group cursor-pointer">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-slate-50 dark:bg-slate-800" type="checkbox"/>
+<span class="ml-3 text-sm text-slate-600 dark:text-slate-300 group-hover:text-primary transition-colors">Failed</span>
+<span class="ml-auto text-xs bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 px-1.5 py-0.5 rounded">3</span>
+</label>
+</div>
+</div>
+<!-- Workflow Flags -->
+<div>
+<h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+<span class="material-icons-outlined text-sm mr-1">flag</span> Workflow Flags
+                </h3>
+<div class="space-y-4">
+<div class="flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-700 dark:text-slate-200">Reply Needed</span>
+<span class="text-xs text-slate-400">Customer awaiting response</span>
+</div>
+<button aria-checked="false" class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 bg-slate-200 dark:bg-slate-700" role="switch">
+<span aria-hidden="true" class="translate-x-0 pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"></span>
+</button>
+</div>
+<div class="flex items-center justify-between">
+<div class="flex flex-col">
+<span class="text-sm font-medium text-slate-700 dark:text-slate-200">Human Review</span>
+<span class="text-xs text-slate-400">Flagged for anomaly</span>
+</div>
+<button aria-checked="true" class="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 bg-primary" role="switch">
+<span aria-hidden="true" class="translate-x-5 pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"></span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Sidebar Footer -->
+<div class="p-6 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+<button class="w-full bg-slate-900 dark:bg-white dark:text-slate-900 text-white py-2.5 px-4 rounded font-medium text-sm hover:shadow-lg transition-all flex items-center justify-center gap-2">
+<span class="material-icons-outlined text-sm">filter_alt</span> Apply Filters
+            </button>
+</div>
+</aside>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col min-w-0 bg-background-light dark:bg-background-dark">
+<!-- Top Navigation -->
+<header class="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 z-10">
+<div class="flex items-center w-full max-w-xl">
+<div class="relative w-full">
+<span class="material-icons-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+<input class="w-full bg-slate-50 dark:bg-slate-800 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary placeholder-slate-400" placeholder="Search by Order ID, Customer Name or Email..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="relative p-2 text-slate-400 hover:text-primary transition-colors rounded-full hover:bg-slate-50 dark:hover:bg-slate-800">
+<span class="material-icons-outlined">notifications</span>
+<span class="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-surface-light dark:border-surface-dark"></span>
+</button>
+<div class="h-8 w-[1px] bg-slate-200 dark:bg-slate-700"></div>
+<div class="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity">
+<div class="text-right hidden sm:block">
+<p class="text-sm font-medium text-slate-700 dark:text-slate-200">Alex Morgan</p>
+<p class="text-xs text-slate-400">Senior Agent</p>
+</div>
+<img alt="User Profile Picture" class="w-9 h-9 rounded-full object-cover border-2 border-primary/20" data-alt="Close up portrait of a young man with glasses" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCmelFAD-79DYLtsgJTlhMpOshP1WlF17O69T-HVKJIwV7zrhqxm5kjnGZtq7vf25q5uHXDVLPc-PRzisi8aZxoXX2X-xZOojX7WXO_yhWBF7-kCuMJ-Y7uA3vGIekdZr8dXc1UgROB0D-u9M0Girl_vcHKTFkpEspB7GjGCBH4VMC6EIxygPJEt9RpYHCVag3B1UEtzo5c86pL7pzOxlAYfbz1FLKJuUWSN2uFP9L4rGkuvmOvRCvGAyVYkuEB2CMJMNmcLwImM0bV"/>
+</div>
+</div>
+</header>
+<!-- Workspace Controls & Tabs -->
+<div class="bg-surface-light dark:bg-surface-dark px-6 pt-6 pb-0 border-b border-slate-200 dark:border-slate-700 shadow-sm">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between mb-4">
+<div>
+<h1 class="text-2xl font-bold text-slate-900 dark:text-white mb-1">Orders Workspace</h1>
+<p class="text-sm text-slate-500 dark:text-slate-400">Manage and validate extracted order data.</p>
+</div>
+<div class="flex gap-2 mt-4 sm:mt-0">
+<button class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors flex items-center gap-2">
+<span class="material-icons-outlined text-base">file_download</span> Export CSV
+                    </button>
+<button class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded text-sm font-medium transition-colors shadow-lg shadow-primary/30 flex items-center gap-2">
+<span class="material-icons-outlined text-base">add</span> Manual Order
+                    </button>
+</div>
+</div>
+<!-- Tabs -->
+<div class="flex items-center gap-6 overflow-x-auto no-scrollbar">
+<button class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium text-sm whitespace-nowrap transition-all">
+                    All Orders <span class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 py-0.5 px-2 rounded-full text-xs ml-1">1,240</span>
+</button>
+<button class="pb-3 border-b-2 border-primary text-primary font-bold text-sm whitespace-nowrap transition-all">
+                    Today's Queue <span class="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">12</span>
+</button>
+<button class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium text-sm whitespace-nowrap transition-all">
+                    Needs Reply <span class="bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 py-0.5 px-2 rounded-full text-xs ml-1">4</span>
+</button>
+<button class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-medium text-sm whitespace-nowrap transition-all">
+                    Manual Review <span class="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 py-0.5 px-2 rounded-full text-xs ml-1">2</span>
+</button>
+</div>
+</div>
+<!-- Data Table Container -->
+<div class="flex-1 overflow-auto p-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+<table class="w-full text-left text-sm whitespace-nowrap">
+<thead class="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+<tr>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400 w-12" scope="col">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400 cursor-pointer hover:text-primary transition-colors" scope="col">
+                                Order ID <span class="material-icons-outlined text-xs align-middle">unfold_more</span>
+</th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400 cursor-pointer hover:text-primary transition-colors" scope="col">
+                                Date &amp; Time
+                            </th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400" scope="col">
+                                Customer
+                            </th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400 text-right" scope="col">
+                                Amount
+                            </th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400" scope="col">
+                                Status
+                            </th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400" scope="col">
+                                Flags
+                            </th>
+<th class="px-4 py-3 font-semibold text-slate-500 dark:text-slate-400 text-right w-32" scope="col">
+                                Actions
+                            </th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+<!-- Row 1: Needs Review & Reply -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-849</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">14:30 PM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 flex items-center justify-center font-bold text-xs">MK</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">Michael Klein</span>
+<span class="text-xs text-slate-500">m.klein@example.com</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 1,240.50
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                    Partial
+                                </span>
+</td>
+<td class="px-4 py-3">
+<div class="flex gap-2">
+<span class="material-icons-outlined text-lg text-rose-500" title="Human Review Needed">person_search</span>
+<span class="material-icons-outlined text-lg text-amber-500" title="Reply Needed">mail</span>
+</div>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2: Success -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-848</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">14:15 PM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-emerald-100 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-300 flex items-center justify-center font-bold text-xs">SW</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">Sarah Weber</span>
+<span class="text-xs text-slate-500">s.weber@gmail.com</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 450.00
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    Success
+                                </span>
+</td>
+<td class="px-4 py-3">
+<!-- No flags -->
+<span class="text-slate-300 text-lg material-icons-outlined">remove</span>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3: Failed & Flagged -->
+<tr class="bg-red-50/30 dark:bg-red-900/10 hover:bg-red-50/50 dark:hover:bg-red-900/20 transition-colors group border-l-4 border-red-500">
+<td class="px-4 py-3 pl-3"> <!-- Adjusted pl for border -->
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-847</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">13:55 PM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-xs">JD</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">John Doe</span>
+<span class="text-xs text-slate-500">johndoe@company.de</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 2,100.00
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                                    Failed
+                                </span>
+</td>
+<td class="px-4 py-3">
+<div class="flex gap-2">
+<span class="material-icons-outlined text-lg text-rose-500" title="Human Review Needed">person_search</span>
+</div>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4: Success -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-846</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">13:42 PM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-cyan-100 dark:bg-cyan-900 text-cyan-600 dark:text-cyan-300 flex items-center justify-center font-bold text-xs">TS</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">Thomas Schneider</span>
+<span class="text-xs text-slate-500">t.schneider@web.de</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 89.90
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    Success
+                                </span>
+</td>
+<td class="px-4 py-3">
+<span class="text-slate-300 text-lg material-icons-outlined">remove</span>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 5: Needs Reply -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-845</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">12:10 PM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 flex items-center justify-center font-bold text-xs">LM</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">Lisa Müller</span>
+<span class="text-xs text-slate-500">lisa.m@outlook.com</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 320.00
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    Success
+                                </span>
+</td>
+<td class="px-4 py-3">
+<div class="flex gap-2">
+<span class="material-icons-outlined text-lg text-amber-500" title="Reply Needed">mail</span>
+</div>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 6: Success -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-844</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">11:30 AM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-teal-100 dark:bg-teal-900 text-teal-600 dark:text-teal-300 flex items-center justify-center font-bold text-xs">DK</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">David Koch</span>
+<span class="text-xs text-slate-500">d.koch@service.de</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 1,599.00
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                    Success
+                                </span>
+</td>
+<td class="px-4 py-3">
+<span class="text-slate-300 text-lg material-icons-outlined">remove</span>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 7: Partial -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors group">
+<td class="px-4 py-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-843</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">10:15 AM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-300 flex items-center justify-center font-bold text-xs">AB</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium">Anja Bauer</span>
+<span class="text-xs text-slate-500">anja.b@web.de</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 75.50
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                    Partial
+                                </span>
+</td>
+<td class="px-4 py-3">
+<span class="text-slate-300 text-lg material-icons-outlined">remove</span>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 8: Failed -->
+<tr class="bg-red-50/30 dark:bg-red-900/10 hover:bg-red-50/50 dark:hover:bg-red-900/20 transition-colors group border-l-4 border-red-500">
+<td class="px-4 py-3 pl-3">
+<input class="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary focus:ring-offset-0 bg-white dark:bg-slate-800" type="checkbox"/>
+</td>
+<td class="px-4 py-3">
+<span class="font-medium text-primary hover:underline cursor-pointer">ORD-2023-842</span>
+</td>
+<td class="px-4 py-3 text-slate-600 dark:text-slate-300">
+<div class="flex flex-col">
+<span class="font-medium">Oct 24, 2023</span>
+<span class="text-xs text-slate-400">09:45 AM</span>
+</div>
+</td>
+<td class="px-4 py-3">
+<div class="flex items-center gap-3">
+<div class="h-8 w-8 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-bold text-xs">Unknown</div>
+<div class="flex flex-col">
+<span class="text-slate-900 dark:text-white font-medium italic">-- Missing --</span>
+<span class="text-xs text-slate-500">extraction failed</span>
+</div>
+</div>
+</td>
+<td class="px-4 py-3 text-right font-medium text-slate-900 dark:text-white">
+                                € 0.00
+                            </td>
+<td class="px-4 py-3">
+<span class="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">
+                                    Failed
+                                </span>
+</td>
+<td class="px-4 py-3">
+<div class="flex gap-2">
+<span class="material-icons-outlined text-lg text-rose-500" title="Human Review Needed">person_search</span>
+</div>
+</td>
+<td class="px-4 py-3 text-right">
+<div class="flex items-center justify-end gap-2 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="View XML">
+<span class="material-icons-outlined text-lg">code</span>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-primary hover:bg-primary/10 rounded transition-colors" title="Edit Order">
+<span class="material-icons-outlined text-lg">edit</span>
+</button>
+<button class="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white" title="View Details">
+<span class="material-icons-outlined text-lg">visibility</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="mt-4 flex items-center justify-between px-2">
+<div class="text-sm text-slate-500 dark:text-slate-400">
+                    Showing <span class="font-medium text-slate-900 dark:text-white">1</span> to <span class="font-medium text-slate-900 dark:text-white">8</span> of <span class="font-medium text-slate-900 dark:text-white">1,240</span> results
+                </div>
+<div class="flex items-center gap-2">
+<button class="p-2 border border-slate-200 dark:border-slate-700 rounded bg-surface-light dark:bg-surface-dark text-slate-400 cursor-not-allowed">
+<span class="material-icons-outlined text-sm">chevron_left</span>
+</button>
+<button class="px-3 py-1 bg-primary text-white rounded text-sm font-medium shadow-md shadow-primary/20">1</button>
+<button class="px-3 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm font-medium transition-colors">2</button>
+<button class="px-3 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm font-medium transition-colors">3</button>
+<span class="text-slate-400 px-1">...</span>
+<button class="px-3 py-1 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm font-medium transition-colors">155</button>
+<button class="p-2 border border-slate-200 dark:border-slate-700 rounded bg-surface-light dark:bg-surface-dark hover:text-primary text-slate-600 dark:text-slate-300 transition-colors">
+<span class="material-icons-outlined text-sm">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+</body></html>
+
+<!-- Order Extraction Detail View -->
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>XXLUTZ Order Extraction Detail View</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#13daec",
+                        "background-light": "#f6f8f8",
+                        "background-dark": "#102022",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#162a2d",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #334155;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 min-h-screen flex flex-col font-display">
+<!-- Top Navigation / Header -->
+<header class="bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
+<div class="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+<!-- Breadcrumbs & Title -->
+<div class="flex flex-col gap-1">
+<nav class="flex items-center text-xs text-slate-500 dark:text-slate-400 gap-2">
+<a class="hover:text-primary transition-colors" href="#">Dashboard</a>
+<span class="material-icons-round text-base">chevron_right</span>
+<a class="hover:text-primary transition-colors" href="#">Order Extractions</a>
+<span class="material-icons-round text-base">chevron_right</span>
+<span class="text-primary font-medium">#ORD-2023-8842</span>
+</nav>
+<div class="flex items-center gap-3">
+<h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Order #ORD-2023-8842</h1>
+<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                        Human Review
+                    </span>
+</div>
+</div>
+<!-- Global Actions -->
+<div class="flex items-center gap-3">
+<button class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 bg-white dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-primary transition-colors shadow-sm">
+<span class="material-icons-round text-lg">refresh</span>
+                    Regenerate XML
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-900 dark:text-white bg-primary hover:bg-opacity-90 rounded-lg shadow-lg shadow-primary/20 transition-all transform active:scale-95">
+<span class="material-icons-round text-lg">edit</span>
+                    Edit Fields
+                </button>
+<button class="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 dark:bg-primary/20 dark:text-primary border border-transparent dark:border-primary/50 hover:bg-slate-800 dark:hover:bg-primary/30 rounded-lg transition-colors">
+<span class="material-icons-round text-lg">send</span>
+                    Send Reply
+                </button>
+</div>
+</div>
+</header>
+<!-- Main Workspace -->
+<main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1920px] mx-auto w-full">
+<!-- Left Column: Context & Header Data (Span 8) -->
+<div class="lg:col-span-8 flex flex-col gap-6">
+<!-- Context Cards Grid -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<!-- Meta Summary -->
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group">
+<div class="absolute top-0 right-0 w-24 h-24 bg-primary/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-4">Meta Data</h3>
+<div class="space-y-3">
+<div>
+<p class="text-[10px] uppercase tracking-wide text-slate-400">Received At</p>
+<p class="font-medium text-slate-700 dark:text-slate-200">Oct 24, 10:42 AM</p>
+</div>
+<div>
+<p class="text-[10px] uppercase tracking-wide text-slate-400">Source</p>
+<div class="flex items-center gap-2">
+<span class="material-icons-round text-sm text-blue-500">email</span>
+<span class="font-medium text-slate-700 dark:text-slate-200">Email Attachment (PDF)</span>
+</div>
+</div>
+<div>
+<p class="text-[10px] uppercase tracking-wide text-slate-400">Extraction ID</p>
+<p class="font-mono text-xs text-slate-500 truncate">ext_8842_pdf_v3</p>
+</div>
+</div>
+</div>
+<!-- Confidence Overview -->
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">Overall Confidence</h3>
+<div class="flex items-end gap-2 mb-2">
+<span class="text-4xl font-bold text-slate-900 dark:text-white">84%</span>
+<span class="text-sm text-amber-500 font-medium mb-1">Requires Review</span>
+</div>
+<div class="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+<div class="bg-amber-500 h-full rounded-full" style="width: 84%"></div>
+</div>
+<p class="text-xs text-slate-400 mt-3">Base model v4.2 · Threshold 90%</p>
+</div>
+<!-- Quick Actions -->
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-center gap-3">
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Quick Filters</h3>
+<div class="flex flex-wrap gap-2">
+<button class="px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-300 rounded-lg border border-red-100 dark:border-red-900/50 hover:bg-red-100 transition-colors">
+                            Show Errors Only
+                        </button>
+<button class="px-3 py-1.5 text-xs font-medium bg-primary/10 text-primary-dark dark:text-primary rounded-lg border border-primary/20 hover:bg-primary/20 transition-colors">
+                            Highlight Low Conf.
+                        </button>
+</div>
+</div>
+</div>
+<!-- Header Fields Section -->
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+<div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/20">
+<h2 class="font-bold text-lg text-slate-800 dark:text-slate-100">Header Information</h2>
+<span class="text-xs font-medium text-slate-400">Auto-extracted</span>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm text-left">
+<thead class="text-xs text-slate-500 uppercase bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+<tr>
+<th class="px-6 py-3 font-medium tracking-wider w-1/4" scope="col">Field Label</th>
+<th class="px-6 py-3 font-medium tracking-wider w-1/2" scope="col">Extracted Value</th>
+<th class="px-6 py-3 font-medium tracking-wider text-right w-1/4" scope="col">Confidence</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 dark:divide-slate-800">
+<!-- Field Row: High Confidence -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+<td class="px-6 py-4 font-medium text-slate-900 dark:text-slate-300">Customer Name</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<input class="bg-transparent border-none p-0 focus:ring-0 text-slate-700 dark:text-slate-300 w-full font-medium" readonly="" type="text" value="Schmidt Möbel GmbH"/>
+<button class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary transition-all">
+<span class="material-icons-round text-sm">edit</span>
+</button>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 text-primary-dark dark:text-primary border border-primary/20">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="text-xs font-bold">98%</span>
+</div>
+</td>
+</tr>
+<!-- Field Row: Medium/Warning -->
+<tr class="bg-amber-50/30 dark:bg-amber-900/10 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors group border-l-4 border-l-amber-400">
+<td class="px-6 py-4 font-medium text-slate-900 dark:text-slate-300 flex items-center gap-2">
+                                    Shipping Address
+                                    <span class="material-icons-round text-amber-500 text-sm" title="Warning: Mismatch">warning</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<input class="bg-transparent border-b border-dashed border-amber-300 dark:border-amber-700 p-0 focus:ring-0 text-slate-700 dark:text-slate-300 w-full" readonly="" type="text" value="Industriestrasse 45, 8000 Zürich"/>
+<button class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-primary transition-all">
+<span class="material-icons-round text-sm">edit</span>
+</button>
+</div>
+<p class="text-xs text-amber-600 dark:text-amber-400 mt-1">CRM: Industriestrasse 45a, 8005 Zürich</p>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border border-amber-200 dark:border-amber-700">
+<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+<span class="text-xs font-bold">72%</span>
+</div>
+</td>
+</tr>
+<!-- Field Row: Normal -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+<td class="px-6 py-4 font-medium text-slate-900 dark:text-slate-300">PO Number</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<input class="bg-transparent border-none p-0 focus:ring-0 text-slate-700 dark:text-slate-300 w-full" readonly="" type="text" value="PO-9923-KK"/>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 text-primary-dark dark:text-primary border border-primary/20">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="text-xs font-bold">96%</span>
+</div>
+</td>
+</tr>
+<!-- Field Row: Normal -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+<td class="px-6 py-4 font-medium text-slate-900 dark:text-slate-300">Total Value</td>
+<td class="px-6 py-4">
+<div class="flex items-center gap-2">
+<input class="bg-transparent border-none p-0 focus:ring-0 text-slate-700 dark:text-slate-300 w-full font-mono" readonly="" type="text" value="€ 4,250.00"/>
+</div>
+</td>
+<td class="px-6 py-4 text-right">
+<div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/10 text-primary-dark dark:text-primary border border-primary/20">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+<span class="text-xs font-bold">99%</span>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Items Table Section -->
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden flex-1">
+<div class="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/20">
+<div class="flex items-center gap-3">
+<h2 class="font-bold text-lg text-slate-800 dark:text-slate-100">Line Items</h2>
+<span class="bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-xs px-2 py-0.5 rounded-full">5 Items</span>
+</div>
+<button class="text-primary hover:text-primary/80 text-sm font-medium flex items-center gap-1">
+<span class="material-icons-round text-base">add_circle</span>
+                         Add Item
+                     </button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-sm text-left">
+<thead class="text-xs text-slate-500 uppercase bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
+<tr>
+<th class="px-6 py-3 font-medium tracking-wider w-16" scope="col">#</th>
+<th class="px-6 py-3 font-medium tracking-wider" scope="col">SKU</th>
+<th class="px-6 py-3 font-medium tracking-wider w-1/3" scope="col">Description</th>
+<th class="px-6 py-3 font-medium tracking-wider text-right" scope="col">Qty</th>
+<th class="px-6 py-3 font-medium tracking-wider text-right" scope="col">Unit Price</th>
+<th class="px-6 py-3 font-medium tracking-wider text-right" scope="col">Total</th>
+<th class="px-6 py-3 font-medium tracking-wider text-center w-16" scope="col"></th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-200 dark:divide-slate-800">
+<!-- Item 1 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 text-slate-400">1</td>
+<td class="px-6 py-4 font-mono font-medium text-primary">XX-492-B</td>
+<td class="px-6 py-4 text-slate-700 dark:text-slate-300">Modern Sofa Chair - Grey Fabric</td>
+<td class="px-6 py-4 text-right text-slate-700 dark:text-slate-300">2</td>
+<td class="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-400">€ 450.00</td>
+<td class="px-6 py-4 text-right font-mono font-medium text-slate-900 dark:text-slate-100">€ 900.00</td>
+<td class="px-6 py-4 text-center">
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-icons-round text-lg">delete</span></button>
+</td>
+</tr>
+<!-- Item 2 -->
+<tr class="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+<td class="px-6 py-4 text-slate-400">2</td>
+<td class="px-6 py-4 font-mono font-medium text-primary">XX-102-A</td>
+<td class="px-6 py-4 text-slate-700 dark:text-slate-300">Wooden Dining Table - Oak Finish</td>
+<td class="px-6 py-4 text-right text-slate-700 dark:text-slate-300">1</td>
+<td class="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-400">€ 1,200.00</td>
+<td class="px-6 py-4 text-right font-mono font-medium text-slate-900 dark:text-slate-100">€ 1,200.00</td>
+<td class="px-6 py-4 text-center">
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-icons-round text-lg">delete</span></button>
+</td>
+</tr>
+<!-- Item 3 (Low Confidence) -->
+<tr class="bg-red-50/30 dark:bg-red-900/10 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors border-l-4 border-l-red-400">
+<td class="px-6 py-4 text-slate-400">3</td>
+<td class="px-6 py-4 font-mono font-medium text-red-600 dark:text-red-400 flex items-center gap-1">
+                                    XX-???-9
+                                    <span class="material-icons-round text-sm" title="Low Confidence">error_outline</span>
+</td>
+<td class="px-6 py-4 text-slate-700 dark:text-slate-300">
+<input class="w-full bg-transparent border-b border-dashed border-red-300 dark:border-red-700 focus:border-red-500 text-slate-700 dark:text-slate-300" type="text" value="Side Table (Unclear Spec)"/>
+</td>
+<td class="px-6 py-4 text-right text-slate-700 dark:text-slate-300">1</td>
+<td class="px-6 py-4 text-right font-mono text-slate-600 dark:text-slate-400">€ 150.00</td>
+<td class="px-6 py-4 text-right font-mono font-medium text-slate-900 dark:text-slate-100">€ 150.00</td>
+<td class="px-6 py-4 text-center">
+<button class="text-slate-400 hover:text-red-500 transition-colors"><span class="material-icons-round text-lg">delete</span></button>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Raw JSON Viewer Collapsible -->
+<details class="group bg-slate-900 rounded-xl overflow-hidden border border-slate-700">
+<summary class="flex items-center justify-between p-4 cursor-pointer bg-slate-800 hover:bg-slate-750 transition-colors text-slate-300 select-none">
+<span class="flex items-center gap-2 text-sm font-medium font-mono">
+<span class="material-icons-round group-open:rotate-90 transition-transform">chevron_right</span>
+                        View Raw JSON Payload
+                    </span>
+<span class="text-xs px-2 py-1 bg-slate-700 rounded text-slate-400 font-mono">24KB</span>
+</summary>
+<div class="p-4 bg-slate-900 overflow-x-auto max-h-64">
+<pre class="text-xs font-mono text-green-400 leading-relaxed">{
+  "orderId": "ORD-2023-8842",
+  "customer": {
+    "name": "Schmidt Möbel GmbH",
+    "confidence": 0.98
+  },
+  "shipping": {
+    "address_raw": "Industriestrasse 45, 8000 Zürich",
+    "address_normalized": null,
+    "confidence": 0.72,
+    "warning": "CRM_MISMATCH"
+  },
+  "items": [
+    { "sku": "XX-492-B", "qty": 2, "price": 450.00 },
+    { "sku": "XX-102-A", "qty": 1, "price": 1200.00 }
+  ]
+}
+</pre>
+</div>
+</details>
+</div>
+<!-- Right Column: Operational Signals Panel (Span 4) -->
+<aside class="lg:col-span-4 flex flex-col gap-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden sticky top-24">
+<div class="p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+<h2 class="font-bold text-lg text-slate-800 dark:text-slate-100 flex items-center gap-2">
+<span class="material-icons-round text-primary">analytics</span>
+                        Operational Signals
+                    </h2>
+<span class="bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300 text-xs font-bold px-2 py-1 rounded-full">3 Issues</span>
+</div>
+<div class="p-5 space-y-4">
+<!-- Error Signal Card -->
+<div class="p-4 rounded-lg bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/50 flex flex-col gap-2 relative overflow-hidden">
+<div class="absolute w-1 h-full bg-red-500 left-0 top-0"></div>
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-2 text-red-700 dark:text-red-400 font-bold text-sm uppercase tracking-wide">
+<span class="material-icons-round text-base">error</span>
+                                Validation Error
+                            </div>
+<span class="text-[10px] text-red-500 font-mono">ERR-001</span>
+</div>
+<p class="text-sm font-medium text-slate-800 dark:text-slate-200">SKU Format Invalid</p>
+<p class="text-xs text-slate-600 dark:text-slate-400">
+                            Item #3 contains an SKU pattern "XX-???-9" that does not match the catalog regex. Please verify against master data.
+                        </p>
+<button class="mt-2 text-xs font-medium text-red-600 dark:text-red-400 hover:underline text-left">Find similar SKUs →</button>
+</div>
+<!-- Warning Signal Card -->
+<div class="p-4 rounded-lg bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/50 flex flex-col gap-2 relative overflow-hidden">
+<div class="absolute w-1 h-full bg-amber-500 left-0 top-0"></div>
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-2 text-amber-700 dark:text-amber-400 font-bold text-sm uppercase tracking-wide">
+<span class="material-icons-round text-base">warning</span>
+                                Data Mismatch
+                            </div>
+<span class="text-[10px] text-amber-500 font-mono">WRN-204</span>
+</div>
+<p class="text-sm font-medium text-slate-800 dark:text-slate-200">Address Discrepancy</p>
+<p class="text-xs text-slate-600 dark:text-slate-400">
+                            Extracted shipping address differs from the default address on file for "Schmidt Möbel GmbH".
+                        </p>
+<div class="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800/50 flex gap-2">
+<button class="px-2 py-1 bg-white dark:bg-surface-dark border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 transition-colors">Use CRM Address</button>
+<button class="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 rounded text-xs text-amber-800 dark:text-amber-300 hover:bg-amber-200 transition-colors">Keep Extracted</button>
+</div>
+</div>
+<!-- Info Signal Card -->
+<div class="p-4 rounded-lg bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/50 flex flex-col gap-2 relative overflow-hidden">
+<div class="absolute w-1 h-full bg-blue-500 left-0 top-0"></div>
+<div class="flex items-start justify-between">
+<div class="flex items-center gap-2 text-blue-700 dark:text-blue-400 font-bold text-sm uppercase tracking-wide">
+<span class="material-icons-round text-base">info</span>
+                                Enrichment
+                            </div>
+<span class="text-[10px] text-blue-500 font-mono">INF-882</span>
+</div>
+<p class="text-sm font-medium text-slate-800 dark:text-slate-200">Customer ID Matched</p>
+<p class="text-xs text-slate-600 dark:text-slate-400">
+                            Automatically linked to CRM ID: <span class="font-mono bg-blue-100 dark:bg-blue-900/40 px-1 rounded text-blue-800 dark:text-blue-200">CUST-88392</span> based on email domain.
+                        </p>
+</div>
+</div>
+<!-- Helper Section -->
+<div class="p-5 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-200 dark:border-slate-800">
+<h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3">Agent Actions</h3>
+<div class="space-y-2">
+<button class="w-full flex items-center justify-between p-2 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm text-slate-700 dark:text-slate-300">
+<span>View Original PDF</span>
+<span class="material-icons-round text-slate-400 text-lg">open_in_new</span>
+</button>
+<button class="w-full flex items-center justify-between p-2 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors text-sm text-slate-700 dark:text-slate-300">
+<span>History Logs</span>
+<span class="material-icons-round text-slate-400 text-lg">history</span>
+</button>
+</div>
+</div>
+</div>
+</aside>
+</main>
+<!-- Contextual Action Footer (Visible during Human Review) -->
+<div class="fixed bottom-0 left-0 w-full bg-white dark:bg-surface-dark border-t border-primary border-opacity-50 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] py-4 px-6 z-40 animate-slide-up">
+<div class="max-w-[1920px] mx-auto flex items-center justify-between">
+<div class="flex items-center gap-3">
+<span class="material-icons-round text-primary animate-pulse">edit_note</span>
+<p class="text-sm font-medium text-slate-700 dark:text-slate-200">You are in <span class="text-primary font-bold">Review Mode</span>. Unsaved changes will be lost.</p>
+</div>
+<div class="flex items-center gap-3">
+<button class="px-5 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors">
+                     Discard
+                 </button>
+<button class="px-6 py-2.5 text-sm font-bold text-slate-900 bg-primary hover:bg-opacity-90 rounded-lg shadow-lg shadow-primary/20 transition-all flex items-center gap-2">
+<span class="material-icons-round text-lg">check</span>
+                     Save &amp; Verify
+                 </button>
+</div>
+</div>
+</div>
+</body></html>
+
+<!-- Order Agent Login -->
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Order Agent Login - XXLUTZ</title>
+<!-- Google Fonts: IBM Plex Sans as requested, plus Inter fallback -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Icons -->
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Configuration -->
+<script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#13daec",
+              "primary-dark": "#0eaebd",
+              "background-light": "#f6f8f8",
+              "background-dark": "#102022",
+              "surface-light": "#ffffff",
+              "surface-dark": "#162a2d",
+              "neutral-subtle": "#e8ebeb", // Derived from primary hue
+            },
+            fontFamily: {
+              "display": ["IBM Plex Sans", "Inter", "sans-serif"],
+              "body": ["IBM Plex Sans", "Inter", "sans-serif"]
+            },
+            borderRadius: {
+              "DEFAULT": "0.25rem", 
+              "lg": "0.5rem", 
+              "xl": "0.75rem", 
+              "full": "9999px"
+            },
+            boxShadow: {
+              'glow': '0 0 20px -5px rgba(19, 218, 236, 0.3)',
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 20px;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background-color: #334155;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-800 dark:text-slate-100 min-h-screen flex items-center justify-center p-4 antialiased transition-colors duration-200">
+<!-- Background Pattern/Decoration -->
+<div class="fixed inset-0 pointer-events-none overflow-hidden z-0 opacity-40 dark:opacity-20">
+<div class="absolute top-0 right-0 w-[500px] h-[500px] bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+<div class="absolute bottom-0 left-0 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+</div>
+<!-- Main Container -->
+<main class="w-full max-w-md relative z-10">
+<!-- Login Card -->
+<div class="bg-surface-light dark:bg-surface-dark shadow-xl dark:shadow-glow rounded-xl overflow-hidden border border-neutral-subtle dark:border-slate-700/50">
+<!-- Branding Header -->
+<div class="px-8 pt-10 pb-6 text-center">
+<!-- Brand Logo Placeholder -->
+<div class="w-16 h-16 bg-primary/10 rounded-xl flex items-center justify-center mx-auto mb-6 text-primary">
+<span class="material-icons text-4xl">inventory_2</span>
+</div>
+<h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white mb-2">
+<span class="text-red-600 font-black">XX</span>LUTZ <span class="text-slate-500 font-medium">Order Agent</span>
+</h1>
+<p class="text-sm text-slate-500 dark:text-slate-400">
+                    Secure dashboard for order extraction monitoring.
+                </p>
+</div>
+<!-- Form Section -->
+<div class="px-8 pb-10">
+<form action="#" class="space-y-5" method="POST">
+<!-- Username Input -->
+<div class="space-y-1.5">
+<label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" for="email">
+                            Username or Email
+                        </label>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-icons text-slate-400 text-lg">person</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-3 border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200 sm:text-sm" id="email" name="email" placeholder="agent@xxlutz.com" type="email"/>
+</div>
+</div>
+<!-- Password Input -->
+<div class="space-y-1.5">
+<div class="flex items-center justify-between">
+<label class="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400" for="password">
+                                Password
+                            </label>
+<a class="text-xs font-medium text-primary hover:text-primary-dark transition-colors" href="#">
+                                Forgot password?
+                            </a>
+</div>
+<div class="relative">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-icons text-slate-400 text-lg">lock</span>
+</div>
+<input class="block w-full pl-10 pr-3 py-3 border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all duration-200 sm:text-sm" id="password" name="password" placeholder="••••••••" type="password"/>
+</div>
+</div>
+<!-- Remember Me -->
+<div class="flex items-center">
+<input class="h-4 w-4 text-primary focus:ring-primary border-slate-300 rounded bg-slate-50 dark:bg-slate-700 dark:border-slate-600 dark:checked:bg-primary" id="remember-me" name="remember-me" type="checkbox"/>
+<label class="ml-2 block text-sm text-slate-600 dark:text-slate-300" for="remember-me">
+                            Remember me for 30 days
+                        </label>
+</div>
+<!-- Sign In Button -->
+<button class="w-full flex justify-center items-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-semibold text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-all duration-200 group" type="submit">
+                        Sign In
+                        <span class="material-icons ml-2 text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+</form>
+<!-- Divider -->
+<div class="relative mt-8 mb-6">
+<div aria-hidden="true" class="absolute inset-0 flex items-center">
+<div class="w-full border-t border-slate-200 dark:border-slate-700"></div>
+</div>
+<div class="relative flex justify-center">
+<span class="px-2 bg-surface-light dark:bg-surface-dark text-xs uppercase text-slate-400 dark:text-slate-500 font-medium tracking-wide">
+                            Or continue with
+                        </span>
+</div>
+</div>
+<!-- SSO Button -->
+<button class="w-full flex justify-center items-center py-2.5 px-4 border border-slate-200 dark:border-slate-600 rounded-lg shadow-sm bg-white dark:bg-slate-800 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-200 transition-all duration-200" type="button">
+<span class="material-icons mr-2 text-slate-500 dark:text-slate-400">domain</span>
+                    Single Sign-On (SSO)
+                </button>
+</div>
+<!-- Footer -->
+<div class="bg-slate-50 dark:bg-slate-900/50 px-8 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+<span>v3.4.1 (Stable)</span>
+<a class="hover:text-primary transition-colors flex items-center gap-1" href="#">
+<span class="material-icons text-[14px]">headset_mic</span>
+                    IT Support
+                </a>
+</div>
+</div>
+<!-- Outside Links/Info -->
+<div class="mt-6 text-center">
+<p class="text-xs text-slate-400 dark:text-slate-600">
+                Unauthorized access is prohibited. All activities are monitored.
+            </p>
+</div>
+</main>
+<!-- Simple Theme Toggle for Presentation -->
+<div class="fixed top-4 right-4 z-50">
+<button class="p-2 rounded-full bg-surface-light dark:bg-surface-dark shadow-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-primary transition-colors" onclick="document.documentElement.classList.toggle('dark')">
+<span class="material-icons dark:hidden">dark_mode</span>
+<span class="material-icons hidden dark:block">light_mode</span>
+</button>
+</div>
+</body></html>

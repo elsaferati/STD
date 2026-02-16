@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>Order Detail</h1>
+    <div class="subtitle">Message: {{ message_id }}</div>
+    <div class="subtitle">Received: {{ received_at or "Unknown" }}</div>
+  </div>
+  <div>
+    <div class="row" style="margin-top: 0;">
+      <a class="chip active" href="{{ url_for('index') }}">Back to dashboard</a>
+      {% if post_case %}
+      <span class="flag flag-post">By POST</span>
+      {% endif %}
+      {% if reply_needed and reply_mailto %}
+      <a class="button" href="{{ reply_mailto }}">Email Primex</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if saved %}
+<div class="section alert">
+  Changes saved.
+  {% if xml_regenerated %} XML files regenerated with your changes.{% endif %}
+</div>
+{% endif %}
+
+{% if exported %}
+<div class="section alert">
+  XML files generated.
+</div>
+{% endif %}
+
+{% if parse_error %}
+<div class="section alert">
+  Parse error: {{ parse_error }}
+</div>
+{% endif %}
+
+{% if is_editable %}
+<div class="section">
+  <div class="subtitle">Review needed: you can edit header and item fields for this order.</div>
+</div>
+{% endif %}
+
+<div class="section">
+  <h2>Downloads</h2>
+  <h3 style="margin-top: 0; margin-bottom: 0.5rem; font-size: 1rem; color: #666;">XML Files</h3>
+  {% if xml_files %}
+  <div class="row">
+    {% for xml in xml_files %}
+    <a class="button" href="{{ url_for('download_file', filename=xml.filename) }}" download>
+      <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+      </svg>
+      {{ xml.name }}
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtitle">No XML files for this order. They are generated when the order is processed by the pipeline. If you just processed it, check that the pipeline uses the same output directory as this dashboard.</p>
+  <form method="post" action="{{ url_for('export_order_xml', order_id=order_id) }}" style="margin-top: 0.5rem;">
+    <button class="button" type="submit">Generate XML files</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if is_editable %}
+<form method="post">
+{% endif %}
+
+<div class="section">
+  <div class="card-top">
+    <span class="badge {{ status }}">{{ status|upper }}</span>
+  </div>
+  <h2>Header</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Value</th>
+        <th>Source</th>
+        <th>Confidence</th>
+        <th>Derived</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in header_rows %}
+      <tr>
+        <td>{{ row.field }}</td>
+        <td>
+          {% if is_editable and row.field in editable_header_fields %}
+            {% if row.field in ["lieferanschrift", "store_address"] %}
+            <textarea class="textarea" name="header_{{ row.field }}" rows="2">{{ row.value }}</textarea>
+            {% else %}
+            <input class="input" type="text" name="header_{{ row.field }}" value="{{ row.value }}">
+            {% endif %}
+          {% else %}
+            {{ row.value or "-" }}
+          {% endif %}
+        </td>
+        <td>{{ row.source or "-" }}</td>
+        <td>{{ row.confidence or "-" }}</td>
+        <td>{{ row.derived_from or "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Items</h2>
+  {% if not item_rows %}
+  <p class="subtitle">No items extracted.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Line</th>
+        <th>Artikelnummer</th>
+        <th>Modellnummer</th>
+        <th>Menge</th>
+        <th>Furncloud ID</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in item_rows %}
+      <tr>
+        <td>{{ item.line_no }}</td>
+        <td>
+          {% if is_editable %}
+          <input class="input" type="text" name="item_{{ loop.index0 }}_artikelnummer" value="{{ item.artikelnummer.value }}">
+          {% else %}
+          {{ item.artikelnummer.value or "-" }}
+          {% endif %}
+        </td>
+        <td>
+          {% if is_editable %}
+          <input class="input" type="text" name="item_{{ loop.index0 }}_modellnummer" value="{{ item.modellnummer.value }}">
+          {% else %}
+          {{ item.modellnummer.value or "-" }}
+          {% endif %}
+        </td>
+        <td>
+          {% if is_editable %}
+          <input class="input" type="text" name="item_{{ loop.index0 }}_menge" value="{{ item.menge.value }}">
+          {% else %}
+          {{ item.menge.value or "-" }}
+          {% endif %}
+        </td>
+        <td>
+          {% if is_editable %}
+          <input class="input" type="text" name="item_{{ loop.index0 }}_furncloud_id" value="{{ item.furncloud_id.value }}">
+          {% else %}
+          {{ item.furncloud_id.value or "-" }}
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td></td>
+        <td class="muted">Source: {{ item.artikelnummer.source or "-" }}</td>
+        <td class="muted">Source: {{ item.modellnummer.source or "-" }}</td>
+        <td class="muted">Source: {{ item.menge.source or "-" }}</td>
+        <td class="muted">Source: {{ item.furncloud_id.source or "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+{% if is_editable %}
+<div class="section">
+  <div class="row" style="margin-top: 0;">
+    <button class="button" type="submit">Save changes</button>
+  </div>
+</div>
+</form>
+{% endif %}
+
+<div class="section">
+  <h2>Warnings</h2>
+  {% if not warnings %}
+  <p class="subtitle">No warnings.</p>
+  {% else %}
+  <ul>
+    {% for warning in warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
+<div class="section">
+  <h2>Errors</h2>
+  {% if not errors %}
+  <p class="subtitle">No errors.</p>
+  {% else %}
+  <ul>
+    {% for error in errors %}
+    <li>{{ error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
+<div class="section">
+  <h2>Raw JSON</h2>
+  <pre class="json">{{ raw_json }}</pre>
+</div>
+{% endblock %}

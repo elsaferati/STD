@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>Order Extraction Dashboard</h1>
+    <div class="subtitle">
+      Review extracted fields per email order and inspect conflicts or missing data.
+    </div>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="label">Total</div>
+      <div class="value">{{ counts.total }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Ok</div>
+      <div class="value">{{ counts.ok }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Partial</div>
+      <div class="value">{{ counts.partial }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Failed</div>
+      <div class="value">{{ counts.failed }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="filters">
+  <a class="chip {% if date_scope == 'today' %}active{% endif %}" href="{{ url_for('index', date_scope='today', status=status_filter) }}">
+    Today ({{ counts.total }})
+  </a>
+  <a class="chip {% if date_scope == 'all' %}active{% endif %}" href="{{ url_for('index', date_scope='all', status=status_filter) }}">
+    All
+  </a>
+</div>
+
+<div class="filters">
+  <a class="chip {% if status_filter == 'all' %}active{% endif %}" href="{{ url_for('index', date_scope=date_scope, status='all') }}">
+    All ({{ counts.total }})
+  </a>
+  <a class="chip {% if status_filter == 'ok' %}active{% endif %}" href="{{ url_for('index', date_scope=date_scope, status='ok') }}">
+    Ok ({{ counts.ok }})
+  </a>
+  <a class="chip {% if status_filter == 'partial' %}active{% endif %}" href="{{ url_for('index', date_scope=date_scope, status='partial') }}">
+    Partial ({{ counts.partial }})
+  </a>
+  <a class="chip {% if status_filter == 'failed' %}active{% endif %}" href="{{ url_for('index', date_scope=date_scope, status='failed') }}">
+    Failed ({{ counts.failed }})
+  </a>
+</div>
+
+{% if not orders %}
+<div class="section">
+  <h2>No orders found</h2>
+  <p class="subtitle">
+    Run the extraction pipeline to generate JSON files inside the output folder.
+  </p>
+</div>
+{% endif %}
+
+{% if orders %}
+<div class="section">
+  <div class="table-wrap">
+    <table class="table dashboard-table">
+      <thead>
+        <tr>
+          <th class="col-idx num">#</th>
+          <th class="col-status">Status</th>
+          <th class="col-received nowrap">Received At</th>
+          <th class="col-ticket nowrap">Ticket Number</th>
+          <th class="col-kdnr">Kundennummer</th>
+          <th class="col-komnr">Kom Nr</th>
+          <th class="col-komname">Kom Name</th>
+          <th class="col-liefer">Liefertermin</th>
+          <th class="col-wunsch">Wunschtermin</th>
+          <th class="col-iln nowrap">ILN</th>
+          <th class="col-num col-items num nowrap">Items</th>
+          <th class="col-num col-warnings num nowrap">Warnings</th>
+          <th class="col-num col-errors num nowrap">Errors</th>
+          <th class="col-actions nowrap">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in orders %}
+        <tr class="animate">
+          <td class="col-idx num nowrap">{{ order.display_index }}</td>
+          <td>
+            <span class="badge {{ order.status }}">{{ order.status|upper }}</span>
+            {% if order.human_review_needed %}
+            <span class="flag flag-review">REVIEW</span>
+            {% endif %}
+            {% if order.reply_needed %}
+            <span class="flag flag-reply">REPLY</span>
+            {% endif %}
+            {% if order.post_case %}
+            <span class="flag flag-post">By POST</span>
+            {% endif %}
+          </td>
+          <td class="col-received nowrap">{{ order.received_at or "-" }}</td>
+          <td class="col-ticket nowrap">{{ order.ticket_number or "-" }}</td>
+          <td class="col-kdnr nowrap">{{ order.kundennummer or "-" }}</td>
+          <td class="col-komnr nowrap">{{ order.kom_nr or "-" }}</td>
+          <td class="col-komname nowrap">{{ order.kom_name or "-" }}</td>
+          <td class="col-liefer" title="{{ order.liefertermin or '-' }}"><div class="clamp-2">{{ order.liefertermin or "-" }}</div></td>
+          <td class="col-wunsch" title="{{ order.wunschtermin or '-' }}"><div class="clamp-2">{{ order.wunschtermin or "-" }}</div></td>
+          <td class="col-iln nowrap">{{ order.iln or "-" }}</td>
+          <td class="col-num col-items num nowrap">{{ order.item_count }}</td>
+          <td class="col-num col-warnings num nowrap">{{ order.warnings_count }}</td>
+          <td class="col-num col-errors num nowrap">{{ order.errors_count }}</td>
+          <td class="col-actions">
+            <div class="actions">
+              {% if order.reply_needed and order.reply_mailto %}
+              <a class="cta secondary" href="{{ order.reply_mailto }}">Email</a>
+              {% endif %}
+              <a class="cta" href="{{ url_for('order_detail', order_id=order.id) }}">
+                {% if order.human_review_needed %}Edit{% else %}View{% endif %}
+              </a>
+            </div>
+            {% if order.parse_error %}
+            <div class="alert mini">Parse error: {{ order.parse_error }}</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

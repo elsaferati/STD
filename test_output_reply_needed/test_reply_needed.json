@@ -1,0 +1,117 @@
+{
+  "header": {
+    "kundennummer": {
+      "value": "123456",
+      "source": "pdf",
+      "confidence": 0.9
+    },
+    "human_review_needed": {
+      "value": false,
+      "source": "pdf",
+      "confidence": 1.0
+    },
+    "reply_needed": {
+      "value": true,
+      "source": "pdf",
+      "confidence": 1.0
+    },
+    "ticket_number": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "adressnummer": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "kom_nr": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "kom_name": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "liefertermin": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "wunschtermin": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "bestelldatum": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "lieferanschrift": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "tour": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "store_name": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "store_address": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "seller": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "delivery_week": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "iln": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "iln_anl": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "iln_fil": {
+      "value": "",
+      "source": "derived",
+      "confidence": 0.0
+    },
+    "post_case": {
+      "value": false,
+      "source": "derived",
+      "confidence": 0.0
+    }
+  },
+  "items": [],
+  "warnings": [
+    "Reply needed: STATT X BITTE Y",
+    "Missing header fields: adressnummer, kom_nr, kom_name, liefertermin, wunschtermin, bestelldatum, lieferanschrift, tour, store_name, store_address, seller, delivery_week, iln, iln_anl, iln_fil",
+    "Reply needed: Missing critical header fields: kom_nr",
+    "ticket number is missing",
+    "No items extracted.",
+    "Auto-reply email sent to 00primex.eu@gmail.com."
+  ],
+  "errors": [],
+  "message_id": "test_reply_needed",
+  "received_at": "2025-01-01T12:00:00",
+  "status": "partial"
+}
