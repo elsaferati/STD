@@ -1,8 +1,8 @@
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
+import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
 import { downloadBlob } from "../utils/download";
 import { formatDateTime, statusLabel } from "../utils/format";
@@ -18,7 +18,7 @@ function flagLabel(order) {
 }
 
 export function OrdersPage() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -27,7 +27,6 @@ export function OrdersPage() {
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionBusy, setActionBusy] = useState("");
-  const [searchInput, setSearchInput] = useState(searchParams.get("q") || "");
 
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -55,10 +54,6 @@ export function OrdersPage() {
     }
     return "all";
   }, [fromDate, humanReviewParam, replyNeededParam, toDate, todayIso]);
-
-  useEffect(() => {
-    setSearchInput(searchParams.get("q") || "");
-  }, [searchParams]);
 
   const updateParams = useCallback(
     (updates, options = {}) => {
@@ -126,11 +121,6 @@ export function OrdersPage() {
     updateParams({ status: next.size ? Array.from(next).join(",") : null });
   };
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
-    updateParams({ q: searchInput || null });
-  };
-
   const handleExportCsv = async () => {
     setActionBusy("csv");
     setActionError("");
@@ -182,148 +172,128 @@ export function OrdersPage() {
   const hasPrev = pagination.page > 1;
   const hasNext = pagination.page < pagination.total_pages;
 
-  return (
-    <div className="bg-background-light text-slate-800 font-display min-h-screen flex overflow-hidden">
-      <aside className="w-72 bg-surface-light border-r border-slate-200 flex flex-col z-20 shadow-sm flex-shrink-0">
-        <div className="h-16 flex items-center px-6 border-b border-slate-100">
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-primary to-cyan-600 flex items-center justify-center mr-3 shadow-lg shadow-primary/20">
-            <span className="text-white font-bold text-lg">X</span>
-          </div>
-          <span className="font-bold text-xl tracking-tight text-slate-900">XXLUTZ <span className="text-primary font-normal">Agent</span></span>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+  const sidebarContent = (
+    <div className="p-6 space-y-8">
+      <div>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+          <span className="material-icons text-sm mr-1">date_range</span>
+          Extraction Date
+        </h3>
+        <div className="space-y-3">
           <div>
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
-              <span className="material-icons text-sm mr-1">date_range</span>
-              Extraction Date
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block" htmlFor="fromDate">From</label>
-                <input
-                  id="fromDate"
-                  type="date"
-                  className="w-full bg-slate-50 border-slate-200 rounded text-sm"
-                  value={fromDate}
-                  onChange={(event) => updateParams({ from: event.target.value || null })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block" htmlFor="toDate">To</label>
-                <input
-                  id="toDate"
-                  type="date"
-                  className="w-full bg-slate-50 border-slate-200 rounded text-sm"
-                  value={toDate}
-                  onChange={(event) => updateParams({ to: event.target.value || null })}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
-              <span className="material-icons text-sm mr-1">rule</span>
-              Extraction Status
-            </h3>
-            <div className="space-y-2">
-              {STATUS_OPTIONS.map((status) => (
-                <label key={status} className="flex items-center group cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedStatuses.has(status)}
-                    onChange={() => toggleStatus(status)}
-                    className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
-                  />
-                  <span className="ml-3 text-sm text-slate-600 group-hover:text-primary transition-colors">
-                    {statusLabel(status)}
-                  </span>
-                  <span className="ml-auto text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                    {payload?.counts?.status?.[status] ?? 0}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
-              <span className="material-icons text-sm mr-1">flag</span>
-              Workflow Flags
-            </h3>
-            <div className="space-y-4">
-              <label className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">Reply Needed</span>
-                <input
-                  type="checkbox"
-                  checked={replyNeededParam === "true"}
-                  onChange={(event) => updateParams({ reply_needed: event.target.checked ? "true" : null })}
-                  className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">Human Review</span>
-                <input
-                  type="checkbox"
-                  checked={humanReviewParam === "true"}
-                  onChange={(event) => updateParams({ human_review_needed: event.target.checked ? "true" : null })}
-                  className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
-                />
-              </label>
-              <label className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">Post Case</span>
-                <input
-                  type="checkbox"
-                  checked={postCaseParam === "true"}
-                  onChange={(event) => updateParams({ post_case: event.target.checked ? "true" : null })}
-                  className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6 z-10">
-          <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
-            <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+            <label className="text-xs text-slate-500 mb-1 block" htmlFor="fromDate">From</label>
             <input
-              className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-              placeholder="Search by ticket, KOM, message id, filename"
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
+              id="fromDate"
+              type="date"
+              className="w-full bg-slate-50 border-slate-200 rounded text-sm"
+              value={fromDate}
+              onChange={(event) => updateParams({ from: event.target.value || null })}
             />
-          </form>
-          <div className="flex items-center gap-3 ml-4">
-            <button onClick={logout} type="button" className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">Logout</button>
           </div>
-        </header>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block" htmlFor="toDate">To</label>
+            <input
+              id="toDate"
+              type="date"
+              className="w-full bg-slate-50 border-slate-200 rounded text-sm"
+              value={toDate}
+              onChange={(event) => updateParams({ to: event.target.value || null })}
+            />
+          </div>
+        </div>
+      </div>
 
-        <div className="bg-surface-light px-6 pt-6 pb-0 border-b border-slate-200 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 mb-1">Orders Workspace</h1>
-              <p className="text-sm text-slate-500">Manage and validate extracted order data.</p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleExportCsv}
-                disabled={actionBusy === "csv"}
-                className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
-              >
-                <span className="material-icons text-base">file_download</span>
-                {actionBusy === "csv" ? "Exporting..." : "Export CSV"}
-              </button>
-              <button type="button" disabled className="bg-primary/40 text-white px-4 py-2 rounded text-sm font-medium cursor-not-allowed">
-                Manual Order
-              </button>
+      <div>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+          <span className="material-icons text-sm mr-1">rule</span>
+          Extraction Status
+        </h3>
+        <div className="space-y-2">
+          {STATUS_OPTIONS.map((status) => (
+            <label key={status} className="flex items-center group cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedStatuses.has(status)}
+                onChange={() => toggleStatus(status)}
+                className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+              />
+              <span className="ml-3 text-sm text-slate-600 group-hover:text-primary transition-colors">
+                {statusLabel(status)}
+              </span>
+              <span className="ml-auto text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                {payload?.counts?.status?.[status] ?? 0}
+              </span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+          <span className="material-icons text-sm mr-1">flag</span>
+          Workflow Flags
+        </h3>
+        <div className="space-y-4">
+          <label className="flex items-center justify-between">
+            <span className="text-sm text-slate-700">Reply Needed</span>
+            <input
+              type="checkbox"
+              checked={replyNeededParam === "true"}
+              onChange={(event) => updateParams({ reply_needed: event.target.checked ? "true" : null })}
+              className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+            />
+          </label>
+          <label className="flex items-center justify-between">
+            <span className="text-sm text-slate-700">Human Review</span>
+            <input
+              type="checkbox"
+              checked={humanReviewParam === "true"}
+              onChange={(event) => updateParams({ human_review_needed: event.target.checked ? "true" : null })}
+              className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+            />
+          </label>
+          <label className="flex items-center justify-between">
+            <span className="text-sm text-slate-700">Post Case</span>
+            <input
+              type="checkbox"
+              checked={postCaseParam === "true"}
+              onChange={(event) => updateParams({ post_case: event.target.checked ? "true" : null })}
+              className="h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+            />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <AppShell sidebarContent={sidebarContent}>
+      <div className="space-y-4">
+        <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-slate-200">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h1 className="text-2xl font-bold text-slate-900 mb-1">Orders Workspace</h1>
+                <p className="text-sm text-slate-500">Manage and validate extracted order data.</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  disabled={actionBusy === "csv"}
+                  className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">file_download</span>
+                  {actionBusy === "csv" ? "Exporting..." : "Export CSV"}
+                </button>
+                <button type="button" disabled className="bg-primary/40 text-white px-4 py-2 rounded text-sm font-medium cursor-not-allowed">
+                  Manual Order
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-6 overflow-x-auto">
+          <div className="px-6 py-3 flex items-center gap-6 overflow-x-auto">
             <button
               type="button"
               onClick={() => applyTab("all")}
@@ -355,114 +325,111 @@ export function OrdersPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto p-6">
-          {error ? <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
-          {actionError ? <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
+        {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
+        {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
 
-          <div className="bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-            <table className="w-full text-left text-sm whitespace-nowrap">
-              <thead className="bg-slate-50 border-b border-slate-200">
-                <tr>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Order ID</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Date & Time</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Customer</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Amount</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Status</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500">Flags</th>
-                  <th className="px-4 py-3 font-semibold text-slate-500 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
-                    <td className="px-4 py-3">
+        <div className="bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="px-4 py-3 font-semibold text-slate-500">Order ID</th>
+                <th className="px-4 py-3 font-semibold text-slate-500">Date & Time</th>
+                <th className="px-4 py-3 font-semibold text-slate-500">Customer</th>
+                <th className="px-4 py-3 font-semibold text-slate-500">Amount</th>
+                <th className="px-4 py-3 font-semibold text-slate-500">Status</th>
+                <th className="px-4 py-3 font-semibold text-slate-500">Flags</th>
+                <th className="px-4 py-3 font-semibold text-slate-500 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {orders.map((order) => (
+                <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/orders/${order.id}`)}
+                      className="font-medium text-primary hover:underline"
+                    >
+                      {order.ticket_number || order.kom_nr || order.id}
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at)}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-slate-900">{order.kom_name || "-"}</div>
+                    <div className="text-xs text-slate-500">{order.store_name || order.kundennummer || "-"}</div>
+                  </td>
+                  <td className="px-4 py-3 font-medium text-slate-900">{order.delivery_week || order.liefertermin || "-"}</td>
+                  <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order)}</td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
                       <button
                         type="button"
-                        onClick={() => navigate(`/orders/${order.id}`)}
-                        className="font-medium text-primary hover:underline"
+                        onClick={() => handleExportXml(order.id)}
+                        disabled={actionBusy === `export:${order.id}`}
+                        className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
+                        title="Export XML"
                       >
-                        {order.ticket_number || order.kom_nr || order.id}
+                        <span className="material-icons text-lg">code</span>
                       </button>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at)}</td>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-slate-900">{order.kom_name || "-"}</div>
-                      <div className="text-xs text-slate-500">{order.store_name || order.kundennummer || "-"}</div>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-slate-900">{order.delivery_week || order.liefertermin || "-"}</td>
-                    <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                    <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleExportXml(order.id)}
-                          disabled={actionBusy === `export:${order.id}`}
-                          className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
-                          title="Export XML"
-                        >
-                          <span className="material-icons text-lg">code</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadXml(order.id)}
-                          disabled={actionBusy === `download:${order.id}`}
-                          className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
-                          title="Download XML"
-                        >
-                          <span className="material-icons text-lg">download</span>
-                        </button>
-                        <Link
-                          to={`/orders/${order.id}`}
-                          className="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
-                          title="View Details"
-                        >
-                          <span className="material-icons text-lg">visibility</span>
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {!loading && orders.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>No matching orders.</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadXml(order.id)}
+                        disabled={actionBusy === `download:${order.id}`}
+                        className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
+                        title="Download XML"
+                      >
+                        <span className="material-icons text-lg">download</span>
+                      </button>
+                      <Link
+                        to={`/orders/${order.id}`}
+                        className="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
+                        title="View Details"
+                      >
+                        <span className="material-icons text-lg">visibility</span>
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!loading && orders.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>No matching orders.</td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
 
-          <div className="mt-4 flex items-center justify-between px-2">
-            <div className="text-sm text-slate-500">
-              Showing <span className="font-medium text-slate-900">{orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0}</span>
-              {" "}to{" "}
-              <span className="font-medium text-slate-900">{(pagination.page - 1) * (pagination.page_size || 0) + orders.length}</span>
-              {" "}of <span className="font-medium text-slate-900">{pagination.total || 0}</span> results
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={!hasPrev}
-                onClick={() => updateParams({ page: pagination.page - 1 }, { resetPage: false })}
-                className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
-              >
-                <span className="material-icons text-sm">chevron_left</span>
-              </button>
-              <span className="px-3 py-1 bg-primary text-white rounded text-sm font-medium">{pagination.page}</span>
-              <span className="text-sm text-slate-500">/ {pagination.total_pages || 1}</span>
-              <button
-                type="button"
-                disabled={!hasNext}
-                onClick={() => updateParams({ page: pagination.page + 1 }, { resetPage: false })}
-                className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
-              >
-                <span className="material-icons text-sm">chevron_right</span>
-              </button>
-            </div>
+        <div className="flex items-center justify-between px-2">
+          <div className="text-sm text-slate-500">
+            Showing <span className="font-medium text-slate-900">{orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0}</span>
+            {" "}to{" "}
+            <span className="font-medium text-slate-900">{(pagination.page - 1) * (pagination.page_size || 0) + orders.length}</span>
+            {" "}of <span className="font-medium text-slate-900">{pagination.total || 0}</span> results
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!hasPrev}
+              onClick={() => updateParams({ page: pagination.page - 1 }, { resetPage: false })}
+              className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
+            >
+              <span className="material-icons text-sm">chevron_left</span>
+            </button>
+            <span className="px-3 py-1 bg-primary text-white rounded text-sm font-medium">{pagination.page}</span>
+            <span className="text-sm text-slate-500">/ {pagination.total_pages || 1}</span>
+            <button
+              type="button"
+              disabled={!hasNext}
+              onClick={() => updateParams({ page: pagination.page + 1 }, { resetPage: false })}
+              className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
+            >
+              <span className="material-icons text-sm">chevron_right</span>
+            </button>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
-

@@ -1,33 +1,22 @@
-
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
+import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
 import { formatDateTime, formatPercent } from "../utils/format";
 
-function MetricCard({ title, value, subtitle, icon, accentClass }) {
+function KpiCard({ title, value, subtitle, icon }) {
   return (
-    <div className={`bg-surface-light p-4 rounded-xl border shadow-sm ${accentClass}`}>
-      <div className="flex justify-between items-start mb-2">
-        <span className="text-slate-500 text-sm font-medium">{title}</span>
-        <span className="material-icons text-primary bg-primary/10 p-1 rounded text-lg">{icon}</span>
+    <div className="bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm text-slate-500 font-medium">{title}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+          <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
+        </div>
+        <span className="material-icons text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
       </div>
-      <div>
-        <div className="text-2xl font-bold">{value}</div>
-        <div className="text-xs text-slate-500 mt-1">{subtitle}</div>
-      </div>
-    </div>
-  );
-}
-
-function QueueCard({ title, value, subtitle }) {
-  return (
-    <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
-      <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-      <span className="text-xs font-semibold uppercase tracking-wider text-primary mb-1">{title}</span>
-      <div className="text-3xl font-bold text-slate-800">{value}</div>
-      <span className="text-[10px] text-slate-400 mt-1">{subtitle}</span>
     </div>
   );
 }
@@ -48,12 +37,10 @@ function buildLineSeries(points) {
 }
 
 export function OverviewPage() {
-  const { token, logout } = useAuth();
-  const navigate = useNavigate();
+  const { token } = useAuth();
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [searchInput, setSearchInput] = useState("");
 
   const loadOverview = useCallback(async () => {
     try {
@@ -73,151 +60,67 @@ export function OverviewPage() {
     return () => clearInterval(intervalId);
   }, [loadOverview]);
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
-    const query = searchInput.trim();
-    navigate(`/orders${query ? `?q=${encodeURIComponent(query)}` : ""}`);
-  };
-
-  const statusByDay = overview?.status_by_day || [];
-  const maxDayTotal = Math.max(...statusByDay.map((bucket) => Number(bucket.total || 0)), 1);
+  const queueCounts = overview?.queue_counts || {};
+  const replyNeeded = Number(queueCounts.reply_needed || 0);
+  const reviewNeeded = Number(queueCounts.human_review_needed || 0);
+  const postCase = Number(queueCounts.post_case || 0);
+  const needsAttention = replyNeeded + reviewNeeded + postCase;
+  const needsAttentionSubtitle = `Reply ${replyNeeded} · Review ${reviewNeeded} · Post ${postCase}`;
   const lineSeries = buildLineSeries(overview?.processed_by_hour || []);
 
   return (
-    <div className="bg-background-light text-slate-800 font-display min-h-screen flex flex-col">
-      <header className="bg-surface-light border-b border-slate-200 sticky top-0 z-30">
-        <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center text-primary font-bold text-xl">
-              XL
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight">XXLUTZ Operations Control</h1>
-              <p className="text-xs text-slate-500">Order Extraction Dashboard</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <form onSubmit={handleSearchSubmit} className="relative hidden md:block w-64">
-              <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-                <span className="material-icons text-lg">search</span>
-              </span>
-              <input
-                className="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                placeholder="Search ticket #..."
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </form>
-            <Link to="/orders" className="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary hover:text-primary transition-colors">
-              Orders
-            </Link>
-            <button
-              type="button"
-              onClick={logout}
-              className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700 transition-colors"
-            >
-              Logout
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-[1600px] mx-auto w-full p-6 space-y-6">
+    <AppShell>
+      <div className="space-y-6">
         {error ? (
           <div className="bg-danger/10 border border-danger/20 text-danger rounded-lg p-3 text-sm">{error}</div>
         ) : null}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
-          <div className="col-span-1 md:col-span-2 lg:col-span-4 grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <MetricCard
-              title="Total Orders (Today)"
-              value={overview?.today?.total ?? 0}
-              subtitle={`Last 24h: ${overview?.last_24h?.total ?? 0}`}
-              icon="inventory_2"
-              accentClass=""
-            />
-            <MetricCard
-              title="OK Rate"
-              value={formatPercent(overview?.today?.ok_rate)}
-              subtitle={`OK: ${overview?.today?.ok ?? 0}`}
-              icon="check_circle"
-              accentClass="border-l-4 border-l-success"
-            />
-            <MetricCard
-              title="Partial Rate"
-              value={formatPercent(overview?.today?.partial_rate)}
-              subtitle={`Partial: ${overview?.today?.partial ?? 0}`}
-              icon="warning"
-              accentClass="border-l-4 border-l-warning"
-            />
-            <MetricCard
-              title="Failed Rate"
-              value={formatPercent(overview?.today?.failed_rate)}
-              subtitle={`Failed: ${overview?.today?.failed ?? 0}`}
-              icon="error"
-              accentClass="border-l-4 border-l-danger"
-            />
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+          <KpiCard
+            title="Today Orders"
+            value={overview?.today?.total ?? 0}
+            subtitle="Orders received today"
+            icon="inventory_2"
+          />
+          <KpiCard
+            title="OK Rate"
+            value={formatPercent(overview?.today?.ok_rate)}
+            subtitle={`OK ${overview?.today?.ok ?? 0}`}
+            icon="check_circle"
+          />
+          <KpiCard
+            title="Needs Attention"
+            value={needsAttention}
+            subtitle={needsAttentionSubtitle}
+            icon="priority_high"
+          />
+          <KpiCard
+            title="Last 24h Orders"
+            value={overview?.last_24h?.total ?? 0}
+            subtitle="Processed in the last 24 hours"
+            icon="schedule"
+          />
 
-          <div className="col-span-1 md:col-span-2 lg:col-span-4 xl:col-span-3 grid grid-cols-3 gap-4">
-            <QueueCard title="Reply Needed" value={overview?.queue_counts?.reply_needed ?? 0} subtitle="Needs customer response" />
-            <QueueCard title="Review" value={overview?.queue_counts?.human_review_needed ?? 0} subtitle="Manual verification" />
-            <QueueCard title="Post Case" value={overview?.queue_counts?.post_case ?? 0} subtitle="High priority" />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-surface-light rounded-xl border border-slate-200 p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-6">
+          <div className="bg-surface-light rounded-xl border border-slate-200 p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <h3 className="font-bold text-lg">Extraction Performance</h3>
-                <p className="text-sm text-slate-500">Last 7 Days by Status</p>
+                <h3 className="text-sm font-semibold text-slate-900">24h Trend</h3>
+                <p className="text-xs text-slate-500">Processed by hour</p>
               </div>
-              <div className="flex gap-2 text-xs font-medium">
-                <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />OK</div>
-                <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />Partial</div>
-                <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />Failed</div>
-              </div>
+              <span className="material-icons text-primary/60">show_chart</span>
             </div>
-            <div className="w-full h-48 flex items-end justify-between gap-2 px-2">
-              {statusByDay.map((bucket) => {
-                const okHeight = `${(Number(bucket.ok || 0) / maxDayTotal) * 100}%`;
-                const partialHeight = `${(Number(bucket.partial || 0) / maxDayTotal) * 100}%`;
-                const failedHeight = `${(Number(bucket.failed || 0) / maxDayTotal) * 100}%`;
-                return (
-                  <div key={bucket.date} className="flex-1 flex flex-col items-center gap-2">
-                    <div className="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
-                      <div className="bg-danger w-full" style={{ height: failedHeight }} />
-                      <div className="bg-warning w-full" style={{ height: partialHeight }} />
-                      <div className="bg-success w-full" style={{ height: okHeight }} />
-                    </div>
-                    <span className="text-xs text-slate-400">{bucket.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="bg-surface-light rounded-xl border border-slate-200 p-6 shadow-sm flex flex-col">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="font-bold text-lg">Queue Velocity</h3>
-                <p className="text-sm text-slate-500">Processed outputs (24h)</p>
-              </div>
-              <span className="material-icons text-primary/50">ssid_chart</span>
-            </div>
-            <div className="relative flex-1 w-full min-h-[180px] rounded-lg border border-slate-100 p-2">
+            <div className="relative h-24 w-full rounded border border-slate-100 p-2">
               <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
                 <polyline
                   fill="none"
                   stroke="#13daec"
-                  strokeWidth="2"
+                  strokeWidth="3"
                   points={lineSeries}
                 />
               </svg>
             </div>
-            <div className="flex justify-between text-xs text-slate-400 mt-2">
-              <span>24h Ago</span>
+            <div className="flex justify-between text-[11px] text-slate-400 mt-2">
+              <span>24h ago</span>
               <span>Now</span>
             </div>
           </div>
@@ -295,8 +198,7 @@ export function OverviewPage() {
             </table>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
-
