@@ -494,8 +494,8 @@ export function OrdersPage() {
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">Nr</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.orderId")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-20 bg-slate-50 border-r border-slate-200">Nr</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.amount")}</th>
@@ -507,14 +507,14 @@ export function OrdersPage() {
                 <tbody className="divide-y divide-slate-100">
                   {orders.map((order, index) => (
                     <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-slate-500 border-r border-slate-100 sticky left-0 z-10 bg-surface-light">
                         {(pagination.page - 1) * (pagination.page_size || orders.length || 0) + index + 1}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 w-40 max-w-40">
                         <button
                           type="button"
                           onClick={() => navigate(`/orders/${order.id}`)}
-                          className="font-medium text-primary hover:underline"
+                          className="font-medium text-primary hover:underline block w-full text-left truncate"
                         >
                           {order.ticket_number || order.kom_nr || order.id}
                         </button>
