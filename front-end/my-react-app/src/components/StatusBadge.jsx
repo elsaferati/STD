@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/I18nContext";
 import { statusLabel } from "../utils/format";
 
 const STYLES = {
@@ -8,13 +9,14 @@ const STYLES = {
 };
 
 export function StatusBadge({ status }) {
+  const { t } = useI18n();
   const normalized = (status || "unknown").toLowerCase();
   const color = STYLES[normalized] || STYLES.unknown;
 
   return (
     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${color}`}>
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {statusLabel(normalized)}
+      {statusLabel(normalized, t)}
     </span>
   );
 }

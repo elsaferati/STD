@@ -5,16 +5,18 @@ import { fetchBlob, fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { downloadBlob } from "../utils/download";
 import { formatDateTime, statusLabel } from "../utils/format";
+import { useI18n } from "../i18n/I18nContext";
 
 const STATUS_OPTIONS = ["ok", "partial", "failed", "unknown"];
 
-function flagLabel(order) {
+function flagLabel(order, t) {
   const labels = [];
-  if (order.reply_needed) labels.push("Reply");
-  if (order.human_review_needed) labels.push("Review");
-  if (order.post_case) labels.push("Post");
+  if (order.reply_needed) labels.push(t("flags.reply"));
+  if (order.human_review_needed) labels.push(t("flags.review"));
+  if (order.post_case) labels.push(t("flags.post"));
   return labels.length ? labels.join(" | ") : "-";
 }
 
@@ -22,6 +24,7 @@ export function OrdersPage() {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t, lang } = useI18n();
 
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,10 +66,6 @@ export function OrdersPage() {
     return "all";
   }, [fromDate, humanReviewParam, replyNeededParam, toDate, todayIso]);
 
-  useEffect(() => {
-    setSearchInput(searchParams.get("q") || "");
-  }, [searchParams]);
-
   const updateParams = useCallback(
     (updates, options = {}) => {
       const { resetPage = true } = options;
@@ -95,11 +94,11 @@ export function OrdersPage() {
       setPayload(result);
       setError("");
     } catch (requestError) {
-      setError(requestError.message || "Failed to load orders.");
+      setError(requestError.message || t("orders.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [queryString, token]);
+  }, [queryString, t, token]);
 
   useEffect(() => {
     loadOrders();
@@ -135,7 +134,8 @@ export function OrdersPage() {
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
-    updateParams({ q: searchInput || null });
+    const query = searchInput.trim();
+    updateParams({ q: query || null });
   };
 
   const handleExportCsv = async () => {
@@ -145,7 +145,7 @@ export function OrdersPage() {
       const blob = await fetchBlob(`/api/orders.csv${queryString ? `?${queryString}` : ""}`, { token });
       downloadBlob(blob, "orders.csv");
     } catch (requestError) {
-      setActionError(requestError.message || "CSV export failed.");
+      setActionError(requestError.message || t("orders.csvExportFailed"));
     } finally {
       setActionBusy("");
     }
@@ -158,7 +158,7 @@ export function OrdersPage() {
       await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST", token });
       await loadOrders();
     } catch (requestError) {
-      setActionError(requestError.message || "XML export failed.");
+      setActionError(requestError.message || t("orders.xmlExportFailed"));
     } finally {
       setActionBusy("");
     }
@@ -171,12 +171,12 @@ export function OrdersPage() {
       const detail = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`, { token });
       const xmlFile = detail?.xml_files?.[0];
       if (!xmlFile) {
-        throw new Error("No XML file available for this order.");
+        throw new Error(t("orders.noXmlAvailable"));
       }
       const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`, { token });
       downloadBlob(blob, xmlFile.filename);
     } catch (requestError) {
-      setActionError(requestError.message || "XML download failed.");
+      setActionError(requestError.message || t("orders.xmlDownloadFailed"));
     } finally {
       setActionBusy("");
     }
@@ -231,7 +231,7 @@ export function OrdersPage() {
           }`}
         >
           <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>date_range</span>
-          Extraction Date
+          {t("orders.extractionDate")}
         </h3>
         <div className="space-y-3">
           <div>
@@ -239,7 +239,7 @@ export function OrdersPage() {
               className={`text-xs mb-1 block ${isDark ? "text-slate-400" : "text-slate-500"}`}
               htmlFor={`${idPrefix}-fromDate`}
             >
-              From
+              {t("common.from")}
             </label>
             <input
               id={`${idPrefix}-fromDate`}
@@ -258,7 +258,7 @@ export function OrdersPage() {
               className={`text-xs mb-1 block ${isDark ? "text-slate-400" : "text-slate-500"}`}
               htmlFor={`${idPrefix}-toDate`}
             >
-              To
+              {t("common.to")}
             </label>
             <input
               id={`${idPrefix}-toDate`}
@@ -282,7 +282,7 @@ export function OrdersPage() {
           }`}
         >
           <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>rule</span>
-          Extraction Status
+          {t("orders.extractionStatus")}
         </h3>
         <div className="space-y-2">
           {STATUS_OPTIONS.map((status) => (
@@ -300,7 +300,7 @@ export function OrdersPage() {
                   isDark ? "text-slate-200 group-hover:text-white" : "text-slate-600 group-hover:text-primary"
                 }`}
               >
-                {statusLabel(status)}
+                {statusLabel(status, t)}
               </span>
               <span
                 className={`ml-auto text-xs px-1.5 py-0.5 rounded ${
@@ -321,11 +321,11 @@ export function OrdersPage() {
           }`}
         >
           <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>flag</span>
-          Workflow Flags
+          {t("orders.workflowFlags")}
         </h3>
         <div className="space-y-4">
           <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>Reply Needed</span>
+            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.replyNeeded")}</span>
             <input
               type="checkbox"
               checked={replyNeededParam === "true"}
@@ -336,7 +336,7 @@ export function OrdersPage() {
             />
           </label>
           <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>Human Review</span>
+            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.humanReview")}</span>
             <input
               type="checkbox"
               checked={humanReviewParam === "true"}
@@ -347,7 +347,7 @@ export function OrdersPage() {
             />
           </label>
           <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>Post Case</span>
+            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.postCase")}</span>
             <input
               type="checkbox"
               checked={postCaseParam === "true"}
@@ -371,21 +371,24 @@ export function OrdersPage() {
               <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
               <input
                 className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-                placeholder="Search by ticket, KOM, message id, filename"
+                placeholder={t("orders.searchPlaceholder")}
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
               />
             </form>
             <div className="flex items-center gap-3 ml-4">
-              <button onClick={logout} type="button" className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">Logout</button>
+              <LanguageSwitcher compact className="hidden md:flex" />
+              <button onClick={logout} type="button" className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">
+                {t("common.logout")}
+              </button>
             </div>
           </header>
 
           <div className="bg-surface-light px-6 pt-6 pb-0 border-b border-slate-200 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
               <div>
-                <h1 className="text-2xl font-bold text-slate-900 mb-1">Orders Workspace</h1>
-                <p className="text-sm text-slate-500">Manage and validate extracted order data.</p>
+                <h1 className="text-2xl font-bold text-slate-900 mb-1">{t("orders.workspaceTitle")}</h1>
+                <p className="text-sm text-slate-500">{t("orders.workspaceSubtitle")}</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -395,10 +398,10 @@ export function OrdersPage() {
                   className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
                 >
                   <span className="material-icons text-base">file_download</span>
-                  {actionBusy === "csv" ? "Exporting..." : "Export CSV"}
+                  {actionBusy === "csv" ? t("orders.exporting") : t("common.exportCsv")}
                 </button>
                 <button type="button" disabled className="bg-primary/40 text-white px-4 py-2 rounded text-sm font-medium cursor-not-allowed">
-                  Manual Order
+                  {t("orders.manualOrder")}
                 </button>
               </div>
             </div>
@@ -409,36 +412,36 @@ export function OrdersPage() {
                 onClick={() => applyTab("all")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "all" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                All Orders <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
+                {t("orders.allOrders")} <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyTab("today")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "today" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                Today's Queue <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
+                {t("orders.todaysQueue")} <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyTab("needs_reply")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "needs_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                Needs Reply <span className="bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.needs_reply || 0}</span>
+                {t("orders.needsReply")} <span className="bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.needs_reply || 0}</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyTab("manual_review")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "manual_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                Manual Review <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
+                {t("orders.manualReview")} <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
               </button>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto p-6">
-          {error ? <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
-          {actionError ? <div className="mb-4 text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
+        <div className="px-6 py-6 space-y-6">
+        {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
+        {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
 
           <div className="lg:hidden mb-6">
             {renderFilters("", "mobile", false)}
@@ -452,18 +455,18 @@ export function OrdersPage() {
               onPointerUp={handleTablePointerUp}
               onPointerLeave={handleTablePointerUp}
               onPointerCancel={handleTablePointerUp}
-              className={`bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-x-auto overflow-y-hidden ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
+              className={`bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-auto max-h-[600px] ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
             >
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Order ID</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Date & Time</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Customer</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Amount</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Status</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500">Flags</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 text-right">Actions</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.orderId")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.amount")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -478,14 +481,14 @@ export function OrdersPage() {
                           {order.ticket_number || order.kom_nr || order.id}
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at)}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at, lang)}</td>
                       <td className="px-4 py-3">
                         <div className="font-medium text-slate-900">{order.kom_name || "-"}</div>
                         <div className="text-xs text-slate-500">{order.store_name || order.kundennummer || "-"}</div>
                       </td>
                       <td className="px-4 py-3 font-medium text-slate-900">{order.delivery_week || order.liefertermin || "-"}</td>
                       <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order)}</td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order, t)}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
@@ -493,7 +496,7 @@ export function OrdersPage() {
                             onClick={() => handleExportXml(order.id)}
                             disabled={actionBusy === `export:${order.id}`}
                             className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
-                            title="Export XML"
+                            title={t("common.exportXml")}
                           >
                             <span className="material-icons text-lg">code</span>
                           </button>
@@ -502,14 +505,14 @@ export function OrdersPage() {
                             onClick={() => handleDownloadXml(order.id)}
                             disabled={actionBusy === `download:${order.id}`}
                             className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
-                            title="Download XML"
+                            title={t("common.downloadXml")}
                           >
                             <span className="material-icons text-lg">download</span>
                           </button>
                           <Link
                             to={`/orders/${order.id}`}
                             className="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
-                            title="View Details"
+                            title={t("common.viewDetails")}
                           >
                             <span className="material-icons text-lg">visibility</span>
                           </Link>
@@ -519,7 +522,7 @@ export function OrdersPage() {
                   ))}
                   {!loading && orders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>No matching orders.</td>
+                      <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>{t("orders.noMatchingOrders")}</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -528,10 +531,11 @@ export function OrdersPage() {
 
             <div className="mt-4 flex items-center justify-between px-2">
               <div className="text-sm text-slate-500">
-                Showing <span className="font-medium text-slate-900">{orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0}</span>
-                {" "}to{" "}
-                <span className="font-medium text-slate-900">{(pagination.page - 1) * (pagination.page_size || 0) + orders.length}</span>
-                {" "}of <span className="font-medium text-slate-900">{pagination.total || 0}</span> results
+                {t("orders.showing", {
+                  from: orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0,
+                  to: (pagination.page - 1) * (pagination.page_size || 0) + orders.length,
+                  total: pagination.total || 0,
+                })}
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -560,4 +564,3 @@ export function OrdersPage() {
     </AppShell>
   );
 }
-

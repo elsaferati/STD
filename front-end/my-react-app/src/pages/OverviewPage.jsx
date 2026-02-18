@@ -1,22 +1,23 @@
-
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { useI18n } from "../i18n/I18nContext";
 import { formatDateTime, formatPercent } from "../utils/format";
 
-function MetricCard({ title, value, subtitle, icon, accentClass }) {
+function MetricCard({ title, value, subtitle, icon, accentClass = "" }) {
   return (
-    <div className={`bg-surface-light p-4 rounded-xl border shadow-sm ${accentClass}`}>
-      <div className="flex justify-between items-start mb-2">
-        <span className="text-slate-500 text-sm font-medium">{title}</span>
-        <span className="material-icons text-primary bg-primary/10 p-1 rounded text-lg">{icon}</span>
-      </div>
-      <div>
-        <div className="text-2xl font-bold">{value}</div>
-        <div className="text-xs text-slate-500 mt-1">{subtitle}</div>
+    <div className={`bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm ${accentClass}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm text-slate-500 font-medium">{title}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+          <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
+        </div>
+        <span className="material-icons text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
       </div>
     </div>
   );
@@ -24,11 +25,25 @@ function MetricCard({ title, value, subtitle, icon, accentClass }) {
 
 function QueueCard({ title, value, subtitle }) {
   return (
-    <div className="bg-slate-50 p-4 rounded-xl border border-primary/20 flex flex-col items-center justify-center text-center relative overflow-hidden group">
-      <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-      <span className="text-xs font-semibold uppercase tracking-wider text-primary mb-1">{title}</span>
-      <div className="text-3xl font-bold text-slate-800">{value}</div>
-      <span className="text-[10px] text-slate-400 mt-1">{subtitle}</span>
+    <div className="bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm">
+      <p className="text-sm text-slate-500 font-medium">{title}</p>
+      <p className="text-2xl font-bold text-slate-900 mt-2">{value}</p>
+      <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
+    </div>
+  );
+}
+
+function KpiCard({ title, value, subtitle, icon }) {
+  return (
+    <div className="bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm text-slate-500 font-medium">{title}</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
+          <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
+        </div>
+        <span className="material-icons text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
+      </div>
     </div>
   );
 }
@@ -51,6 +66,7 @@ function buildLineSeries(points) {
 export function OverviewPage() {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
+  const { t, lang } = useI18n();
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -62,11 +78,11 @@ export function OverviewPage() {
       setOverview(payload);
       setError("");
     } catch (requestError) {
-      setError(requestError.message || "Failed to load overview data.");
+      setError(requestError.message || t("overview.loadError"));
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, t]);
 
   useEffect(() => {
     loadOverview();
@@ -74,15 +90,19 @@ export function OverviewPage() {
     return () => clearInterval(intervalId);
   }, [loadOverview]);
 
+  const lineSeries = buildLineSeries(overview?.processed_by_hour || []);
+  const statusByDay = overview?.status_by_day || [];
+  const maxDayTotal = Math.max(...statusByDay.map((bucket) => Number(bucket.total || 0)), 1);
+
   const handleSearchSubmit = (event) => {
     event.preventDefault();
     const query = searchInput.trim();
-    navigate(`/orders${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+    if (!query) {
+      navigate("/orders");
+      return;
+    }
+    navigate(`/orders?q=${encodeURIComponent(query)}`);
   };
-
-  const statusByDay = overview?.status_by_day || [];
-  const maxDayTotal = Math.max(...statusByDay.map((bucket) => Number(bucket.total || 0)), 1);
-  const lineSeries = buildLineSeries(overview?.processed_by_hour || []);
 
   return (
     <AppShell
@@ -98,8 +118,8 @@ export function OverviewPage() {
                   S
                 </div>
                 <div>
-                  <h1 className="text-lg font-bold tracking-tight">Operations Control</h1>
-                  <p className="text-xs text-slate-500">Order Extraction Dashboard</p>
+                  <h1 className="text-lg font-bold tracking-tight">{t("overview.title")}</h1>
+                  <p className="text-xs text-slate-500">{t("overview.subtitle")}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -109,20 +129,21 @@ export function OverviewPage() {
                   </span>
                   <input
                     className="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    placeholder="Search ticket #..."
+                    placeholder={t("overview.searchPlaceholder")}
                     value={searchInput}
                     onChange={(event) => setSearchInput(event.target.value)}
                   />
                 </form>
+                <LanguageSwitcher compact className="hidden md:flex" />
                 <Link to="/orders" className="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary hover:text-primary transition-colors">
-                  Orders
+                  {t("common.orders")}
                 </Link>
                 <button
                   type="button"
                   onClick={logout}
                   className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700 transition-colors lg:hidden"
                 >
-                  Logout
+                  {t("common.logout")}
                 </button>
               </div>
             </div>
@@ -136,39 +157,51 @@ export function OverviewPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
               <div className="col-span-1 md:col-span-2 lg:col-span-4 grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <MetricCard
-                  title="Total Orders (Today)"
+                  title={t("overview.totalOrdersToday")}
                   value={overview?.today?.total ?? 0}
-                  subtitle={`Last 24h: ${overview?.last_24h?.total ?? 0}`}
+                  subtitle={t("overview.last24h", { count: overview?.last_24h?.total ?? 0 })}
                   icon="inventory_2"
                   accentClass=""
                 />
                 <MetricCard
-                  title="OK Rate"
+                  title={t("overview.okRate")}
                   value={formatPercent(overview?.today?.ok_rate)}
-                  subtitle={`OK: ${overview?.today?.ok ?? 0}`}
+                  subtitle={t("overview.okCount", { count: overview?.today?.ok ?? 0 })}
                   icon="check_circle"
                   accentClass="border-l-4 border-l-success"
                 />
                 <MetricCard
-                  title="Partial Rate"
+                  title={t("overview.partialRate")}
                   value={formatPercent(overview?.today?.partial_rate)}
-                  subtitle={`Partial: ${overview?.today?.partial ?? 0}`}
+                  subtitle={t("overview.partialCount", { count: overview?.today?.partial ?? 0 })}
                   icon="warning"
                   accentClass="border-l-4 border-l-warning"
                 />
                 <MetricCard
-                  title="Failed Rate"
+                  title={t("overview.failedRate")}
                   value={formatPercent(overview?.today?.failed_rate)}
-                  subtitle={`Failed: ${overview?.today?.failed ?? 0}`}
+                  subtitle={t("overview.failedCount", { count: overview?.today?.failed ?? 0 })}
                   icon="error"
                   accentClass="border-l-4 border-l-danger"
                 />
               </div>
 
               <div className="col-span-1 md:col-span-2 lg:col-span-4 xl:col-span-3 grid grid-cols-3 gap-4">
-                <QueueCard title="Reply Needed" value={overview?.queue_counts?.reply_needed ?? 0} subtitle="Needs customer response" />
-                <QueueCard title="Review" value={overview?.queue_counts?.human_review_needed ?? 0} subtitle="Manual verification" />
-                <QueueCard title="Post Case" value={overview?.queue_counts?.post_case ?? 0} subtitle="High priority" />
+                <QueueCard
+                  title={t("overview.queueReplyNeeded")}
+                  value={overview?.queue_counts?.reply_needed ?? 0}
+                  subtitle={t("overview.queueReplySubtitle")}
+                />
+                <QueueCard
+                  title={t("overview.queueReview")}
+                  value={overview?.queue_counts?.human_review_needed ?? 0}
+                  subtitle={t("overview.queueReviewSubtitle")}
+                />
+                <QueueCard
+                  title={t("overview.queuePostCase")}
+                  value={overview?.queue_counts?.post_case ?? 0}
+                  subtitle={t("overview.queuePostCaseSubtitle")}
+                />
               </div>
             </div>
 
@@ -176,13 +209,13 @@ export function OverviewPage() {
               <div className="lg:col-span-2 bg-surface-light rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="font-bold text-lg">Extraction Performance</h3>
-                    <p className="text-sm text-slate-500">Last 7 Days by Status</p>
+                    <h3 className="font-bold text-lg">{t("overview.extractionPerformance")}</h3>
+                    <p className="text-sm text-slate-500">{t("overview.last7Days")}</p>
                   </div>
                   <div className="flex gap-2 text-xs font-medium">
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />OK</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />Partial</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />Failed</div>
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />{t("status.ok")}</div>
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />{t("status.partial")}</div>
+                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />{t("status.failed")}</div>
                   </div>
                 </div>
                 <div className="w-full flex-1 min-h-[120px] flex items-end justify-between gap-2 px-2">
@@ -207,8 +240,8 @@ export function OverviewPage() {
               <div className="bg-surface-light rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="font-bold text-lg">Queue Velocity</h3>
-                    <p className="text-sm text-slate-500">Processed outputs (24h)</p>
+                    <h3 className="font-bold text-lg">{t("overview.queueVelocity")}</h3>
+                    <p className="text-sm text-slate-500">{t("overview.processed24h")}</p>
                   </div>
                   <span className="material-icons text-primary/50">ssid_chart</span>
                 </div>
@@ -223,8 +256,8 @@ export function OverviewPage() {
                   </svg>
                 </div>
                 <div className="flex justify-between text-xs text-slate-400 mt-2">
-                  <span>24h Ago</span>
-                  <span>Now</span>
+                  <span>{t("overview.hoursAgo")}</span>
+                  <span>{t("overview.now")}</span>
                 </div>
               </div>
             </div>
@@ -232,8 +265,8 @@ export function OverviewPage() {
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <h3 className="font-bold text-lg">Latest Orders</h3>
-                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">Live Feed</span>
+                  <h3 className="font-bold text-lg">{t("overview.latestOrders")}</h3>
+                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">{t("overview.liveFeed")}</span>
                 </div>
                 <button
                   type="button"
@@ -241,27 +274,29 @@ export function OverviewPage() {
                   className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors"
                 >
                   <span className="material-icons text-sm">refresh</span>
-                  Refresh
+                  {t("overview.refresh")}
                 </button>
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-auto max-h-[80vh]">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-4 whitespace-nowrap">Received At</th>
-                      <th className="px-6 py-4 whitespace-nowrap">Status</th>
-                      <th className="px-6 py-4 whitespace-nowrap">Ticket / KOM</th>
-                      <th className="px-6 py-4 whitespace-nowrap">Client / Store</th>
-                      <th className="px-6 py-4 whitespace-nowrap">Items</th>
-                      <th className="px-6 py-4 whitespace-nowrap">Flags</th>
-                      <th className="px-6 py-4 text-right">Actions</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.receivedAt")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.clientStore")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.items")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
+                      <th className="px-6 py-4 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {(overview?.latest_orders || []).map((order) => (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">{formatDateTime(order.effective_received_at)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">
+                          {formatDateTime(order.effective_received_at, lang)}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={order.status} /></td>
                         <td className="px-6 py-4 whitespace-nowrap font-medium text-primary">
                           {order.ticket_number || order.kom_nr || order.id}
@@ -274,9 +309,9 @@ export function OverviewPage() {
                         <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500">
                           {order.reply_needed || order.human_review_needed || order.post_case
                             ? [
-                                order.reply_needed ? "Reply" : "",
-                                order.human_review_needed ? "Review" : "",
-                                order.post_case ? "Post" : "",
+                                order.reply_needed ? t("flags.reply") : "",
+                                order.human_review_needed ? t("flags.review") : "",
+                                order.post_case ? t("flags.post") : "",
                               ]
                                 .filter(Boolean)
                                 .join(" | ")
@@ -287,14 +322,14 @@ export function OverviewPage() {
                             to={`/orders/${order.id}`}
                             className="text-primary hover:text-primary-dark transition-colors bg-primary/10 px-2 py-1 rounded text-xs font-bold uppercase"
                           >
-                            Open
+                            {t("common.open")}
                           </Link>
                         </td>
                       </tr>
                     ))}
                     {!loading && (overview?.latest_orders || []).length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500">No orders found.</td>
+                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
                       </tr>
                     ) : null}
                   </tbody>

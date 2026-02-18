@@ -1,24 +1,37 @@
-const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "short",
-});
+const dateTimeFormatters = new Map();
+const dateFormatters = new Map();
 
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-});
-
-export function formatDateTime(value) {
-  if (!value) {
-    return "-";
+function getDateTimeFormatter(locale) {
+  if (!dateTimeFormatters.has(locale)) {
+    dateTimeFormatters.set(
+      locale,
+      new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    );
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-  return dateTimeFormatter.format(date);
+  return dateTimeFormatters.get(locale);
 }
 
-export function formatDate(value) {
+function getDateFormatter(locale) {
+  if (!dateFormatters.has(locale)) {
+    dateFormatters.set(locale, new Intl.DateTimeFormat(locale, { dateStyle: "medium" }));
+  }
+  return dateFormatters.get(locale);
+}
+
+function normalizeLocale(localeOrLang) {
+  if (!localeOrLang) {
+    return undefined;
+  }
+  if (localeOrLang === "en") {
+    return "en-US";
+  }
+  if (localeOrLang === "de") {
+    return "de-DE";
+  }
+  return localeOrLang;
+}
+
+export function formatDateTime(value, localeOrLang) {
   if (!value) {
     return "-";
   }
@@ -26,7 +39,20 @@ export function formatDate(value) {
   if (Number.isNaN(date.getTime())) {
     return String(value);
   }
-  return dateFormatter.format(date);
+  const locale = normalizeLocale(localeOrLang);
+  return getDateTimeFormatter(locale).format(date);
+}
+
+export function formatDate(value, localeOrLang) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  const locale = normalizeLocale(localeOrLang);
+  return getDateFormatter(locale).format(date);
 }
 
 export function formatPercent(value) {
@@ -37,8 +63,11 @@ export function formatPercent(value) {
   return `${numeric.toFixed(1)}%`;
 }
 
-export function statusLabel(status) {
+export function statusLabel(status, t) {
   const normalized = (status || "unknown").toLowerCase();
+  if (typeof t === "function") {
+    return t(`status.${normalized}`, null, normalized);
+  }
   if (normalized === "ok") {
     return "OK";
   }
@@ -51,10 +80,14 @@ export function statusLabel(status) {
   return "Unknown";
 }
 
-export function fieldLabel(field) {
-  return String(field || "")
+export function fieldLabel(field, t) {
+  const fallback = String(field || "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+  if (typeof t === "function") {
+    return t(`fields.${field}`, null, fallback);
+  }
+  return fallback;
 }
 
 export function entryValue(entry) {
