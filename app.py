@@ -26,6 +26,7 @@ from flask import (
     send_from_directory,
     url_for,
 )
+from openpyxl import Workbook
 from werkzeug.exceptions import HTTPException
 
 from config import Config
@@ -783,6 +784,169 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
+def _export_entry_value(entry: Any) -> Any:
+    value = entry.get("value", "") if isinstance(entry, dict) else entry
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _ensure_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if value in (None, ""):
+        return []
+    return [str(value)]
+
+
+def _load_order_export_data(order: dict[str, Any]) -> dict[str, Any]:
+    order_id = str(order.get("id") or "")
+    fallback_file_name = f"{order_id}.json" if order_id else ""
+    file_name = str(order.get("file_name") or fallback_file_name)
+
+    data: dict[str, Any] = {}
+    parse_error = ""
+    if file_name:
+        parsed_data, parse_error = _read_json(OUTPUT_DIR / file_name)
+        if isinstance(parsed_data, dict):
+            data = parsed_data
+    else:
+        parse_error = "Missing file_name"
+
+    header = data.get("header") if isinstance(data.get("header"), dict) else {}
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    warnings = _ensure_string_list(data.get("warnings", order.get("warnings", [])))
+    errors = _ensure_string_list(data.get("errors", order.get("errors", [])))
+
+    return {
+        "order_id": order_id,
+        "file_name": file_name,
+        "message_id": str(data.get("message_id") or order.get("message_id") or order_id),
+        "received_at": str(data.get("received_at") or order.get("received_at") or ""),
+        "status": _normalize_status(data.get("status") or order.get("status")),
+        "item_count": len(items),
+        "warnings_count": len(warnings),
+        "errors_count": len(errors),
+        "reply_needed": _is_truthy_flag(header.get("reply_needed")) if header else bool(order.get("reply_needed")),
+        "human_review_needed": _is_truthy_flag(header.get("human_review_needed"))
+        if header
+        else bool(order.get("human_review_needed")),
+        "post_case": _is_truthy_flag(header.get("post_case")) if header else bool(order.get("post_case")),
+        "warnings": warnings,
+        "errors": errors,
+        "parse_error": parse_error or "",
+        "header": header,
+        "items": items,
+    }
+
+
+def _as_orders_xlsx_bytes(orders: list[dict[str, Any]]) -> bytes:
+    parsed_orders = [_load_order_export_data(order) for order in orders]
+
+    fixed_header_columns = [
+        "order_id",
+        "file_name",
+        "message_id",
+        "received_at",
+        "status",
+        "item_count",
+        "warnings_count",
+        "errors_count",
+        "reply_needed",
+        "human_review_needed",
+        "post_case",
+        "warnings",
+        "errors",
+        "parse_error",
+    ]
+    excluded_header_keys = {"reply_needed", "human_review_needed", "post_case"}
+    seen_header_keys: set[str] = set()
+    for parsed_order in parsed_orders:
+        seen_header_keys.update(parsed_order["header"].keys())
+
+    header_value_columns = [
+        field for field in EDITABLE_HEADER_FIELDS if field not in excluded_header_keys
+    ] + sorted(
+        key
+        for key in seen_header_keys
+        if key not in excluded_header_keys and key not in EDITABLE_HEADER_FIELDS
+    )
+    header_columns = fixed_header_columns + header_value_columns
+
+    fixed_item_columns = ["order_id", "ticket_number", "kom_nr", "kom_name", "line_no"]
+    seen_item_keys: set[str] = set()
+    for parsed_order in parsed_orders:
+        for item in parsed_order["items"]:
+            if isinstance(item, dict):
+                seen_item_keys.update(item.keys())
+
+    item_value_columns = list(EDITABLE_ITEM_FIELDS) + sorted(
+        key for key in seen_item_keys if key != "line_no" and key not in EDITABLE_ITEM_FIELDS
+    )
+    item_columns = fixed_item_columns + item_value_columns
+
+    workbook = Workbook()
+    header_sheet = workbook.active
+    header_sheet.title = "Header"
+    items_sheet = workbook.create_sheet("Items")
+
+    header_sheet.append(header_columns)
+    items_sheet.append(item_columns)
+
+    for parsed_order in parsed_orders:
+        header = parsed_order["header"]
+        header_row = {
+            "order_id": parsed_order["order_id"],
+            "file_name": parsed_order["file_name"],
+            "message_id": parsed_order["message_id"],
+            "received_at": parsed_order["received_at"],
+            "status": parsed_order["status"],
+            "item_count": parsed_order["item_count"],
+            "warnings_count": parsed_order["warnings_count"],
+            "errors_count": parsed_order["errors_count"],
+            "reply_needed": parsed_order["reply_needed"],
+            "human_review_needed": parsed_order["human_review_needed"],
+            "post_case": parsed_order["post_case"],
+            "warnings": " | ".join(parsed_order["warnings"]),
+            "errors": " | ".join(parsed_order["errors"]),
+            "parse_error": parsed_order["parse_error"],
+        }
+        for field in header_value_columns:
+            header_row[field] = _export_entry_value(header.get(field, ""))
+        header_sheet.append([header_row.get(column, "") for column in header_columns])
+
+        ticket_number = _export_entry_value(header.get("ticket_number", ""))
+        kom_nr = _export_entry_value(header.get("kom_nr", ""))
+        kom_name = _export_entry_value(header.get("kom_name", ""))
+        for index, item in enumerate(parsed_order["items"], start=1):
+            if not isinstance(item, dict):
+                continue
+            line_no = item.get("line_no")
+            if line_no in (None, ""):
+                line_no = index
+
+            item_row = {
+                "order_id": parsed_order["order_id"],
+                "ticket_number": ticket_number,
+                "kom_nr": kom_nr,
+                "kom_name": kom_name,
+                "line_no": line_no,
+            }
+            for field in item_value_columns:
+                item_row[field] = _export_entry_value(item.get(field, ""))
+            items_sheet.append([item_row.get(column, "") for column in item_columns])
+
+    header_sheet.freeze_panes = "A2"
+    items_sheet.freeze_panes = "A2"
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
 def _as_csv_text(orders: list[dict[str, Any]]) -> str:
     fieldnames = [
         "received_at",
@@ -1004,6 +1168,21 @@ def api_orders_csv():
     csv_text = _as_csv_text(result["orders"])
     response = Response(csv_text, mimetype="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=orders.csv"
+    return response
+
+
+@app.route("/api/orders.xlsx")
+def api_orders_xlsx():
+    result, error = _query_orders(allow_default_pagination=False)
+    if error is not None:
+        return error
+
+    xlsx_bytes = _as_orders_xlsx_bytes(result["orders"])
+    response = Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = "attachment; filename=orders.xlsx"
     return response
 
 @app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
