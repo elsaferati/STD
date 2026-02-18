@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
+import { AppShell } from "../components/AppShell";
 import { downloadBlob } from "../utils/download";
 import {
   entryConfidence,
@@ -233,20 +234,26 @@ export function OrderDetailPage() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-background-light font-display flex items-center justify-center">Loading order...</div>;
+    return (
+      <AppShell active="orders">
+        <div className="flex-1 flex items-center justify-center">Loading order...</div>
+      </AppShell>
+    );
   }
 
   if (!order) {
     return (
-      <div className="min-h-screen bg-background-light font-display p-6">
-        <Link to="/orders" className="text-primary hover:underline">Back to Orders</Link>
-        <p className="mt-4 text-danger">{error || "Order not found."}</p>
-      </div>
+      <AppShell active="orders">
+        <div className="p-6">
+          <Link to="/orders" className="text-primary hover:underline">Back to Orders</Link>
+          <p className="mt-4 text-danger">{error || "Order not found."}</p>
+        </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="bg-background-light text-slate-800 min-h-screen flex flex-col font-display">
+    <AppShell active="orders">
       <header className="bg-surface-light border-b border-slate-200 sticky top-0 z-30">
         <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -498,7 +505,7 @@ export function OrderDetailPage() {
           </div>
         </div>
       ) : null}
-    </div>
+    </AppShell>
   );
 }
 
