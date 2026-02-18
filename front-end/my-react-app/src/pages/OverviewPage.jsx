@@ -161,7 +161,7 @@ export function OverviewPage() {
                   value={overview?.today?.total ?? 0}
                   subtitle={t("overview.last24h", { count: overview?.last_24h?.total ?? 0 })}
                   icon="inventory_2"
-                  accentClass=""
+                  accentClass="border-l-4 border-l-primary"
                 />
                 <MetricCard
                   title={t("overview.okRate")}
@@ -282,6 +282,7 @@ export function OverviewPage() {
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                     <tr>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">Nr</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.receivedAt")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
@@ -292,8 +293,9 @@ export function OverviewPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(overview?.latest_orders || []).map((order) => (
+                    {(overview?.latest_orders || []).map((order, index) => (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-500">{index + 1}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-slate-600">
                           {formatDateTime(order.effective_received_at, lang)}
                         </td>
@@ -329,7 +331,7 @@ export function OverviewPage() {
                     ))}
                     {!loading && (overview?.latest_orders || []).length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
+                        <td colSpan={8} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
                       </tr>
                     ) : null}
                   </tbody>

@@ -155,7 +155,22 @@ export function OrdersPage() {
     setActionBusy(`export:${orderId}`);
     setActionError("");
     try {
-      await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST", token });
+      const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST", token });
+      const xmlFiles = Array.isArray(result?.xml_files) ? result.xml_files : [];
+      if (!xmlFiles.length) {
+        throw new Error(t("orders.noXmlAvailable"));
+      }
+      if (xmlFiles.length > 1) {
+        setActionError(t("orders.multipleXmlNotice", { count: xmlFiles.length }));
+        await loadOrders();
+        return;
+      }
+      const xmlFile = xmlFiles[0];
+      if (!xmlFile?.filename) {
+        throw new Error(t("orders.noXmlAvailable"));
+      }
+      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`, { token });
+      downloadBlob(blob, xmlFile.filename);
       await loadOrders();
     } catch (requestError) {
       setActionError(requestError.message || t("orders.xmlExportFailed"));
@@ -182,6 +197,22 @@ export function OrdersPage() {
     }
   };
 
+  const handleDeleteOrder = async (order) => {
+    const label = order.ticket_number || order.kom_nr || order.id;
+    const confirmed = window.confirm(t("orders.deleteConfirm", { id: label }));
+    if (!confirmed) return;
+    setActionBusy(`delete:${order.id}`);
+    setActionError("");
+    try {
+      await fetchJson(`/api/orders/${encodeURIComponent(order.id)}`, { method: "DELETE", token });
+      await loadOrders();
+    } catch (requestError) {
+      setActionError(requestError.message || t("orders.deleteFailed"));
+    } finally {
+      setActionBusy("");
+    }
+  };
+
   const orders = payload?.orders || [];
   const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0 };
   const pagination = payload?.pagination || { page: 1, total_pages: 1, total: 0 };
@@ -192,6 +223,9 @@ export function OrdersPage() {
   const handleTablePointerDown = (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     if (!tableScrollRef.current) return;
+    if (event.target.closest("button, a, input, select, textarea, [role='button']")) {
+      return;
+    }
     dragPointerIdRef.current = event.pointerId;
     dragStartXRef.current = event.clientX;
     dragStartScrollRef.current = tableScrollRef.current.scrollLeft;
@@ -460,6 +494,7 @@ export function OrdersPage() {
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">Nr</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.orderId")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
@@ -470,8 +505,11 @@ export function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {orders.map((order) => (
+                  {orders.map((order, index) => (
                     <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
+                      <td className="px-4 py-3 text-slate-500">
+                        {(pagination.page - 1) * (pagination.page_size || orders.length || 0) + index + 1}
+                      </td>
                       <td className="px-4 py-3">
                         <button
                           type="button"
@@ -493,15 +531,6 @@ export function OrdersPage() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             type="button"
-                            onClick={() => handleExportXml(order.id)}
-                            disabled={actionBusy === `export:${order.id}`}
-                            className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
-                            title={t("common.exportXml")}
-                          >
-                            <span className="material-icons text-lg">code</span>
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => handleDownloadXml(order.id)}
                             disabled={actionBusy === `download:${order.id}`}
                             className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
@@ -516,13 +545,22 @@ export function OrdersPage() {
                           >
                             <span className="material-icons text-lg">visibility</span>
                           </Link>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteOrder(order)}
+                            disabled={actionBusy === `delete:${order.id}`}
+                            className="p-1.5 text-slate-500 hover:text-danger hover:bg-danger/10 rounded transition-colors disabled:opacity-60"
+                            title={t("common.delete")}
+                          >
+                            <span className="material-icons text-lg">delete</span>
+                          </button>
                         </div>
                       </td>
                     </tr>
                   ))}
                   {!loading && orders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={7}>{t("orders.noMatchingOrders")}</td>
+                      <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>{t("orders.noMatchingOrders")}</td>
                     </tr>
                   ) : null}
                 </tbody>

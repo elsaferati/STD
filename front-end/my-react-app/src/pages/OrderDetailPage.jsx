@@ -367,6 +367,7 @@ export function OrderDetailPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
                     <tr>
+                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">Nr</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.field")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.value")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.source")}</th>
@@ -374,12 +375,13 @@ export function OrderDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {headerRows.map(([field, entry]) => {
+                    {headerRows.map(([field, entry], index) => {
                       const confidence = entryConfidence(entry);
                       const lowConfidence = confidence !== null && confidence < 0.9;
                       const editable = editableHeaderFields.has(field) && isEditing;
                       return (
                         <tr key={field} className={highlightLowConfidence && lowConfidence ? "bg-warning/10" : ""}>
+                          <td className="px-6 py-4 text-slate-500">{index + 1}</td>
                           <td className="px-6 py-4 font-medium text-slate-900">{fieldLabel(field, t)}</td>
                           <td className="px-6 py-4">
                             {editable ? (

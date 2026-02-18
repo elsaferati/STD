@@ -839,7 +839,7 @@ def _api_cors_headers(response: Response):
             response.headers["Vary"] = _append_vary(response.headers.get("Vary"), "Origin")
 
     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
     response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
@@ -985,7 +985,7 @@ def api_orders_csv():
     response.headers["Content-Disposition"] = "attachment; filename=orders.csv"
     return response
 
-@app.route("/api/orders/<order_id>", methods=["GET", "PATCH"])
+@app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
 def api_order_detail(order_id: str):
     order, load_error = _load_order(order_id)
     if load_error is not None:
@@ -993,6 +993,28 @@ def api_order_detail(order_id: str):
 
     if request.method == "GET":
         return jsonify(_order_api_payload(order))
+
+    if request.method == "DELETE":
+        delete_errors: list[str] = []
+        try:
+            order["path"].unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            delete_errors.append(f"json:{exc}")
+
+        for xml_file in _resolve_xml_files(order["safe_id"], order["header"]):
+            try:
+                (OUTPUT_DIR / xml_file["filename"]).unlink()
+            except FileNotFoundError:
+                continue
+            except Exception as exc:  # noqa: BLE001
+                delete_errors.append(f"{xml_file['filename']}:{exc}")
+
+        _invalidate_order_index_cache()
+        if delete_errors:
+            return _api_error(500, "delete_failed", "Failed to delete order files")
+        return jsonify({"deleted": True, "order_id": order["safe_id"]})
 
     if not (order["human_review_needed"] and not order["parse_error"]):
         return _api_error(403, "forbidden", "Order is not editable")
