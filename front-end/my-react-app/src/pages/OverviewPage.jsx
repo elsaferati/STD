@@ -285,7 +285,7 @@ export function OverviewPage() {
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">Nr</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.receivedAt")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.clientStore")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.items")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
@@ -300,8 +300,10 @@ export function OverviewPage() {
                           {formatDateTime(order.effective_received_at, lang)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={order.status} /></td>
-                        <td className="px-6 py-4 whitespace-nowrap font-medium text-primary">
-                          {order.ticket_number || order.kom_nr || order.id}
+                        <td className="px-6 py-4 font-medium text-primary w-40 max-w-[160px]">
+                          <span className="block truncate">
+                            {order.ticket_number || order.kom_nr || order.id}
+                          </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="font-medium text-slate-800">{order.kom_name || "-"}</div>

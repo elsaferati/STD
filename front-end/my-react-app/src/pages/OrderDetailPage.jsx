@@ -312,37 +312,7 @@ export function OrderDetailPage() {
             </div>
           </div>
 
-            <div className="flex items-center gap-3 flex-wrap">
-              <button
-                type="button"
-                onClick={regenerateXml}
-                disabled={busyAction === "regen"}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-primary transition-colors disabled:opacity-60"
-              >
-                <span className="material-icons text-lg">refresh</span>
-                {busyAction === "regen" ? t("orderDetail.regenerating") : t("common.regenerateXml")}
-              </button>
-              <button
-                type="button"
-                onClick={startEditing}
-                disabled={!order.is_editable || isEditing}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-900 bg-primary rounded-lg shadow-lg shadow-primary/20 disabled:opacity-50"
-              >
-                <span className="material-icons text-lg">edit</span>
-                {t("common.editFields")}
-              </button>
-              {order.reply_mailto ? (
-                <a
-                  href={order.reply_mailto}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-slate-900 rounded-lg hover:bg-slate-700"
-                >
-                  <span className="material-icons text-lg">send</span>
-                  {t("common.sendReply")}
-                </a>
-              ) : null}
-            </div>
+            <div className="hidden md:block" />
             </div>
           </header>
 
@@ -367,7 +337,7 @@ export function OrderDetailPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">Nr</th>
+                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 left-0 z-20 bg-slate-50 border-r border-slate-200">Nr</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.field")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.value")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.source")}</th>
@@ -379,9 +349,12 @@ export function OrderDetailPage() {
                       const confidence = entryConfidence(entry);
                       const lowConfidence = confidence !== null && confidence < 0.9;
                       const editable = editableHeaderFields.has(field) && isEditing;
+                      const isHighlighted = highlightLowConfidence && lowConfidence;
                       return (
-                        <tr key={field} className={highlightLowConfidence && lowConfidence ? "bg-warning/10" : ""}>
-                          <td className="px-6 py-4 text-slate-500">{index + 1}</td>
+                        <tr key={field} className={isHighlighted ? "bg-warning/10" : ""}>
+                          <td className={`px-6 py-4 text-slate-500 sticky left-0 z-10 border-r border-slate-200 ${isHighlighted ? "bg-warning/10" : "bg-white"}`}>
+                            {index + 1}
+                          </td>
                           <td className="px-6 py-4 font-medium text-slate-900">{fieldLabel(field, t)}</td>
                           <td className="px-6 py-4">
                             {editable ? (
@@ -419,7 +392,7 @@ export function OrderDetailPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-3">#</th>
+                      <th className="px-6 py-3 sticky left-0 z-20 bg-slate-50">#</th>
                       <th className="px-6 py-3">{t("fields.artikelnummer")}</th>
                       <th className="px-6 py-3">{t("fields.modellnummer")}</th>
                       <th className="px-6 py-3">{t("fields.menge")}</th>
@@ -429,7 +402,9 @@ export function OrderDetailPage() {
                   <tbody className="divide-y divide-slate-200">
                     {(order.items || []).map((item, index) => (
                       <tr key={`${order.order_id}-${index}`}>
-                        <td className="px-6 py-4 text-slate-500">{item.line_no ?? index + 1}</td>
+                        <td className="px-6 py-4 text-slate-500 sticky left-0 z-10 bg-white border-r border-slate-200">
+                          {item.line_no ?? index + 1}
+                        </td>
                         {["artikelnummer", "modellnummer", "menge", "furncloud_id"].map((field) => (
                           <td key={field} className="px-6 py-4">
                             {isEditing && editableItemFields.has(field) ? (
@@ -459,6 +434,40 @@ export function OrderDetailPage() {
           </div>
 
           <aside className="lg:col-span-4 flex flex-col gap-6">
+            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-4">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">{t("common.actions")}</h2>
+              <div className="grid grid-cols-1 gap-2">
+                <button
+                  type="button"
+                  onClick={regenerateXml}
+                  disabled={busyAction === "regen"}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 hover:text-primary transition-colors disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">refresh</span>
+                  {busyAction === "regen" ? t("orderDetail.regenerating") : t("common.regenerateXml")}
+                </button>
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  disabled={!order.is_editable || isEditing}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-slate-900 bg-primary rounded-md shadow-sm shadow-primary/20 disabled:opacity-50"
+                >
+                  <span className="material-icons text-base">edit</span>
+                  {t("common.editFields")}
+                </button>
+                {order.reply_mailto ? (
+                  <a
+                    href={order.reply_mailto}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md hover:bg-slate-700"
+                  >
+                    <span className="material-icons text-base">send</span>
+                    {t("common.sendReply")}
+                  </a>
+                ) : null}
+              </div>
+            </div>
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden sticky top-6">
               <div className="p-5 border-b border-slate-200 flex items-center justify-between">
                 <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
