@@ -278,18 +278,18 @@ export function OverviewPage() {
                 </button>
               </div>
 
-              <div className="overflow-auto max-h-[80vh]">
+              <div className="overflow-auto h-[60vh]">
                 <table className="w-full text-left text-sm">
                   <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
                     <tr>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">Nr</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.receivedAt")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.clientStore")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.items")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
-                      <th className="px-6 py-4 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">Nr</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.receivedAt")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.status")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.clientStore")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.items")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.flags")}</th>
+                      <th className="px-6 py-4 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

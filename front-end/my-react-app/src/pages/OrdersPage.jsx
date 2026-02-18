@@ -489,19 +489,19 @@ export function OrdersPage() {
               onPointerUp={handleTablePointerUp}
               onPointerLeave={handleTablePointerUp}
               onPointerCancel={handleTablePointerUp}
-              className={`bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-auto max-h-[600px] ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
+              className={`relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-auto h-[600px] ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
             >
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-20 bg-slate-50 border-r border-slate-200">Nr</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.amount")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-30 bg-slate-50 border-r border-slate-200">Nr</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.dateTime")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.customer")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.amount")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.status")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.flags")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
