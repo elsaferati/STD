@@ -11,6 +11,19 @@ import { formatDateTime, statusLabel } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
 const STATUS_OPTIONS = ["ok", "partial", "failed", "unknown"];
+const EXPORT_INITIALS_STORAGE_KEY = "orders_export_initials";
+
+function buildExportFilename(title, initials) {
+  const safeTitle = (title || "Orders").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "Orders";
+  const now = new Date();
+  const day = String(now.getDate()).padStart(2, "0");
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const year = String(now.getFullYear()).slice(-2);
+  const dateStamp = `${day}_${month}_${year}`;
+  const parts = [safeTitle, dateStamp];
+  if (initials) parts.push(initials);
+  return `${parts.join("_")}.xlsx`;
+}
 
 function flagLabel(order, t) {
   const labels = [];
@@ -139,11 +152,25 @@ export function OrdersPage() {
   };
 
   const handleExportExcel = async () => {
+    const exportTitle = t("orders.exportTitle");
+    const storedInitials = localStorage.getItem(EXPORT_INITIALS_STORAGE_KEY) || "";
+    const initialsInput = window.prompt(t("orders.initialsPrompt"), storedInitials);
+    if (initialsInput === null) {
+      return;
+    }
+    const initials = initialsInput.trim();
+    if (initials) {
+      localStorage.setItem(EXPORT_INITIALS_STORAGE_KEY, initials);
+    }
     setActionBusy("excel");
     setActionError("");
     try {
-      const blob = await fetchBlob(`/api/orders.xlsx${queryString ? `?${queryString}` : ""}`, { token });
-      downloadBlob(blob, "orders.xlsx");
+      const exportParams = new URLSearchParams(searchParams);
+      if (initials) exportParams.set("initials", initials);
+      if (exportTitle) exportParams.set("title", exportTitle);
+      const exportQuery = exportParams.toString();
+      const blob = await fetchBlob(`/api/orders.xlsx${exportQuery ? `?${exportQuery}` : ""}`, { token });
+      downloadBlob(blob, buildExportFilename(exportTitle, initials));
     } catch (requestError) {
       setActionError(requestError.message || t("orders.excelExportFailed"));
     } finally {
@@ -399,7 +426,7 @@ export function OrdersPage() {
   return (
     <AppShell active="orders" sidebarContent={renderFilters("", "sidebar", false)}>
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="sticky top-0 z-20">
+        <div className="sticky top-0 z-30">
           <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
             <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
               <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
@@ -489,19 +516,19 @@ export function OrdersPage() {
               onPointerUp={handleTablePointerUp}
               onPointerLeave={handleTablePointerUp}
               onPointerCancel={handleTablePointerUp}
-              className={`relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-auto h-[600px] ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
+              className={`relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-auto ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
             >
               <table className="w-full text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-30 bg-slate-50 border-r border-slate-200">Nr</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.dateTime")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.customer")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.amount")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.status")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-20 bg-slate-50">{t("common.flags")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.amount")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

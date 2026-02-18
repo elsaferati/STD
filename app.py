@@ -27,6 +27,9 @@ from flask import (
     url_for,
 )
 from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.page import PageMargins
 from werkzeug.exceptions import HTTPException
 
 from config import Config
@@ -842,7 +845,12 @@ def _load_order_export_data(order: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _as_orders_xlsx_bytes(orders: list[dict[str, Any]]) -> bytes:
+def _as_orders_xlsx_bytes(
+    orders: list[dict[str, Any]],
+    *,
+    title: str = "Orders",
+    initials: str = "",
+) -> bytes:
     parsed_orders = [_load_order_export_data(order) for order in orders]
 
     fixed_header_columns = [
@@ -875,25 +883,153 @@ def _as_orders_xlsx_bytes(orders: list[dict[str, Any]]) -> bytes:
     )
     header_columns = fixed_header_columns + header_value_columns
 
-    fixed_item_columns = ["order_id", "ticket_number", "kom_nr", "kom_name", "line_no"]
-    seen_item_keys: set[str] = set()
-    for parsed_order in parsed_orders:
-        for item in parsed_order["items"]:
-            if isinstance(item, dict):
-                seen_item_keys.update(item.keys())
+    def _format_sheet(
+        target_sheet,
+        *,
+        sheet_title: str,
+        table_columns: list[str],
+        data_rows: list[list[Any]],
+        status_column_name: str | None = None,
+    ) -> None:
+        now = datetime.now().astimezone()
+        date_text = now.strftime("%d.%m.%Y %H:%M")
+        last_col = len(table_columns)
+        last_col_letter = get_column_letter(last_col)
 
-    item_value_columns = list(EDITABLE_ITEM_FIELDS) + sorted(
-        key for key in seen_item_keys if key != "line_no" and key not in EDITABLE_ITEM_FIELDS
-    )
-    item_columns = fixed_item_columns + item_value_columns
+        target_sheet.merge_cells(f"A1:{last_col_letter}1")
+        title_cell = target_sheet["A1"]
+        title_cell.value = sheet_title.upper()
+        title_cell.font = Font(size=16, bold=True)
+        title_cell.alignment = Alignment(horizontal="center", vertical="bottom")
+
+        date_cell = target_sheet.cell(row=2, column=last_col, value=date_text)
+        date_cell.alignment = Alignment(horizontal="right", vertical="bottom")
+
+        header_row_index = 4
+        header_alignment = Alignment(horizontal="left", vertical="bottom", wrap_text=True)
+        header_fill = PatternFill(fill_type="solid", fgColor="D9D9D9")
+        body_alignment = Alignment(horizontal="left", vertical="bottom", wrap_text=True)
+        for col_index, column_name in enumerate(table_columns, start=1):
+            cell = target_sheet.cell(row=header_row_index, column=col_index, value=str(column_name).upper())
+            cell.font = Font(bold=True)
+            cell.alignment = header_alignment
+            cell.fill = header_fill
+
+        data_start_row = header_row_index + 1
+        for row_offset, row_values in enumerate(data_rows, start=0):
+            row_number = data_start_row + row_offset
+            row_values[0] = row_offset + 1
+            for col_index, value in enumerate(row_values, start=1):
+                cell = target_sheet.cell(row=row_number, column=col_index, value=value)
+                cell.alignment = body_alignment
+
+        if not data_rows:
+            data_start_row = header_row_index + 1
+
+        last_row = max(header_row_index, data_start_row + len(data_rows) - 1)
+        target_sheet.freeze_panes = "B5"
+        target_sheet.auto_filter.ref = f"A{header_row_index}:{last_col_letter}{last_row}"
+        target_sheet.print_title_rows = f"{header_row_index}:{header_row_index}"
+
+        thin = Side(style="thin", color="000000")
+        thick = Side(style="thick", color="000000")
+        thin_border = Border(top=thin, bottom=thin, left=thin, right=thin)
+        for col_index in range(1, last_col + 1):
+            cell = target_sheet.cell(row=header_row_index, column=col_index)
+            border = Border(
+                top=thick,
+                bottom=thick,
+                left=thick if col_index == 1 else None,
+                right=thick if col_index == last_col else None,
+            )
+            cell.border = border
+
+        nr_font = Font(bold=True)
+        for row_idx in range(data_start_row, last_row + 1):
+            cell = target_sheet.cell(row=row_idx, column=1)
+            cell.font = nr_font
+
+        for row_idx in range(header_row_index, last_row + 1):
+            for col_index in range(1, last_col + 1):
+                cell = target_sheet.cell(row=row_idx, column=col_index)
+                if row_idx != header_row_index:
+                    cell.border = thin_border
+
+        numeric_format = "#,##0"
+        currency_format = "#,##0.00"
+        currency_markers = {"amount", "total", "price", "value", "sum"}
+        for row_idx in range(data_start_row, last_row + 1):
+            for col_index, column_name in enumerate(table_columns, start=1):
+                cell = target_sheet.cell(row=row_idx, column=col_index)
+                if isinstance(cell.value, (int, float)) and column_name.lower() not in {"nr", "punoi"}:
+                    if column_name.lower() in currency_markers or isinstance(cell.value, float):
+                        cell.number_format = currency_format
+                    else:
+                        cell.number_format = numeric_format
+
+        if status_column_name:
+            status_idx = None
+            for col_index, column_name in enumerate(table_columns, start=1):
+                if str(column_name).strip().lower() == status_column_name.strip().lower():
+                    status_idx = col_index
+                    break
+            if status_idx is not None:
+                status_fills = {
+                    "ok": PatternFill(fill_type="solid", fgColor="C6EFCE"),
+                    "partial": PatternFill(fill_type="solid", fgColor="FCE4D6"),
+                    "failed": PatternFill(fill_type="solid", fgColor="F8CBAD"),
+                }
+                for row_idx in range(data_start_row, last_row + 1):
+                    cell = target_sheet.cell(row=row_idx, column=status_idx)
+                    status_value = str(cell.value or "").strip().lower()
+                    fill = status_fills.get(status_value)
+                    if fill is not None:
+                        cell.fill = fill
+
+        max_width = 45
+        min_width = 8
+        padding = 2
+        header_widths = {idx: len(str(name)) for idx, name in enumerate(table_columns, start=1)}
+        column_widths = dict(header_widths)
+        for row_values in data_rows:
+            for col_index, value in enumerate(row_values, start=1):
+                text = "" if value is None else str(value)
+                column_widths[col_index] = max(column_widths[col_index], len(text))
+        for col_index, raw_width in column_widths.items():
+            width = max(min_width, min(max_width, raw_width + padding))
+            width = max(width, header_widths.get(col_index, 0) + padding)
+            target_sheet.column_dimensions[get_column_letter(col_index)].width = width
+
+        target_sheet.page_margins = PageMargins(
+            top=0.36,
+            bottom=0.51,
+            left=0.1,
+            right=0.1,
+            header=0.15,
+            footer=0.2,
+        )
+        target_sheet.page_setup.fitToWidth = 1
+        target_sheet.page_setup.fitToHeight = 0
+        target_sheet.oddFooter.center.text = "Page &P/&N"
+        target_sheet.oddFooter.right.text = ""
 
     workbook = Workbook()
-    header_sheet = workbook.active
-    header_sheet.title = "Header"
+    orders_sheet = workbook.active
+    orders_sheet.title = "Orders"
     items_sheet = workbook.create_sheet("Items")
 
-    header_sheet.append(header_columns)
-    items_sheet.append(item_columns)
+    include_punoi_column = False
+    orders_columns = ["Nr"] + header_columns + (["PUNOI"] if include_punoi_column else [])
+    orders_rows: list[list[Any]] = []
+    items_columns = [
+        "Nr",
+        "order_id",
+        "ticket_number",
+        "kom_nr",
+        "kom_name",
+        "line_no",
+    ] + list(EDITABLE_ITEM_FIELDS) + (["PUNOI"] if include_punoi_column else [])
+    items_rows: list[list[Any]] = []
 
     for parsed_order in parsed_orders:
         header = parsed_order["header"]
@@ -915,7 +1051,11 @@ def _as_orders_xlsx_bytes(orders: list[dict[str, Any]]) -> bytes:
         }
         for field in header_value_columns:
             header_row[field] = _export_entry_value(header.get(field, ""))
-        header_sheet.append([header_row.get(column, "") for column in header_columns])
+        orders_rows.append(
+            [None]
+            + [header_row.get(column, "") for column in header_columns]
+            + ([initials] if include_punoi_column else [])
+        )
 
         ticket_number = _export_entry_value(header.get("ticket_number", ""))
         kom_nr = _export_entry_value(header.get("kom_nr", ""))
@@ -926,20 +1066,29 @@ def _as_orders_xlsx_bytes(orders: list[dict[str, Any]]) -> bytes:
             line_no = item.get("line_no")
             if line_no in (None, ""):
                 line_no = index
+            item_row = [
+                None,
+                parsed_order["order_id"],
+                ticket_number,
+                kom_nr,
+                kom_name,
+                line_no,
+            ]
+            for field in EDITABLE_ITEM_FIELDS:
+                item_row.append(_export_entry_value(item.get(field, "")))
+            if include_punoi_column:
+                item_row.append(initials)
+            items_rows.append(item_row)
 
-            item_row = {
-                "order_id": parsed_order["order_id"],
-                "ticket_number": ticket_number,
-                "kom_nr": kom_nr,
-                "kom_name": kom_name,
-                "line_no": line_no,
-            }
-            for field in item_value_columns:
-                item_row[field] = _export_entry_value(item.get(field, ""))
-            items_sheet.append([item_row.get(column, "") for column in item_columns])
-
-    header_sheet.freeze_panes = "A2"
-    items_sheet.freeze_panes = "A2"
+    title_text = (title or "Orders").strip() or "Orders"
+    _format_sheet(
+        orders_sheet,
+        sheet_title=title_text,
+        table_columns=orders_columns,
+        data_rows=orders_rows,
+        status_column_name="status",
+    )
+    _format_sheet(items_sheet, sheet_title="Items", table_columns=items_columns, data_rows=items_rows)
 
     output = io.BytesIO()
     workbook.save(output)
@@ -1177,12 +1326,25 @@ def api_orders_xlsx():
     if error is not None:
         return error
 
-    xlsx_bytes = _as_orders_xlsx_bytes(result["orders"])
+    raw_title = (request.args.get("title") or "Orders").strip()
+    initials = (request.args.get("initials") or "").strip()
+    safe_title = re.sub(r"[^A-Za-z0-9_-]+", "_", raw_title).strip("_") or "Orders"
+    date_stamp = datetime.now().astimezone().strftime("%d_%m_%y")
+    filename_parts = [safe_title, date_stamp]
+    if initials:
+        filename_parts.append(initials)
+    filename = "_".join(filename_parts) + ".xlsx"
+
+    xlsx_bytes = _as_orders_xlsx_bytes(
+        result["orders"],
+        title=raw_title,
+        initials=initials,
+    )
     response = Response(
         xlsx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    response.headers["Content-Disposition"] = "attachment; filename=orders.xlsx"
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
 
 @app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
