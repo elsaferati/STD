@@ -690,6 +690,27 @@ def _resolve_xml_files(order_id: str, header: dict[str, Any]) -> list[dict[str, 
     return xml_files
 
 
+def _delete_order_files(order_id: str, header: dict[str, Any]) -> None:
+    (OUTPUT_DIR / f"{order_id}.json").unlink(missing_ok=True)
+
+    file_candidates = {
+        f"OrderInfo_{order_id}.xml",
+        f"OrderArticleInfo_{order_id}.xml",
+    }
+
+    effective_base = (
+        _sanitize_xml_base(_header_val(header, "ticket_number"))
+        or _sanitize_xml_base(_header_val(header, "kom_nr"))
+        or _sanitize_xml_base(_header_val(header, "kom_name"))
+    )
+    if effective_base:
+        file_candidates.add(f"OrderInfo_{effective_base}.xml")
+        file_candidates.add(f"OrderArticleInfo_{effective_base}.xml")
+
+    for filename in file_candidates:
+        (OUTPUT_DIR / filename).unlink(missing_ok=True)
+
+
 def _load_order(order_id: str) -> tuple[dict[str, Any] | None, Any]:
     safe_id = _safe_id(order_id)
     if not safe_id:
@@ -839,7 +860,7 @@ def _api_cors_headers(response: Response):
             response.headers["Vary"] = _append_vary(response.headers.get("Vary"), "Origin")
 
     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, DELETE, OPTIONS"
     response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
@@ -1016,6 +1037,11 @@ def api_order_detail(order_id: str):
             return _api_error(500, "delete_failed", "Failed to delete order files")
         return jsonify({"deleted": True, "order_id": order["safe_id"]})
 
+    if request.method == "DELETE":
+        _delete_order_files(order["safe_id"], order["header"])
+        _invalidate_order_index_cache()
+        return ("", 204)
+
     if not (order["human_review_needed"] and not order["parse_error"]):
         return _api_error(403, "forbidden", "Order is not editable")
 
@@ -1188,6 +1214,26 @@ def export_order_xml(order_id: str):
         abort(500)
     _invalidate_order_index_cache()
     return redirect(url_for("order_detail", order_id=safe_id, exported="1"))
+
+
+@app.route("/order/<order_id>/delete", methods=["POST"])
+def delete_order(order_id: str):
+    safe_id = _safe_id(order_id)
+    if not safe_id:
+        abort(404)
+
+    path = OUTPUT_DIR / f"{safe_id}.json"
+    if not path.exists():
+        abort(404)
+
+    data, _ = _read_json(path)
+    header = data.get("header") if isinstance(data, dict) and isinstance(data.get("header"), dict) else {}
+    _delete_order_files(safe_id, header)
+    _invalidate_order_index_cache()
+
+    date_scope = (request.args.get("date_scope") or "").lower().strip()
+    status_filter = (request.args.get("status") or "").lower().strip()
+    return redirect(url_for("index", date_scope=date_scope or "today", status=status_filter or "all"))
 
 
 @app.route("/order/<order_id>", methods=["GET", "POST"])
