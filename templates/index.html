@@ -117,6 +117,14 @@
               <a class="cta" href="{{ url_for('order_detail', order_id=order.id) }}">
                 {% if order.human_review_needed %}Edit{% else %}View{% endif %}
               </a>
+              <form
+                method="post"
+                action="{{ url_for('delete_order', order_id=order.id, date_scope=date_scope, status=status_filter) }}"
+                class="inline-form"
+                onsubmit="return confirm('Delete this order and its generated files? This cannot be undone.');"
+              >
+                <button class="cta danger" type="submit">Delete</button>
+              </form>
             </div>
             {% if order.parse_error %}
             <div class="alert mini">Parse error: {{ order.parse_error }}</div>
