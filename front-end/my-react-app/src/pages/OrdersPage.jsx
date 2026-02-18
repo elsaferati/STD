@@ -138,14 +138,14 @@ export function OrdersPage() {
     updateParams({ q: query || null });
   };
 
-  const handleExportCsv = async () => {
-    setActionBusy("csv");
+  const handleExportExcel = async () => {
+    setActionBusy("excel");
     setActionError("");
     try {
-      const blob = await fetchBlob(`/api/orders.csv${queryString ? `?${queryString}` : ""}`, { token });
-      downloadBlob(blob, "orders.csv");
+      const blob = await fetchBlob(`/api/orders.xlsx${queryString ? `?${queryString}` : ""}`, { token });
+      downloadBlob(blob, "orders.xlsx");
     } catch (requestError) {
-      setActionError(requestError.message || t("orders.csvExportFailed"));
+      setActionError(requestError.message || t("orders.excelExportFailed"));
     } finally {
       setActionBusy("");
     }
@@ -427,12 +427,12 @@ export function OrdersPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={handleExportCsv}
-                  disabled={actionBusy === "csv"}
+                  onClick={handleExportExcel}
+                  disabled={actionBusy === "excel"}
                   className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
                 >
                   <span className="material-icons text-base">file_download</span>
-                  {actionBusy === "csv" ? t("orders.exporting") : t("common.exportCsv")}
+                  {actionBusy === "excel" ? t("orders.exporting") : t("common.exportExcel")}
                 </button>
                 <button type="button" disabled className="bg-primary/40 text-white px-4 py-2 rounded text-sm font-medium cursor-not-allowed">
                   {t("orders.manualOrder")}

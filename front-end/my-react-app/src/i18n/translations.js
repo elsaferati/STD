@@ -30,6 +30,7 @@ export const translations = {
       editFields: "Edit Fields",
       error: "Error",
       exportCsv: "Export CSV",
+      exportExcel: "Export Excel",
       exportXml: "Export XML",
       failed: "Failed",
       field: "Field",
@@ -138,6 +139,7 @@ export const translations = {
     orders: {
       loadError: "Failed to load orders.",
       csvExportFailed: "CSV export failed.",
+      excelExportFailed: "Excel export failed.",
       deleteConfirm: "Delete order {id}?",
       deleteFailed: "Failed to delete order.",
       multipleXmlNotice: "Multiple XML files were generated ({count}). Use the per-order download button to download them individually.",
@@ -224,6 +226,7 @@ export const translations = {
       editFields: "Felder bearbeiten",
       error: "Fehler",
       exportCsv: "CSV exportieren",
+      exportExcel: "Excel exportieren",
       exportXml: "XML exportieren",
       failed: "Fehlgeschlagen",
       field: "Feld",
@@ -332,6 +335,7 @@ export const translations = {
     orders: {
       loadError: "Aufträge konnten nicht geladen werden.",
       csvExportFailed: "CSV-Export fehlgeschlagen.",
+      excelExportFailed: "Excel-Export fehlgeschlagen.",
       deleteConfirm: "Auftrag {id} löschen?",
       deleteFailed: "Auftrag konnte nicht gelöscht werden.",
       multipleXmlNotice: "Es wurden mehrere XML-Dateien erzeugt ({count}). Bitte laden Sie sie einzeln über den Download-Button herunter.",

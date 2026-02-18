@@ -1,104 +1,112 @@
-## Frontend Redesign: Fixed Nav Sidebar + Simpler Dashboard
+# Export Orders As 2-Sheet Excel (Header + Items)
 
-### Summary
-Update the authenticated React UI (`front-end/my-react-app`) to use a **fixed left navigation sidebar** with **Dashboard / Orders / Clients / Settings**. Redesign the **Dashboard (Overview)** statistics to be **simpler and more user friendly**: **4 KPI cards + 1 small 24h sparkline**, keeping the “Latest Orders” table. `Clients` and `Settings` will be **placeholder pages** for now.
+## Summary
+Replace the current “Export CSV” behavior in the Orders UI with an Excel `.xlsx` download containing two worksheets:
+- `Header`: one row per order with order-level + header-field values
+- `Items`: one row per item across all exported orders, linked back to its order
 
----
+## User-Facing Behavior (Success Criteria)
+- Clicking export on the Orders page downloads `orders.xlsx`.
+- The workbook contains exactly 2 sheets named `Header` and `Items`.
+- `Header` sheet has one row per order and includes the header fields (values only).
+- `Items` sheet has one row per item and includes item fields (values only), plus order identifiers.
+- Export respects the same filters as today (query string params on the Orders page).
 
-## Decisions Locked In (from you)
-- Sidebar behavior: **Fixed** (always visible).
-- Sidebar items: **Dashboard + Orders + Clients + Settings**.
-- Clients page: **Placeholder only** (no backend/API work).
-- Dashboard stats: **4 KPIs + 1 sparkline**.
+## Backend Changes (Flask)
+### 1. Add a new endpoint
+- Add `GET /api/orders.xlsx` in `app.py`.
+- It should call `_query_orders(allow_default_pagination=False)` to export all matching orders (same as current CSV export).
 
----
+### 2. Build an `.xlsx` in memory (openpyxl)
+- Use `openpyxl` (already in `requirements.txt`) to generate the workbook.
+- Return a `Response` with:
+  - `Content-Type`: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+  - `Content-Disposition`: `attachment; filename=orders.xlsx`
+  - Body: workbook bytes (via `io.BytesIO()` + `workbook.save()`)
 
-## Implementation Plan
+### 3. Data extraction strategy (values only)
+For each order returned by `_query_orders(...)[“orders”]` (these are index rows):
+- Read the underlying JSON file directly using `order["file_name"]` and `OUTPUT_DIR` (avoid `_load_order()` because it returns API error tuples on failure).
+- Parse:
+  - `header`: dict of `{field: {value, source, confidence, ...}}`
+  - `items`: list of dicts like `{artikelnummer: {value,...}, ..., line_no: N}`
+  - `warnings`, `errors`, `status`, `received_at`, `message_id`
+- Convert “entry dicts” to plain values using `entry.get("value", "")` when `entry` is a dict, else stringify safely.
 
-### 1) Add shared app shell + sidebar nav (new components)
-**Create** `front-end/my-react-app/src/components/SidebarNav.jsx`
-- Renders:
-  - Logo block (reuse existing “XXLUTZ Agent” styling from `OrdersPage.jsx`).
-  - Nav list using `NavLink`:
-    - Dashboard → `/`
-    - Orders → `/orders` (active for `/orders` and `/orders/:orderId`)
-    - Clients → `/clients`
-    - Settings → `/settings`
-- Active styling: primary text + subtle background (Tailwind classes consistent with existing palette).
-- Icons: Material Icons (already loaded in `index.html`).
+### 4. Sheet schemas (decision complete)
+#### `Header` sheet columns
+- Fixed meta columns (in this order):
+  - `order_id` (index row `id`)
+  - `file_name`
+  - `message_id`
+  - `received_at`
+  - `status`
+  - `item_count`
+  - `warnings_count`
+  - `errors_count`
+  - `reply_needed`
+  - `human_review_needed`
+  - `post_case`
+  - `warnings` (joined with ` | `)
+  - `errors` (joined with ` | `)
+  - `parse_error` (JSON read/parse error string, blank if none)
+- Header field columns (values only):
+  - Ordered as: `EDITABLE_HEADER_FIELDS` first (from `app.py`), then any remaining header keys seen in exported orders sorted alphabetically.
+  - Exclude duplicates of the fixed meta flags if they also appear in the header dict (`reply_needed`, `human_review_needed`, `post_case`) to avoid double columns.
 
-**Create** `front-end/my-react-app/src/components/AppShell.jsx`
-- Layout (right side is the scroll container):
-  - Outer: `min-h-screen flex overflow-hidden bg-background-light font-display text-slate-800`
-  - Left: fixed `aside` (`w-72`, border, shadow) containing:
-    - `SidebarNav`
-    - Optional `sidebarContent` slot (shown below nav; used by Orders filters)
-  - Right: `div.flex-1.flex.flex-col.min-w-0`
-    - Top bar header (height `h-16`): global search + Logout button
-      - Search submit navigates to `/orders?q=...` (empty => `/orders`)
-    - Main content: `main.flex-1.overflow-auto` with standard padding (e.g. `p-6`)
-- Uses `useAuth()` for `logout`.
-- Keeps UI consistent across Overview / Orders / Order Detail / placeholder pages.
+One row per order.
 
-### 2) Add placeholder pages + routes
-**Create** `front-end/my-react-app/src/pages/ClientsPage.jsx`
-- Wrap in `AppShell`.
-- Simple header (“Clients”) + empty-state card (“Coming soon”).
+#### `Items` sheet columns
+- Fixed columns (in this order):
+  - `order_id`
+  - `ticket_number` (pulled from the order header value)
+  - `kom_nr` (pulled from the order header value)
+  - `kom_name` (pulled from the order header value)
+  - `line_no` (from item dict, fallback to 1-based index)
+- Item field columns (values only):
+  - Ordered as: `EDITABLE_ITEM_FIELDS` first, then any remaining item keys (excluding `line_no`) sorted alphabetically.
 
-**Create** `front-end/my-react-app/src/pages/SettingsPage.jsx`
-- Wrap in `AppShell`.
-- Simple header (“Settings”) + empty-state card (“Coming soon”).
+One row per item across all exported orders.
 
-**Update** `front-end/my-react-app/src/main.jsx`
-- Add protected routes:
-  - `/clients` → `ClientsPage`
-  - `/settings` → `SettingsPage`
+### 5. Minimal Excel usability tweaks
+- Freeze header rows: `Header!A2`, `Items!A2`.
+- Write the first row as column headers.
+- No styling beyond that (keeps implementation small and robust).
 
-### 3) Refactor existing pages to use `AppShell` (so sidebar appears everywhere)
-**Update** `front-end/my-react-app/src/pages/OrdersPage.jsx`
-- Remove its current outer page layout (`<aside>...<header>...`) and instead:
-  - `return <AppShell sidebarContent={...filters...}> ...orders workspace... </AppShell>`
-- Move the existing filter UI (Extraction Date / Status / Workflow Flags) into `sidebarContent`.
-- Remove page-level search + logout (top bar now provides both).
-- Keep existing tabs, export CSV, table, pagination behavior unchanged.
+### 6. Keep existing CSV route for compatibility
+- Leave `GET /api/orders.csv` as-is (legacy), but the UI will switch to `.xlsx`.
 
-**Update** `front-end/my-react-app/src/pages/OverviewPage.jsx`
-- Replace its current top header with `AppShell` (no `sidebarContent`).
-- Keep the same polling + `fetchJson("/api/overview")`.
-- Redesign stats to match: **4 KPIs + 1 sparkline**
-  - KPIs:
-    1) **Today Orders** (`overview.today.total`)
-    2) **OK Rate** (`overview.today.ok_rate`)
-    3) **Needs Attention** (sum of `queue_counts.reply_needed + human_review_needed + post_case`)
-       - Subtitle: `Reply x · Review y · Post z`
-    4) **Last 24h Orders** (`overview.last_24h.total`)
-  - Sparkline panel:
-    - Reuse existing `buildLineSeries()` + `processed_by_hour` to render the small 24h trend.
-  - Remove the 7-day stacked status chart section (to keep it simpler).
-- Keep “Latest Orders” table (as the main actionable area).
+## Frontend Changes (React)
+### 1. Switch export to the new endpoint
+In `front-end/my-react-app/src/pages/OrdersPage.jsx`:
+- Update the export handler to fetch `/api/orders.xlsx` (preserving the existing query string).
+- Download filename: `orders.xlsx`.
+- Change the busy-action key from `"csv"` to `"excel"` (or keep `"csv"` but recommended to rename for clarity).
 
-**Update** `front-end/my-react-app/src/pages/OrderDetailPage.jsx`
-- Wrap page content in `AppShell` so the nav sidebar exists here too.
-- Keep the existing order header (breadcrumbs + actions) but move it into the scrollable content area (no conflict with the AppShell top bar).
-- Preserve current behavior: polling when not editing, edit mode bar, XML downloads, etc.
+### 2. Update UI label and error messages
+In `front-end/my-react-app/src/i18n/translations.js`:
+- Add `common.exportExcel` for `en` and `de`.
+- Add `orders.excelExportFailed` for `en` and `de`.
+In `front-end/my-react-app/src/pages/OrdersPage.jsx`:
+- Button text uses `t("common.exportExcel")`.
+- Error fallback uses `t("orders.excelExportFailed")`.
 
-### 4) Acceptance checks (manual + build)
-- Navigation:
-  - Sidebar visible on `/`, `/orders`, `/orders/:id`, `/clients`, `/settings`
-  - Active highlighting works (Orders stays active on order detail)
-- Search:
-  - Submitting search from any page routes to `/orders?q=...`
-- Dashboard:
-  - Exactly 4 KPI cards + 1 24h sparkline + Latest Orders table
-  - No 7-day chart
-- Orders:
-  - Filters still work (query params update, polling continues)
-- Build/lint:
-  - `cd front-end/my-react-app; npm run build`
-  - `cd front-end/my-react-app; npm run lint`
+## Public Interfaces / API Changes
+- New: `GET /api/orders.xlsx` returns an `.xlsx` with sheets `Header` and `Items`.
+- Existing: `GET /api/orders.csv` remains unchanged but is no longer used by the UI after this change.
 
----
+## Test Plan (Manual)
+1. Start backend and frontend as you do today.
+2. In the Orders page, set filters (date range, status, q search).
+3. Click export and verify `orders.xlsx` downloads.
+4. Open `orders.xlsx` and verify:
+   - Two sheets exist named `Header` and `Items`.
+   - `Header` has one row per order and contains expected header fields (values, not dicts).
+   - `Items` has multiple rows per order where applicable and includes `order_id`, `ticket_number`, `kom_nr`, `line_no`, and item fields.
+5. Spot-check an order with missing fields and verify blanks rather than crashes.
+6. Export with no matching orders and verify you still get a valid workbook with headers and zero data rows.
 
-## Assumptions
-- No backend changes needed (Clients/Settings are placeholders).
-- Desktop-first fixed sidebar is acceptable; mobile behavior remains basic for now (no hamburger/drawer work).
+## Assumptions (Locked)
+- “2 sheets” means a real Excel workbook (`.xlsx`), not a CSV trick.
+- “Displayed data” means field values only (no `source`/`confidence` columns).
+- The export should cover the current filtered result set, not just the current page.
