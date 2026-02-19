@@ -55,11 +55,6 @@ export function AppShell({
                 <NavLink to="/" active={active === "overview"} icon="space_dashboard" label={t("common.overview")} />
                 <NavLink to="/orders" active={active === "orders"} icon="receipt_long" label={t("common.orders")} />
                 <NavLink to="/clients" active={active === "clients"} icon="groups" label={t("common.clients")} />
-                <div className="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-600 border border-slate-300">
-                  <span className="material-icons text-lg">support_agent</span>
-                  <span className="text-sm">{t("common.assistance")}</span>
-                  <span className="ml-auto text-[10px] uppercase tracking-wide text-slate-600">{t("appShell.soon")}</span>
-                </div>
               </div>
             </div>
 

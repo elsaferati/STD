@@ -333,17 +333,35 @@ export function OrderDetailPage() {
                 </button>
               </div>
 
-              <div className="overflow-auto max-h-[620px]">
-                <table className="w-full text-sm text-left">
-                  <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+              <div className="bg-slate-50 border-b border-slate-200">
+                <table className="w-full text-sm text-left table-fixed">
+                  <colgroup>
+                    <col className="w-16" />
+                    <col className="w-64" />
+                    <col className="w-[42%]" />
+                    <col className="w-28" />
+                    <col className="w-28" />
+                  </colgroup>
+                  <thead className="text-xs text-slate-500 uppercase">
                     <tr>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 left-0 z-20 bg-slate-50 border-r border-slate-200">Nr</th>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.field")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.value")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky top-0 z-10 bg-slate-50">{t("common.source")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider text-right sticky top-0 z-10 bg-slate-50">{t("common.confidence")}</th>
+                      <th className="px-6 py-3 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.field")}</th>
+                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.value")}</th>
+                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.source")}</th>
+                      <th className="px-6 py-3 font-medium tracking-wider text-right bg-slate-50">{t("common.confidence")}</th>
                     </tr>
                   </thead>
+                </table>
+              </div>
+              <div className="relative overflow-auto max-h-[620px]">
+                <table className="w-full text-sm text-left table-fixed">
+                  <colgroup>
+                    <col className="w-16" />
+                    <col className="w-64" />
+                    <col className="w-[42%]" />
+                    <col className="w-28" />
+                    <col className="w-28" />
+                  </colgroup>
                   <tbody className="divide-y divide-slate-200">
                     {headerRows.map(([field, entry], index) => {
                       const confidence = entryConfidence(entry);
@@ -390,13 +408,13 @@ export function OrderDetailPage() {
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left">
-                  <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200">
+                  <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                     <tr>
-                      <th className="px-6 py-3 sticky left-0 z-20 bg-slate-50">#</th>
-                      <th className="px-6 py-3">{t("fields.artikelnummer")}</th>
-                      <th className="px-6 py-3">{t("fields.modellnummer")}</th>
-                      <th className="px-6 py-3">{t("fields.menge")}</th>
-                      <th className="px-6 py-3">{t("fields.furncloud_id")}</th>
+                      <th className="px-6 py-3 sticky top-0 left-0 z-20 bg-slate-50">#</th>
+                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.artikelnummer")}</th>
+                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.modellnummer")}</th>
+                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.menge")}</th>
+                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.furncloud_id")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">

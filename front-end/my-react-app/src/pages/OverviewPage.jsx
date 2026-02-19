@@ -63,6 +63,20 @@ function buildLineSeries(points) {
     .join(" ");
 }
 
+function toNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getBucketTotals(bucket) {
+  const ok = toNumber(bucket?.ok);
+  const partial = toNumber(bucket?.partial);
+  const failed = toNumber(bucket?.failed);
+  const unknown = toNumber(bucket?.unknown);
+  const total = ok + partial + failed + unknown;
+  return { ok, partial, failed, unknown, total };
+}
+
 export function OverviewPage() {
   const { token, logout } = useAuth();
   const navigate = useNavigate();
@@ -71,6 +85,7 @@ export function OverviewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [selectedDayIndex, setSelectedDayIndex] = useState(null);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -92,7 +107,29 @@ export function OverviewPage() {
 
   const lineSeries = buildLineSeries(overview?.processed_by_hour || []);
   const statusByDay = overview?.status_by_day || [];
-  const maxDayTotal = Math.max(...statusByDay.map((bucket) => Number(bucket.total || 0)), 1);
+  const dayTotals = statusByDay.map((bucket) => getBucketTotals(bucket));
+  const maxDayTotal = Math.max(...dayTotals.map((bucket) => bucket.total), 0);
+  const hasActivity = dayTotals.some((bucket) => bucket.total > 0);
+  const latestActiveIndex = (() => {
+    for (let index = dayTotals.length - 1; index >= 0; index -= 1) {
+      if (dayTotals[index]?.total > 0) {
+        return index;
+      }
+    }
+    return null;
+  })();
+  const safeSelectedIndex =
+    selectedDayIndex !== null && selectedDayIndex < statusByDay.length
+      ? selectedDayIndex
+      : null;
+  const effectiveSelectedIndex =
+    safeSelectedIndex ?? latestActiveIndex;
+  const selectedBucket =
+    effectiveSelectedIndex !== null ? statusByDay[effectiveSelectedIndex] : null;
+  const selectedTotals =
+    effectiveSelectedIndex !== null ? dayTotals[effectiveSelectedIndex] : null;
+  const selectedLabel =
+    selectedBucket?.label || selectedBucket?.date || "";
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
@@ -135,9 +172,6 @@ export function OverviewPage() {
                   />
                 </form>
                 <LanguageSwitcher compact className="hidden md:flex" />
-                <Link to="/orders" className="text-sm px-3 py-1.5 rounded-lg border border-slate-200 hover:border-primary hover:text-primary transition-colors">
-                  {t("common.orders")}
-                </Link>
                 <button
                   type="button"
                   onClick={logout}
@@ -212,29 +246,89 @@ export function OverviewPage() {
                     <h3 className="font-bold text-lg">{t("overview.extractionPerformance")}</h3>
                     <p className="text-sm text-slate-500">{t("overview.last7Days")}</p>
                   </div>
-                  <div className="flex gap-2 text-xs font-medium">
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />{t("status.ok")}</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />{t("status.partial")}</div>
-                    <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />{t("status.failed")}</div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex gap-2 text-xs font-medium">
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />{t("status.ok")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />{t("status.partial")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />{t("status.failed")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-300" />{t("status.unknown")}</div>
+                    </div>
                   </div>
                 </div>
-                <div className="w-full flex-1 min-h-[120px] flex items-end justify-between gap-2 px-2">
-                  {statusByDay.map((bucket) => {
-                    const okHeight = `${(Number(bucket.ok || 0) / maxDayTotal) * 100}%`;
-                    const partialHeight = `${(Number(bucket.partial || 0) / maxDayTotal) * 100}%`;
-                    const failedHeight = `${(Number(bucket.failed || 0) / maxDayTotal) * 100}%`;
-                    return (
-                      <div key={bucket.date} className="flex-1 flex flex-col items-center gap-2">
-                        <div className="w-full max-w-[40px] flex flex-col h-full justify-end rounded-t-lg overflow-hidden">
-                          <div className="bg-danger w-full" style={{ height: failedHeight }} />
-                          <div className="bg-warning w-full" style={{ height: partialHeight }} />
-                          <div className="bg-success w-full" style={{ height: okHeight }} />
+                {hasActivity ? (
+                  <div className="w-full flex-1 min-h-[120px] flex items-end justify-between gap-2 px-2">
+                    {statusByDay.map((bucket, index) => {
+                      const totals = getBucketTotals(bucket);
+                      const scale = maxDayTotal > 0 ? maxDayTotal : 1;
+                      const okHeight = `${(totals.ok / scale) * 100}%`;
+                      const partialHeight = `${(totals.partial / scale) * 100}%`;
+                      const failedHeight = `${(totals.failed / scale) * 100}%`;
+                      const unknownHeight = `${(totals.unknown / scale) * 100}%`;
+                      const tooltip = [
+                        `${t("status.ok")}: ${totals.ok}`,
+                        `${t("status.partial")}: ${totals.partial}`,
+                        `${t("status.failed")}: ${totals.failed}`,
+                        `${t("status.unknown")}: ${totals.unknown}`,
+                        `Total: ${totals.total}`,
+                      ].join("\n");
+
+                      return (
+                        <div
+                          key={bucket.date}
+                          className="flex-1 flex flex-col items-center gap-2 h-full cursor-pointer"
+                          onClick={() =>
+                            setSelectedDayIndex((current) =>
+                              current === index ? null : index
+                            )
+                          }
+                        >
+                          <div
+                            className="w-full max-w-[40px] flex flex-col flex-1 justify-end rounded-t-lg overflow-hidden"
+                            title={tooltip}
+                          >
+                            <div className="bg-slate-300 w-full" style={{ height: unknownHeight }} />
+                            <div className="bg-danger w-full" style={{ height: failedHeight }} />
+                            <div className="bg-warning w-full" style={{ height: partialHeight }} />
+                            <div className="bg-success w-full" style={{ height: okHeight }} />
+                          </div>
+                          <span className="text-xs text-slate-400">{bucket.label}</span>
                         </div>
-                        <span className="text-xs text-slate-400">{bucket.label}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-[120px] flex items-center justify-center text-sm text-slate-400">
+                    No extraction activity in the last 7 days.
+                  </div>
+                )}
+                {hasActivity && selectedTotals ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs font-medium bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">{t("common.selectedDay")}:</span>
+                      <span className="font-semibold text-slate-700">{selectedLabel}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">{t("common.total")}:</span>
+                      <span className="font-semibold text-slate-700">{selectedTotals.total}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-success" />
+                      <span>{t("status.ok")} {selectedTotals.ok}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-warning" />
+                      <span>{t("status.partial")} {selectedTotals.partial}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-danger" />
+                      <span>{t("status.failed")} {selectedTotals.failed}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      <span>{t("status.unknown")} {selectedTotals.unknown}</span>
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="bg-surface-light rounded-xl border border-slate-200 p-4 shadow-sm flex flex-col h-[260px]">
