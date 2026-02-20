@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(python -c \"import prompts; print\\(''OK -'', len\\(prompts.build_user_instructions\\([''email'',''pdf'']\\)\\),''chars''\\)\")"
+    ]
+  }
+}
