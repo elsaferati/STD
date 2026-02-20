@@ -21,7 +21,7 @@ export function SidebarNav() {
   return (
     <div className="border-b border-slate-100">
       <div className="h-16 flex items-center px-6 border-b border-slate-100">
-        <div className="w-8 h-8 rounded bg-gradient-to-br from-primary to-cyan-600 flex items-center justify-center mr-3 shadow-lg shadow-primary/20">
+        <div className="w-8 h-8 rounded bg-gradient-to-br from-primary to-primary-dark flex items-center justify-center mr-3 shadow-lg shadow-primary/20">
           <span className="text-white font-bold text-lg">X</span>
         </div>
         <span className="font-bold text-xl tracking-tight text-slate-900">
