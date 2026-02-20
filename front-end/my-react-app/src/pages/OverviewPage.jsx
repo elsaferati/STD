@@ -377,7 +377,7 @@ export function OverviewPage() {
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.receivedAt")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.status")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.clientStore")}</th>
+                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-56 max-w-[224px]">{t("common.clientStore")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.items")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.flags")}</th>
                       <th className="px-6 py-4 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
@@ -396,9 +396,9 @@ export function OverviewPage() {
                             {order.ticket_number || order.kom_nr || order.id}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="font-medium text-slate-800">{order.kom_name || "-"}</div>
-                          <div className="text-xs text-slate-500">{order.store_name || "-"}</div>
+                        <td className="px-6 py-4 whitespace-nowrap w-56 max-w-[224px]">
+                          <div className="font-medium text-slate-800 truncate">{order.kom_name || "-"}</div>
+                          <div className="text-xs text-slate-500 truncate">{order.store_name || "-"}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-slate-600">{order.item_count}</td>
                         <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500">

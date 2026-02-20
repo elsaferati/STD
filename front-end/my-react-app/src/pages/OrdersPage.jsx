@@ -524,8 +524,8 @@ export function OrdersPage() {
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.amount")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-64 max-w-64">{t("common.customer")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
@@ -547,11 +547,13 @@ export function OrdersPage() {
                         </button>
                       </td>
                       <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at, lang)}</td>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-slate-900">{order.kom_name || "-"}</div>
-                        <div className="text-xs text-slate-500">{order.store_name || order.kundennummer || "-"}</div>
+                      <td className="px-4 py-3 w-64 max-w-64">
+                        <div className="font-medium text-slate-900 truncate">{order.kom_name || "-"}</div>
+                        <div className="text-xs text-slate-500 truncate">{order.store_name || order.kundennummer || "-"}</div>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-900">{order.delivery_week || order.liefertermin || "-"}</td>
+                      <td className="px-4 py-3 font-medium text-slate-900 w-56 max-w-56">
+                        <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
+                      </td>
                       <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
                       <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order, t)}</td>
                       <td className="px-4 py-3 text-right">
