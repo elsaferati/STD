@@ -20,14 +20,10 @@ function NavLink({ to, active, icon, label }) {
 export function AppShell({
   active,
   children,
-  showPulse = false,
-  pulseValue = 0,
-  pulseMax = 1,
   sidebarContent = null,
 }) {
   const { logout } = useAuth();
   const { t } = useI18n();
-  const percent = Math.min((pulseValue / Math.max(pulseMax, 1)) * 100, 100);
 
   return (
     <div className="bg-background-light text-slate-800 font-display min-h-screen">
@@ -57,24 +53,6 @@ export function AppShell({
                 <NavLink to="/clients" active={active === "clients"} icon="groups" label={t("common.clients")} />
               </div>
             </div>
-
-            {showPulse ? (
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-600 mb-3">{t("appShell.pulse")}</p>
-                <div className="rounded-xl border border-slate-300 bg-slate-100 p-4 space-y-3">
-                  <div>
-                    <p className="text-xs text-slate-600">{t("appShell.queueHealth")}</p>
-                    <p className="text-lg font-semibold text-slate-900">
-                      {t("appShell.pending", { count: pulseValue })}
-                    </p>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-slate-300 overflow-hidden">
-                    <div className="h-full bg-primary/80" style={{ width: `${percent}%` }} />
-                  </div>
-                  <p className="text-[11px] text-slate-600">{t("appShell.basedOnToday")}</p>
-                </div>
-              </div>
-            ) : null}
 
             {sidebarContent ? (
               <div>

@@ -144,9 +144,6 @@ export function OverviewPage() {
   return (
     <AppShell
       active="overview"
-      showPulse
-      pulseValue={overview?.queue_counts?.reply_needed ?? 0}
-      pulseMax={overview?.today?.total ?? 1}
     >
           <header className="bg-surface-light/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
             <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
@@ -340,10 +337,10 @@ export function OverviewPage() {
                   <span className="material-icons text-primary/50">ssid_chart</span>
                 </div>
                 <div className="relative flex-1 w-full min-h-[120px] rounded-lg border border-slate-100 p-2">
-                  <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
+                  <svg viewBox="0 0 100 100" className="w-full h-full text-primary" preserveAspectRatio="none">
                     <polyline
                       fill="none"
-                      stroke="#13daec"
+                      stroke="currentColor"
                       strokeWidth="2"
                       points={lineSeries}
                     />
@@ -390,7 +387,7 @@ export function OverviewPage() {
                     {(overview?.latest_orders || []).map((order, index) => (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap text-slate-500">{index + 1}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">
+                        <td className="px-6 py-4 whitespace-nowrap text-black">
                           {formatDateTime(order.effective_received_at, lang)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={order.status} /></td>

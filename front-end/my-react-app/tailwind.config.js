@@ -7,8 +7,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: "#13daec",
-        "primary-dark": "#0eaab9",
+        primary: "#3b82f6",
+        "primary-dark": "#2563eb",
         "background-light": "#f6f8f8",
         "background-dark": "#102022",
         "surface-light": "#ffffff",
@@ -22,7 +22,7 @@ export default {
         login: ["IBM Plex Sans", "Space Grotesk", "sans-serif"],
       },
       boxShadow: {
-        glow: "0 0 20px -5px rgba(19, 218, 236, 0.3)",
+        glow: "0 0 20px -5px rgba(59, 130, 246, 0.28)",
       },
     },
   },
