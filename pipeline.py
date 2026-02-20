@@ -297,7 +297,7 @@ def process_message(
         is_momax_bg=use_momax_bg,
     )
 
-    # momax_bg special-case: keep kom_nr/date fixes only.
+    # BG special-case (MOMAX/MOEMAX/AIKO): keep kom_nr/date fixes only.
     # Kundennummer must come from address-based Excel logic.
     if use_momax_bg:
         header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}

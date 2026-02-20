@@ -16,7 +16,8 @@ VERBAND_FILTER = (27750, 29000, 30000)
 
 _iln_cache: Optional[pd.DataFrame] = None
 ILN_EXCEL_PATH = "ALL ILN LISTE_20.01.2026_LH.xlsx"
-MOMAX_BG_ALLOWED_KUNDENNUMMERN = {"68935", "68936", "68937", "68938", "68939", "68941"}
+_momax_bg_excel_cache: Optional[pd.DataFrame] = None
+MOMAX_BG_EXCEL_PATH = "Kunden_Bulgarien.xlsx"
 
 # ---------------------------------------------------------------------------
 # Column mapping and normalization (single place for both Excels)
@@ -166,6 +167,64 @@ def load_iln_data():
     return _iln_cache
 
 
+def _looks_like_street_column(col_name: Any) -> bool:
+    if not isinstance(col_name, str):
+        return False
+    key = _fix_mojibake(col_name).lower()
+    key = key.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    key = re.sub(r"[^a-z]", "", key)
+    return "strasse" in key or key == "strase"
+
+
+def load_momax_bg_data() -> Optional[pd.DataFrame]:
+    global _momax_bg_excel_cache
+    if _momax_bg_excel_cache is not None:
+        return _momax_bg_excel_cache
+    if not os.path.exists(MOMAX_BG_EXCEL_PATH):
+        print(f"MOMAX BG Excel file not found at {MOMAX_BG_EXCEL_PATH}")
+        return None
+    try:
+        xls = pd.ExcelFile(MOMAX_BG_EXCEL_PATH)
+        if not xls.sheet_names:
+            print(f"MOMAX BG Excel has no sheets: {MOMAX_BG_EXCEL_PATH}")
+            return None
+        sheet_name = "Tabelle2" if "Tabelle2" in xls.sheet_names else xls.sheet_names[0]
+        df = pd.read_excel(MOMAX_BG_EXCEL_PATH, sheet_name=sheet_name).fillna("")
+    except Exception as e:
+        print(f"Error loading MOMAX BG Excel data: {e}")
+        return None
+
+    street_col = next((c for c in df.columns if _looks_like_street_column(c)), None)
+    if street_col and street_col != "Strasse":
+        df = df.rename(columns={street_col: "Strasse"})
+
+    required_cols = {"Kundennr", "Kundenname", "Strasse", "PLZ", "Ort", "Tour"}
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        print(
+            f"MOMAX BG Excel missing required columns: {', '.join(missing)}"
+        )
+        return None
+
+    df["Kundennr"] = df["Kundennr"].astype(str).str.replace(".0", "", regex=False).str.strip()
+    df["Tour"] = df["Tour"].astype(str).str.replace(".0", "", regex=False).str.strip()
+    df["Strasse"] = df["Strasse"].astype(str)
+    df["Ort"] = df["Ort"].astype(str)
+    df["PLZ"] = df["PLZ"].astype(str).str.replace(".0", "", regex=False).str.strip()
+
+    df["__street_norm"] = df["Strasse"].map(_normalize_address_token)
+    df["__city_norm"] = df["Ort"].map(_normalize_city)
+    df["__plz_digits"] = df["PLZ"].map(_plz_digits_only)
+    df["__street_loose"] = df["Strasse"].map(_normalize_loose_alnum)
+    df["__street_tokens"] = df["Strasse"].map(_street_tokens)
+    df["__house_tokens"] = df["Strasse"].map(_extract_house_number_tokens)
+    df["__name_tokens"] = df["Kundenname"].map(_customer_name_tokens)
+
+    _momax_bg_excel_cache = df
+    print(f"Loaded {len(_momax_bg_excel_cache)} MOMAX BG records from Excel.")
+    return _momax_bg_excel_cache
+
+
 def _extract_plz_from_address(address_str: str) -> str:
     if not address_str:
         return ""
@@ -184,6 +243,37 @@ def _normalize_loose_alnum(text: str) -> str:
     text = _fix_mojibake(text).lower()
     text = text.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     return " ".join(re.findall(r"[a-z0-9]+", text))
+
+
+def _customer_name_tokens(text: str) -> Set[str]:
+    normalized = _normalize_loose_alnum(text)
+    if not normalized:
+        return set()
+    tokens = set(normalized.split())
+    if "moemax" in tokens:
+        tokens.add("momax")
+    if "momax" in tokens:
+        tokens.add("moemax")
+    return tokens
+
+
+def _momax_bg_brand_intent(store_name: str) -> str:
+    tokens = _customer_name_tokens(store_name)
+    has_momax = bool({"momax", "moemax"} & tokens)
+    has_aiko = "aiko" in tokens
+    if has_momax and not has_aiko:
+        return "momax"
+    if has_aiko and not has_momax:
+        return "aiko"
+    return ""
+
+
+def _momax_bg_name_matches_intent(name_tokens: Set[str], brand_intent: str) -> bool:
+    if brand_intent == "momax":
+        return bool({"momax", "moemax"} & name_tokens)
+    if brand_intent == "aiko":
+        return "aiko" in name_tokens
+    return False
 
 
 def _extract_house_number_tokens(text: str) -> Set[str]:
@@ -240,34 +330,18 @@ def _kdnr_sort_value(value: Any) -> int:
 
 def find_momax_bg_customer_by_address(
     address_str: str,
+    store_name: str = "",
     warnings: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    momax_bg-only customer lookup constrained to a fixed Kundennummer allowlist.
-    Match by address/street with typo-tolerant fallback.
+    MOMAX BG lookup from Kunden_Bulgarien.xlsx only.
+    1) strict street + city match
+    2) typo-tolerant fallback (city required) only if strict misses
+    3) brand intent tie-break via store_name
+    4) deterministic fallback: PLZ exact > address score > lowest Kundennr
     """
-    df = load_data()
-    if df is None or not address_str or not address_str.strip():
-        return None
-    if "Adressnummer" not in df.columns or "Kundennummer" not in df.columns:
-        return None
-
-    subset = df[
-        df["Adressnummer"].astype(str).str.replace(".0", "", regex=False).str.strip() == "0"
-    ]
-    subset = _filter_by_verband(subset)
-    if subset is None or subset.empty:
-        return None
-
-    subset = subset[
-        subset["Kundennummer"]
-        .astype(str)
-        .str.replace(".0", "", regex=False)
-        .str.strip()
-        .apply(_clean_kdnr)
-        .isin({_clean_kdnr(v) for v in MOMAX_BG_ALLOWED_KUNDENNUMMERN})
-    ]
-    if subset.empty:
+    df = load_momax_bg_data()
+    if df is None or df.empty or not address_str or not address_str.strip():
         return None
 
     address_str = address_str.strip()
@@ -275,87 +349,117 @@ def find_momax_bg_customer_by_address(
     input_plz = _extract_plz_from_address(address_str)
     input_street_loose = _normalize_loose_alnum(address_str)
     input_house_tokens = _extract_house_number_tokens(address_str)
+    input_street_tokens = _street_tokens(address_str)
 
-    candidates: List[Dict[str, Any]] = []
-    for _, row in subset.iterrows():
+    strict_candidates: List[Dict[str, Any]] = []
+    fallback_candidates: List[Dict[str, Any]] = []
+    for _, row in df.iterrows():
         strasse_db = str(row.get("Strasse", ""))
         ort_db = str(row.get("Ort", ""))
         if len(strasse_db) < 3 or len(ort_db) < 3:
             continue
 
-        strasse_clean = _normalize_address_token(strasse_db)
-        ort_clean = _normalize_city(ort_db)
+        strasse_clean = str(row.get("__street_norm", "")) or _normalize_address_token(strasse_db)
+        ort_clean = str(row.get("__city_norm", "")) or _normalize_city(ort_db)
         city_match = bool(ort_clean and (ort_clean in addr_clean or _city_matches(ort_db, addr_clean)))
         if not city_match:
             continue
 
         street_matches = bool(
-            strasse_clean in addr_clean
+            strasse_clean
+            and (
+                strasse_clean in addr_clean
             or (strasse_clean.startswith("am") and len(strasse_clean) > 2 and strasse_clean[2:] in addr_clean)
+            )
         )
 
-        row_street_loose = _normalize_loose_alnum(strasse_db)
-        fuzzy_score = 0.0
-        if fuzz is not None and input_street_loose and row_street_loose:
-            fuzzy_score = float(fuzz.token_set_ratio(input_street_loose, row_street_loose))
+        plz_db = str(row.get("__plz_digits", "")) or _plz_digits_only(str(row.get("PLZ", "")))
+        plz_exact = bool(input_plz and plz_db == input_plz)
 
-        row_house_tokens = _extract_house_number_tokens(strasse_db)
+        row_house_tokens = row.get("__house_tokens", set())
+        if not isinstance(row_house_tokens, set):
+            row_house_tokens = _extract_house_number_tokens(strasse_db)
         house_match = bool(
             row_house_tokens
             and input_house_tokens
             and not row_house_tokens.isdisjoint(input_house_tokens)
         )
 
-        row_tokens = _street_tokens(strasse_db)
-        input_tokens = _street_tokens(address_str)
-        token_coverage = _token_coverage_score(row_tokens, input_tokens)
+        row_tokens = row.get("__street_tokens", [])
+        if not isinstance(row_tokens, list):
+            row_tokens = _street_tokens(strasse_db)
+        token_coverage = _token_coverage_score(row_tokens, input_street_tokens)
+
+        name_tokens = row.get("__name_tokens", set())
+        if not isinstance(name_tokens, set):
+            name_tokens = _customer_name_tokens(str(row.get("Kundenname", "")))
+
+        kdnr_sort = _kdnr_sort_value(row.get("Kundennr", ""))
+
+        if street_matches:
+            strict_candidates.append(
+                {
+                    "row": row,
+                    "plz_exact": plz_exact,
+                    "address_score": token_coverage * 100.0 + (5.0 if house_match else 0.0),
+                    "kdnr_sort": kdnr_sort,
+                    "name_tokens": name_tokens,
+                }
+            )
+            continue
+
+        row_street_loose = str(row.get("__street_loose", "")) or _normalize_loose_alnum(strasse_db)
+        fuzzy_score = 0.0
+        if fuzz is not None and input_street_loose and row_street_loose:
+            fuzzy_score = float(fuzz.token_set_ratio(input_street_loose, row_street_loose))
 
         fuzzy_accept = bool(
-            not street_matches
-            and fuzz is not None
+            fuzz is not None
             and (fuzzy_score >= 78.0 or (house_match and fuzzy_score >= 70.0))
         )
         token_accept = bool(
-            not street_matches
-            and token_coverage >= 0.75
+            token_coverage >= 0.75
             and (house_match or not row_house_tokens)
         )
 
-        if not street_matches and not fuzzy_accept and not token_accept:
+        if not fuzzy_accept and not token_accept:
             continue
 
-        plz_db = _plz_digits_only(str(row.get("Postleitzahl", "")).replace(".0", "").strip())
-        plz_exact = bool(input_plz and plz_db == input_plz)
-
-        rank_score = fuzzy_score if fuzz is not None else (token_coverage * 100.0)
-
-        candidates.append(
+        fallback_score = max(fuzzy_score, token_coverage * 100.0) + (5.0 if house_match else 0.0)
+        fallback_candidates.append(
             {
                 "row": row,
-                "strict": street_matches,
                 "plz_exact": plz_exact,
-                "house_match": house_match,
-                "fuzzy_score": rank_score,
-                "kdnr_sort": _kdnr_sort_value(row.get("Kundennummer", "")),
+                "address_score": fallback_score,
+                "kdnr_sort": kdnr_sort,
+                "name_tokens": name_tokens,
             }
         )
 
+    candidates = strict_candidates if strict_candidates else fallback_candidates
     if not candidates:
         return None
 
+    brand_intent = _momax_bg_brand_intent(store_name)
+    if brand_intent and len(candidates) > 1:
+        branded = [
+            c for c in candidates
+            if _momax_bg_name_matches_intent(c["name_tokens"], brand_intent)
+        ]
+        if branded:
+            candidates = branded
+
     candidates.sort(
         key=lambda c: (
-            0 if c["strict"] else 1,
             0 if c["plz_exact"] else 1,
-            0 if c["house_match"] else 1,
-            -c["fuzzy_score"],
+            -c["address_score"],
             c["kdnr_sort"],
         )
     )
     best_match = candidates[0]["row"]
     return {
-        "kundennummer": str(best_match.get("Kundennummer", "")).replace(".0", "").strip(),
-        "adressnummer": str(best_match.get("Adressnummer", "")).replace(".0", "").strip(),
+        "kundennummer": str(best_match.get("Kundennr", "")).replace(".0", "").strip(),
+        "adressnummer": "0",
         "tour": str(best_match.get("Tour", "")).strip(),
     }
 

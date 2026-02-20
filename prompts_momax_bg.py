@@ -1,8 +1,8 @@
 """
-BG (Bulgaria) special-case prompts for Momax orders.
+BG (Bulgaria) special-case prompts for MOMAX/MOEMAX/AIKO orders.
 
-Important: This prompt must be used ONLY for the rare Momax BG case where one order
-arrives as two separate PDFs that belong to the same logical order.
+Important: This prompt must be used ONLY for the BG split-order format where one order
+arrives in separate PDFs that belong to the same logical order.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
     return (
         "=== TASK ===\n"
-        "This is a special-case Momax BG (Bulgaria) order.\n"
+        "This is a special-case MOMAX/MOEMAX/AIKO BG (Bulgaria) order.\n"
         "The order is split across TWO PDF attachments; BOTH PDFs belong to ONE logical order.\n"
         "Extract ONE merged JSON order from BOTH PDFs (merge header + all items).\n"
         f"SOURCE TRUST PRIORITY: {', '.join(source_priority).upper()}\n"
@@ -23,9 +23,9 @@ def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
         "  Items: artikelnummer, modellnummer, menge, furncloud_id\n"
         "Return ONLY valid JSON. Do NOT use English field names.\n"
         "\n"
-        "=== MOMAX BG (Bulgaria) PDF FORMAT ===\n"
+        "=== BG (Bulgaria) PDF FORMAT ===\n"
         "PDF A (header-like) contains fields like:\n"
-        "- Recipient: MOEMAX BULGARIA (sometimes written as MOMAX)\n"
+        "- Recipient: MOEMAX BULGARIA / MOMAX BULGARIA / AIKO BULGARIA\n"
         "- IDENT No: <digits>\n"
         "- ORDER / No <order number like 1711/12.12.25>\n"
         "- Term for delivery / Term of delivery: <date like 20.03.26>\n"
@@ -33,20 +33,22 @@ def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
         "- Address: <store address line>\n"
         "\n"
         "PDF B (items table) contains:\n"
-        "- Title like 'MOMAX - ORDER' / 'MOEMAX - ORDER'\n"
+        "- Title like 'MOMAX - ORDER' / 'MOEMAX - ORDER' / 'AIKO - ORDER'\n"
         "- A table with columns like 'Code/Type' and 'Quantity'\n"
         "\n"
         "=== HEADER MAPPING (BG) ===\n"
         "- kundennummer: use IDENT No digits ONLY (e.g. '20197304')\n"
         "- kom_nr: this is the order number and can appear in different places:\n"
         "  - As 'No <digits>/<date>' (e.g. 'No 1711/12.12.25')\n"
-        "  - OR directly in the 'MOMAX - ORDER' header line like '<STORE> - <digits>/<date>'\n"
+        "  - OR directly in the '<BRAND> - ORDER' header line like '<STORE> - <digits>/<date>'\n"
         "    Example: 'VARNA - 88801711/12.12.25' => kom_nr = '88801711' (digits only)\n"
         "  - If both variants exist across the two PDFs, prefer the longer numeric id (e.g. 88801711 over 1711)\n"
         "- bestelldatum: use the date part after '/' from the same order string (e.g. '12.12.25')\n"
         "- liefertermin: use 'Term for delivery' / 'Term of delivery' value (keep raw text)\n"
-        "- kom_name: leave empty '' (not used for Momax BG)\n"
-        "- store_name: 'MOMAX BULGARIA - <Store>' (e.g. 'MOMAX BULGARIA - VARNA')\n"
+        "- kom_name: leave empty '' (not used for this BG special case)\n"
+        "- store_name:\n"
+        "  - MOMAX/MOEMAX documents: 'MOMAX BULGARIA - <Store>'\n"
+        "  - AIKO documents: 'AIKO BULGARIA - <Store>'\n"
         "- store_address: use the store address line\n"
         "- lieferanschrift: set equal to store_address unless an explicit different delivery address exists\n"
         "- seller: usually not present; leave empty if missing\n"
@@ -54,7 +56,7 @@ def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
         "- human_review_needed, reply_needed, post_case: default to false unless explicitly indicated\n"
         "\n"
         "=== ITEM EXTRACTION (BG) ===\n"
-        "Extract ALL item rows from the 'MOMAX - ORDER' table.\n"
+        "Extract ALL item rows from the '<BRAND> - ORDER' table.\n"
         "- menge: use the Quantity column.\n"
         "- furncloud_id: typically not present; leave empty unless found.\n"
         "\n"
@@ -68,7 +70,9 @@ def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
         "2) Else if Code/Type contains '-': apply standard split rules:\n"
         "   - Standard: 'MODEL-ARTICLE' => modellnummer=before '-', artikelnummer=after '-'\n"
         "   - Reversed accessory: '<NUMERIC>-<ALPHA>' => artikelnummer=numeric, modellnummer=alpha\n"
-        "3) Else: artikelnummer = Code/Type, modellnummer = ''\n"
+        "3) Else if Code/Type matches '<NUMERIC> <ALPHA>' (e.g. '30156 OJOO'):\n"
+        "   - artikelnummer = NUMERIC, modellnummer = ALPHA\n"
+        "4) Else: artikelnummer = Code/Type, modellnummer = ''\n"
         "\n"
         "=== REQUIRED OUTPUT STRUCTURE ===\n"
         "Your response must be valid JSON with exactly this top-level structure:\n"

@@ -105,7 +105,7 @@ def test_momax_bg_two_pdf_special_case() -> None:
         header = result.data.get("header") or {}
         warnings = result.data.get("warnings") or []
 
-        assert header.get("kundennummer", {}).get("value") == "68939"
+        assert header.get("kundennummer", {}).get("value") == "68934"
         assert header.get("kundennummer", {}).get("source") == "derived"
         assert header.get("kundennummer", {}).get("derived_from") == "excel_lookup_momax_bg_address"
         assert header.get("kom_nr", {}).get("value") == "88801711"
@@ -129,36 +129,81 @@ def test_momax_bg_two_pdf_special_case() -> None:
         pipeline._prepare_images = original_prepare_images
 
 
-def test_momax_bg_allowlist_address_matching() -> None:
-    varna = lookup.find_momax_bg_customer_by_address("Varna, Blvd. Vladislav Varnenchik 277A")
+def test_momax_bg_excel_address_matching() -> None:
+    varna = lookup.find_momax_bg_customer_by_address(
+        "Varna, Blvd. Vladislav Varnenchik 277A",
+        store_name="AIKO VARNA",
+    )
     assert varna is not None
     assert varna["kundennummer"] == "68939"
     assert varna["tour"] == "D2"
     assert varna["adressnummer"] == "0"
 
-    slivnitza = lookup.find_momax_bg_customer_by_address("Slivnitza (Evropa) Blvd. 441\n1331 Sofia")
+    slivnitza = lookup.find_momax_bg_customer_by_address(
+        "Slivnitza (Evropa) Blvd. 441\n1331 Sofia",
+        store_name="AIKO SOFIA",
+    )
     assert slivnitza is not None
-    assert slivnitza["kundennummer"] == "68935"
+    assert slivnitza["kundennummer"] == "68936"
 
-    plovdiv = lookup.find_momax_bg_customer_by_address("Asenovgradsko Shose Str.14\n4004 Plovdiv")
+    plovdiv = lookup.find_momax_bg_customer_by_address(
+        "Asenovgradsko Shose Str.14\n4004 Plovdiv",
+        store_name="AIKO PLOVDIV",
+    )
     assert plovdiv is not None
     assert plovdiv["kundennummer"] == "68941"
 
-    print("SUCCESS: momax_bg allowlist address matching picks expected rows.")
+    print("SUCCESS: momax_bg address matching uses Kunden_Bulgarien.xlsx rows.")
 
 
-def test_momax_bg_allowlist_match_without_rapidfuzz() -> None:
+def test_momax_bg_typo_match_without_rapidfuzz() -> None:
     original_fuzz = lookup.fuzz
     try:
         lookup.fuzz = None
-        varna = lookup.find_momax_bg_customer_by_address("Varna, Blvd. Viadislav Varnenchik 277A")
+        varna = lookup.find_momax_bg_customer_by_address(
+            "Varna, Blvd. Viadislav Varnenchik 277A",
+            store_name="MOMAX BULGARIA VARNA",
+        )
         assert varna is not None
-        assert varna["kundennummer"] == "68939"
+        assert varna["kundennummer"] == "68934"
         assert varna["tour"] == "D2"
         assert varna["adressnummer"] == "0"
         print("SUCCESS: momax_bg address matching works even without rapidfuzz.")
     finally:
         lookup.fuzz = original_fuzz
+
+
+def test_momax_bg_duplicate_address_disambiguation_by_store_name() -> None:
+    momax = lookup.find_momax_bg_customer_by_address(
+        "Asenovgradsko Shose Str.14\n4004 Plovdiv",
+        store_name="MOMAX BULGARIA - PLOVDIV",
+    )
+    assert momax is not None
+    assert momax["kundennummer"] == "68940"
+    assert momax["tour"] == "D2"
+    assert momax["adressnummer"] == "0"
+
+    aiko = lookup.find_momax_bg_customer_by_address(
+        "Asenovgradsko Shose Str.14\n4004 Plovdiv",
+        store_name="AIKO PLOVDIV",
+    )
+    assert aiko is not None
+    assert aiko["kundennummer"] == "68941"
+    assert aiko["tour"] == "D2"
+    assert aiko["adressnummer"] == "0"
+    print("SUCCESS: momax_bg duplicate addresses are resolved by store_name brand intent.")
+
+
+def test_momax_bg_ambiguous_store_name_uses_deterministic_tie_break() -> None:
+    varna = lookup.find_momax_bg_customer_by_address(
+        "Varna, Vladislav Varnechnik Blvd.277a\n9009 Varna",
+        store_name="VARNA STORE",
+    )
+    assert varna is not None
+    assert varna["kundennummer"] == "68934"
+    assert varna["tour"] == "D2"
+    assert varna["adressnummer"] == "0"
+    print("SUCCESS: momax_bg ambiguous store_name uses deterministic fallback tie-break.")
 
 
 def test_momax_bg_no_match_does_not_fallback_to_standard_lookup() -> None:
@@ -195,7 +240,7 @@ def test_momax_bg_no_match_does_not_fallback_to_standard_lookup() -> None:
     assert header.get("kundennummer", {}).get("value") == ""
     assert header.get("kundennummer", {}).get("derived_from") == "excel_lookup_failed"
     all_warnings = normalized.get("warnings") or []
-    assert any("row-restricted address match failed" in str(w) for w in all_warnings)
+    assert any("Kunden_Bulgarien.xlsx" in str(w) for w in all_warnings)
     print("SUCCESS: momax_bg no-match path does not fallback to standard lookup.")
 
 
@@ -258,6 +303,115 @@ def test_momax_bg_single_pdf_detection() -> None:
     assert momax_bg.extract_momax_bg_kom_nr([att]) == "88801711"
     assert momax_bg.extract_momax_bg_order_date([att]) == "12.12.25"
     print("SUCCESS: momax_bg detection works with single PDF too.")
+
+
+def test_aiko_bg_detection() -> None:
+    pdf = _make_pdf_bytes(
+        "Recipient: AIKO\n"
+        "AIKO - ORDER\n"
+        "VARNA - 88801739/29.10.25\n"
+        "Term of delivery: 20.11.25\n"
+        "Address: Varna, Blvd. Vladislav Varnenchik 277A\n"
+    )
+    att = Attachment(filename="aiko_single.pdf", content_type="application/pdf", data=pdf)
+    assert momax_bg.is_momax_bg_two_pdf_case([att]) is True
+    assert momax_bg.extract_momax_bg_kom_nr([att]) == "88801739"
+    assert momax_bg.extract_momax_bg_order_date([att]) == "29.10.25"
+    print("SUCCESS: AIKO BG detection activates the same special-case path.")
+
+
+def test_aiko_bg_pipeline_special_case_and_kom_recovery() -> None:
+    pdf_a = _make_pdf_bytes(
+        "Recipient: AIKO BULGARIA\n"
+        "IDENT No: 20197304\n"
+        "ORDER\n"
+        "No 1739/29.10.25\n"
+        "Term of delivery: 20.11.25\n"
+        "Store: VARNA\n"
+        "Address: Varna, Blvd. Vladislav Varnenchik 277A\n"
+    )
+    pdf_b = _make_pdf_bytes(
+        "AIKO - ORDER\n"
+        "VARNA - 88801739/29.10.25\n"
+        "Code/Type Quantity\n"
+        "30156 OJOO 2\n"
+    )
+    message = IngestedEmail(
+        message_id="test_aiko_bg_special",
+        received_at="2026-02-13T12:00:00+00:00",
+        subject="AIKO BG order",
+        sender="bg@example.com",
+        body_text="",
+        attachments=[
+            Attachment(filename="aiko_a.pdf", content_type="application/pdf", data=pdf_a),
+            Attachment(filename="aiko_b.pdf", content_type="application/pdf", data=pdf_b),
+        ],
+    )
+    config = Config.from_env()
+
+    original_prepare_images = pipeline._prepare_images
+    pipeline._prepare_images = lambda attachments, config, warnings: [
+        ImageInput(name="dummy_pdf_page.png", source="pdf", data_url="data:image/png;base64,")
+    ]
+
+    try:
+        extractor = MagicMock()
+        extractor.extract.side_effect = RuntimeError("AIKO BG case must NOT call extractor.extract()")
+        extractor.extract_article_details.side_effect = RuntimeError(
+            "AIKO BG case must skip detail extraction"
+        )
+        extractor._create_response.return_value = {
+            "output_text": json.dumps(
+                {
+                    "message_id": "test_aiko_bg_special",
+                    "received_at": "2026-02-13T12:00:00+00:00",
+                    "header": {
+                        "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                        "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
+                        "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
+                        "liefertermin": {"value": "20.11.25", "source": "pdf", "confidence": 0.9},
+                        "bestelldatum": {"value": "", "source": "pdf", "confidence": 0.0},
+                        "store_name": {"value": "AIKO BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
+                        "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                        "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                        "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                        "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                        "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                    },
+                    "items": [
+                        {
+                            "line_no": 1,
+                            "artikelnummer": {"value": "30156 OJOO", "source": "pdf", "confidence": 0.9},
+                            "modellnummer": {"value": "", "source": "pdf", "confidence": 0.0},
+                            "menge": {"value": 2, "source": "pdf", "confidence": 0.9},
+                            "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                        }
+                    ],
+                    "status": "ok",
+                    "warnings": [],
+                    "errors": [],
+                }
+            )
+        }
+
+        result = pipeline.process_message(message, config, extractor)
+        header = result.data.get("header") or {}
+        items = result.data.get("items") or []
+
+        assert header.get("kundennummer", {}).get("value") == "68939"
+        assert header.get("kundennummer", {}).get("derived_from") == "excel_lookup_momax_bg_address"
+        assert header.get("kom_nr", {}).get("value") == "88801739"
+        assert header.get("bestelldatum", {}).get("value") == "29.10.25"
+        assert header.get("bestelldatum", {}).get("derived_from") == "pdf_order_suffix"
+        assert items[0].get("artikelnummer", {}).get("value") == "30156"
+        assert items[0].get("modellnummer", {}).get("value") == "OJOO"
+
+        extractor._create_response.assert_called_once()
+        extractor.extract.assert_not_called()
+        extractor.extract_article_details.assert_not_called()
+        print("SUCCESS: AIKO BG case uses special path with kom/date recovery and item split.")
+    finally:
+        pipeline._prepare_images = original_prepare_images
 
 
 def test_momax_bg_bestelldatum_fallback_from_pdf_suffix() -> None:
@@ -386,6 +540,42 @@ def test_momax_bg_modellnummer_compaction() -> None:
     print("SUCCESS: momax_bg compacts modellnummer by removing slash separators.")
 
 
+def test_aiko_bg_item_whitespace_pair_normalization() -> None:
+    data = {
+        "header": {
+            "store_name": {"value": "AIKO BULGARIA - VARNA", "source": "pdf", "confidence": 0.95},
+            "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "line_no": 1,
+                "artikelnummer": {"value": "30156 OJOO", "source": "pdf", "confidence": 0.9},
+                "modellnummer": {"value": "", "source": "pdf", "confidence": 0.0},
+                "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+            },
+        ],
+    }
+    normalized = normalize_output(
+        data,
+        message_id="test_aiko_whitespace_split",
+        received_at="2026-02-13T12:00:00+00:00",
+        dayfirst=True,
+        warnings=[],
+        email_body="",
+        sender="bg@example.com",
+        is_momax_bg=True,
+    )
+    items = normalized.get("items") or []
+    assert items[0].get("artikelnummer", {}).get("value") == "30156"
+    assert items[0].get("modellnummer", {}).get("value") == "OJOO"
+    print("SUCCESS: AIKO BG whitespace pair Code/Type is split into article/model.")
+
+
 def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
     pdf_a = _make_pdf_bytes(
         "Recipient: MOMAX BULGARIA\n"
@@ -471,11 +661,16 @@ def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
 
 if __name__ == "__main__":
     test_momax_bg_two_pdf_special_case()
-    test_momax_bg_allowlist_address_matching()
-    test_momax_bg_allowlist_match_without_rapidfuzz()
+    test_momax_bg_excel_address_matching()
+    test_momax_bg_typo_match_without_rapidfuzz()
+    test_momax_bg_duplicate_address_disambiguation_by_store_name()
+    test_momax_bg_ambiguous_store_name_uses_deterministic_tie_break()
     test_momax_bg_no_match_does_not_fallback_to_standard_lookup()
     test_momax_bg_single_pdf_detection()
+    test_aiko_bg_detection()
+    test_aiko_bg_pipeline_special_case_and_kom_recovery()
     test_momax_bg_bestelldatum_fallback_from_pdf_suffix()
     test_momax_bg_modellnummer_compaction()
+    test_aiko_bg_item_whitespace_pair_normalization()
     test_non_bg_regression_calls_standard_extract()
     test_momax_bg_no_raw_kdnr_fallback_from_pdf()

@@ -84,7 +84,7 @@ def extract_momax_bg_order_date(attachments: list[Attachment]) -> str:
 
 def is_momax_bg_two_pdf_case(attachments: list[Attachment]) -> bool:
     """
-    Detect the rare Momax BG case where one order arrives as exactly two PDFs.
+    Detect the BG split-order format used by MOMAX/MOEMAX/AIKO documents.
 
     Fail-closed: any error or mismatch => False.
     """
@@ -101,13 +101,12 @@ def is_momax_bg_two_pdf_case(attachments: list[Attachment]) -> bool:
         combined = unicodedata.normalize("NFKD", combined)
         combined = "".join(ch for ch in combined if not unicodedata.combining(ch))
 
-        # Handle MOEMAX/MOMAX variants after NFKD normalization.
-        has_bg = re.search(r"\bmoe?max\s+bulgaria\b", combined) is not None
-        has_order = re.search(r"\bmoe?max\s*-\s*order\b", combined) is not None
+        has_brand = re.search(r"\b(?:moe?max|aiko)(?:\s+bulgaria)?\b", combined) is not None
+        has_order = re.search(r"\b(?:moe?max|aiko)\s*-\s*order\b", combined) is not None
         has_term = re.search(r"\bterm\s+(?:for|of)\s+delivery\b", combined) is not None
         has_kom = bool(extract_momax_bg_kom_nr(attachments))
 
-        return bool(has_bg and has_order and has_term and has_kom)
+        return bool(has_brand and has_order and has_term and has_kom)
     except Exception:
         return False
 
@@ -120,7 +119,7 @@ def extract_momax_bg(
     email_text: str,
 ) -> str:
     """
-    Run extraction for Momax BG special-case orders.
+    Run extraction for BG special-case orders (MOMAX/MOEMAX/AIKO).
 
     Uses a BG-specific user-instructions prompt, but keeps the same SYSTEM_PROMPT and
     response handling.

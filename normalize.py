@@ -382,6 +382,71 @@ def _normalize_momax_bg_modellnummer(value: Any) -> str:
     return re.sub(r"[/\s]+", "", text)
 
 
+_BG_NUMERIC_ALPHA_PAIR_RE = re.compile(r"^(\d{2,12})\s+([A-Za-z][A-Za-z0-9]*)$")
+
+
+def _split_momax_bg_code(raw: Any) -> tuple[str, str] | None:
+    text = _clean_text(raw)
+    if not text:
+        return None
+
+    # Slash rule: last segment is article; prior segments compact into model.
+    if "/" in text:
+        parts = [segment.strip() for segment in text.split("/") if segment.strip()]
+        if len(parts) >= 2:
+            return parts[-1], "".join(parts[:-1])
+
+    # Hyphen rule: standard MODEL-ARTICLE, with reversed accessory NUMERIC-ALPHA.
+    if "-" in text:
+        left, right = [part.strip() for part in text.rsplit("-", 1)]
+        if left and right:
+            if left.isdigit() and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", right):
+                return left, right
+            return right, left
+
+    # Whitespace-pair rule: "<NUMERIC> <ALPHA>".
+    match = _BG_NUMERIC_ALPHA_PAIR_RE.fullmatch(text)
+    if match:
+        return match.group(1), match.group(2)
+
+    return None
+
+
+def _mark_momax_bg_code_derived(entry: dict[str, Any]) -> None:
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "momax_bg_code_normalization"
+
+
+def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
+    artikel_entry = _ensure_field(item, "artikelnummer")
+    modell_entry = _ensure_field(item, "modellnummer")
+
+    artikel_value = _clean_text(artikel_entry.get("value"))
+    modell_value = _clean_text(modell_entry.get("value"))
+    split_result: tuple[str, str] | None = _split_momax_bg_code(artikel_value)
+
+    # Only split from modellnummer when artikelnummer is missing (or duplicated).
+    if (not split_result) and (not artikel_value or artikel_value == modell_value):
+        split_result = _split_momax_bg_code(modell_value)
+
+    if split_result:
+        new_artikel, new_modell = split_result
+        new_modell = _normalize_momax_bg_modellnummer(new_modell)
+
+        if new_artikel != artikel_value:
+            artikel_entry["value"] = new_artikel
+            _mark_momax_bg_code_derived(artikel_entry)
+        if new_modell != modell_value:
+            modell_entry["value"] = new_modell
+            _mark_momax_bg_code_derived(modell_entry)
+        return
+
+    compact_model = _normalize_momax_bg_modellnummer(modell_value)
+    if compact_model != modell_value:
+        modell_entry["value"] = compact_model
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -436,10 +501,14 @@ def _normalize_items(
                 entry["value"] = normalized
                 if not ok:
                     warnings.append(f"Failed to normalize quantity for item {idx}.")
-            elif field == "modellnummer" and is_momax_bg:
-                entry["value"] = _normalize_momax_bg_modellnummer(entry.get("value"))
             else:
                 entry["value"] = _clean_text(entry.get("value"))
+
+        if is_momax_bg:
+            _normalize_momax_bg_item_codes(item)
+
+        for field in ITEM_FIELDS:
+            entry = _ensure_field(item, field)
             if not entry.get("value"):
                 entry["confidence"] = 0.0
 
@@ -637,10 +706,12 @@ def _enrich_from_excel(
 
     # Check for JOOP
     is_joop = "JOOP" in email_body.upper() if email_body else False
+    store_name_val = header.get("store_name", {}).get("value", "")
 
     if not kdnr_match and is_momax_bg and address_to_search:
         momax_match = lookup.find_momax_bg_customer_by_address(
             address_to_search,
+            store_name=store_name_val,
             warnings=warnings,
         )
         if momax_match:
@@ -665,7 +736,7 @@ def _enrich_from_excel(
             kdnr_match = momax_match
         else:
             warnings.append(
-                "MOMAX BG row-restricted address match failed."
+                "MOMAX BG address match failed in Kunden_Bulgarien.xlsx."
             )
     if is_momax_bg and not kdnr_match:
         if not address_to_search:
@@ -691,7 +762,6 @@ def _enrich_from_excel(
 
     if (not is_momax_bg) and (not kdnr_match) and address_to_search:
         # Perform Lookup with new params
-        store_name_val = header.get("store_name", {}).get("value", "")
         hint_text = "\n".join([p for p in [sender, email_body] if p]).strip()
         match = lookup.find_customer_by_address(
             address_to_search,
