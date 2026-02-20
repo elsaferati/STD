@@ -12,12 +12,12 @@ function MetricCard({ title, value, subtitle, icon, accentClass = "" }) {
   return (
     <div className={`bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm ${accentClass}`}>
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-sm text-slate-500 font-medium">{title}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-slate-500 font-medium break-words">{title}</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
           <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
         </div>
-        <span className="material-icons text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
+        <span className="material-icons shrink-0 text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
       </div>
     </div>
   );
@@ -37,12 +37,12 @@ function KpiCard({ title, value, subtitle, icon }) {
   return (
     <div className="bg-surface-light p-4 rounded-xl border border-slate-200 shadow-sm">
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-sm text-slate-500 font-medium">{title}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-slate-500 font-medium break-words">{title}</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{value}</p>
           <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
         </div>
-        <span className="material-icons text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
+        <span className="material-icons shrink-0 text-primary bg-primary/10 p-1.5 rounded-lg text-lg">{icon}</span>
       </div>
     </div>
   );
