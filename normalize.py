@@ -374,6 +374,14 @@ def _normalize_quantity(value: Any) -> tuple[Any, bool]:
     return number, True
 
 
+def _normalize_momax_bg_modellnummer(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    # Momax BG expects compact model codes without slash separators.
+    return re.sub(r"[/\s]+", "", text)
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -406,7 +414,12 @@ def _normalize_header(header: dict[str, Any], dayfirst: bool, warnings: list[str
             entry["confidence"] = 0.0
 
 
-def _normalize_items(items: list[dict[str, Any]], dayfirst: bool, warnings: list[str]) -> None:
+def _normalize_items(
+    items: list[dict[str, Any]],
+    dayfirst: bool,
+    warnings: list[str],
+    is_momax_bg: bool = False,
+) -> None:
     for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             item = {}
@@ -423,6 +436,8 @@ def _normalize_items(items: list[dict[str, Any]], dayfirst: bool, warnings: list
                 entry["value"] = normalized
                 if not ok:
                     warnings.append(f"Failed to normalize quantity for item {idx}.")
+            elif field == "modellnummer" and is_momax_bg:
+                entry["value"] = _normalize_momax_bg_modellnummer(entry.get("value"))
             else:
                 entry["value"] = _clean_text(entry.get("value"))
             if not entry.get("value"):
@@ -858,7 +873,7 @@ def normalize_output(
     if not isinstance(items, list):
         items = []
     data["items"] = items
-    _normalize_items(items, dayfirst, warnings)
+    _normalize_items(items, dayfirst, warnings, is_momax_bg=is_momax_bg)
     _propagate_furncloud_id(items, warnings)
     apply_program_furncloud_to_items(data, warnings)
 
@@ -873,6 +888,8 @@ def normalize_output(
     data["errors"] = existing_errors
 
     missing_header = [field for field in HEADER_FIELDS if _is_missing(header.get(field, {}))]
+    if is_momax_bg:
+        missing_header = [field for field in missing_header if field != "kom_name"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     if missing_critical_fields:
@@ -944,7 +961,15 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     data["items"] = items
     apply_program_furncloud_to_items(data, None)
 
+    kom_name_entry = header.get("kom_name", {})
+    is_momax_bg = (
+        isinstance(kom_name_entry, dict)
+        and kom_name_entry.get("derived_from") == "momax_bg_policy"
+    )
+
     missing_header = [f for f in HEADER_FIELDS if _is_missing(header.get(f, {}))]
+    if is_momax_bg:
+        missing_header = [field for field in missing_header if field != "kom_name"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     if missing_critical_fields:

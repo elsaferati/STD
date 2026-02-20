@@ -103,12 +103,23 @@ def test_momax_bg_two_pdf_special_case() -> None:
 
         result = pipeline.process_message(message, config, extractor)
         header = result.data.get("header") or {}
+        warnings = result.data.get("warnings") or []
 
         assert header.get("kundennummer", {}).get("value") == "68939"
         assert header.get("kundennummer", {}).get("source") == "derived"
         assert header.get("kundennummer", {}).get("derived_from") == "excel_lookup_momax_bg_address"
         assert header.get("kom_nr", {}).get("value") == "88801711"
+        assert header.get("kom_name", {}).get("value") == ""
+        assert header.get("kom_name", {}).get("source") == "derived"
+        assert header.get("kom_name", {}).get("confidence") == 0.0
+        assert header.get("kom_name", {}).get("derived_from") == "momax_bg_policy"
         assert header.get("reply_needed", {}).get("value") is False
+        items = result.data.get("items") or []
+        assert items[0].get("modellnummer", {}).get("value") == "SNSN71SP91"
+        missing_header_warnings = [
+            str(w) for w in warnings if str(w).startswith("Missing header fields:")
+        ]
+        assert all("kom_name" not in w for w in missing_header_warnings)
 
         extractor.extract.assert_not_called()
         extractor.extract_article_details.assert_not_called()
@@ -333,6 +344,48 @@ def test_momax_bg_bestelldatum_fallback_from_pdf_suffix() -> None:
         pipeline._prepare_images = original_prepare_images
 
 
+def test_momax_bg_modellnummer_compaction() -> None:
+    data = {
+        "header": {
+            "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "line_no": 1,
+                "artikelnummer": {"value": "22448", "source": "pdf", "confidence": 0.9},
+                "modellnummer": {"value": "SN/SN/61/91", "source": "pdf", "confidence": 0.9},
+                "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+            },
+            {
+                "line_no": 2,
+                "artikelnummer": {"value": "18100", "source": "pdf", "confidence": 0.9},
+                "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
+                "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+            },
+        ],
+    }
+    normalized = normalize_output(
+        data,
+        message_id="test_momax_bg_modell_compact",
+        received_at="2026-02-13T12:00:00+00:00",
+        dayfirst=True,
+        warnings=[],
+        email_body="",
+        sender="bg@example.com",
+        is_momax_bg=True,
+    )
+    items = normalized.get("items") or []
+    assert items[0].get("modellnummer", {}).get("value") == "SNSN6191"
+    assert items[1].get("modellnummer", {}).get("value") == "SNSN71SP91"
+    print("SUCCESS: momax_bg compacts modellnummer by removing slash separators.")
+
+
 def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
     pdf_a = _make_pdf_bytes(
         "Recipient: MOMAX BULGARIA\n"
@@ -423,5 +476,6 @@ if __name__ == "__main__":
     test_momax_bg_no_match_does_not_fallback_to_standard_lookup()
     test_momax_bg_single_pdf_detection()
     test_momax_bg_bestelldatum_fallback_from_pdf_suffix()
+    test_momax_bg_modellnummer_compaction()
     test_non_bg_regression_calls_standard_extract()
     test_momax_bg_no_raw_kdnr_fallback_from_pdf()

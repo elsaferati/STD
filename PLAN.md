@@ -1,112 +1,62 @@
-# Export Orders As 2-Sheet Excel (Header + Items)
+# Make `kom_name` empty for `momax_bg` (no missing-field warning)
 
 ## Summary
-Replace the current “Export CSV” behavior in the Orders UI with an Excel `.xlsx` download containing two worksheets:
-- `Header`: one row per order with order-level + header-field values
-- `Items`: one row per item across all exported orders, linked back to its order
+For the `momax_bg` special-case flow, force `header.kom_name` to always be empty (`""`) and treat it as **optional** so it does not degrade `status` or add “Missing header fields: kom_name …” warnings. Enforce this both in the BG-specific prompt and in backend post-processing so it’s deterministic even if the LLM outputs a value.
 
-## User-Facing Behavior (Success Criteria)
-- Clicking export on the Orders page downloads `orders.xlsx`.
-- The workbook contains exactly 2 sheets named `Header` and `Items`.
-- `Header` sheet has one row per order and includes the header fields (values only).
-- `Items` sheet has one row per item and includes item fields (values only), plus order identifiers.
-- Export respects the same filters as today (query string params on the Orders page).
+## Scope / Success criteria
+- When `pipeline.process_message()` runs with `use_momax_bg == True`:
+  - `result.data["header"]["kom_name"]["value"] == ""`
+  - `result.data["header"]["kom_name"]["source"] == "derived"`
+  - `result.data["header"]["kom_name"]["confidence"] == 0.0`
+  - `result.data["header"]["kom_name"]["derived_from"] == "momax_bg_policy"` (marker for UI refresh)
+- `normalize.normalize_output(..., is_momax_bg=True)` must **not** count `kom_name` as missing when computing:
+  - `data["status"]`
+  - “Missing header fields: …” warnings
+- `normalize.refresh_missing_warnings(data)` must also not re-add `kom_name` as missing for saved `momax_bg` orders (identified via the marker above).
+- Non-`momax_bg` behavior is unchanged.
 
-## Backend Changes (Flask)
-### 1. Add a new endpoint
-- Add `GET /api/orders.xlsx` in `app.py`.
-- It should call `_query_orders(allow_default_pagination=False)` to export all matching orders (same as current CSV export).
+## Implementation details
 
-### 2. Build an `.xlsx` in memory (openpyxl)
-- Use `openpyxl` (already in `requirements.txt`) to generate the workbook.
-- Return a `Response` with:
-  - `Content-Type`: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-  - `Content-Disposition`: `attachment; filename=orders.xlsx`
-  - Body: workbook bytes (via `io.BytesIO()` + `workbook.save()`)
+### 1) Prompt change (LLM guidance)
+File: `prompts_momax_bg.py`
+- In `build_user_instructions_momax_bg()`:
+  - Replace the current mapping line:
+    - `- kom_name: use the store/city short name from 'Store:' ...`
+  - With:
+    - `- kom_name: leave empty '' (not used for Momax BG)`
+  - Keep `kom_name` in the required header field list (schema still expects the key).
 
-### 3. Data extraction strategy (values only)
-For each order returned by `_query_orders(...)[“orders”]` (these are index rows):
-- Read the underlying JSON file directly using `order["file_name"]` and `OUTPUT_DIR` (avoid `_load_order()` because it returns API error tuples on failure).
-- Parse:
-  - `header`: dict of `{field: {value, source, confidence, ...}}`
-  - `items`: list of dicts like `{artikelnummer: {value,...}, ..., line_no: N}`
-  - `warnings`, `errors`, `status`, `received_at`, `message_id`
-- Convert “entry dicts” to plain values using `entry.get("value", "")` when `entry` is a dict, else stringify safely.
+### 2) Backend enforcement (deterministic output)
+File: `pipeline.py`
+- After `parsed = parse_json_response(response_text)` and before calling `normalize_output(...)`:
+  - If `use_momax_bg` and `parsed["header"]` is a dict:
+    - Set `parsed["header"]["kom_name"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "momax_bg_policy"}`
+    - If present, delete `parsed["header"]["kom_name_pdf"]` to avoid any kom_name mismatch warning path.
 
-### 4. Sheet schemas (decision complete)
-#### `Header` sheet columns
-- Fixed meta columns (in this order):
-  - `order_id` (index row `id`)
-  - `file_name`
-  - `message_id`
-  - `received_at`
-  - `status`
-  - `item_count`
-  - `warnings_count`
-  - `errors_count`
-  - `reply_needed`
-  - `human_review_needed`
-  - `post_case`
-  - `warnings` (joined with ` | `)
-  - `errors` (joined with ` | `)
-  - `parse_error` (JSON read/parse error string, blank if none)
-- Header field columns (values only):
-  - Ordered as: `EDITABLE_HEADER_FIELDS` first (from `app.py`), then any remaining header keys seen in exported orders sorted alphabetically.
-  - Exclude duplicates of the fixed meta flags if they also appear in the header dict (`reply_needed`, `human_review_needed`, `post_case`) to avoid double columns.
+Rationale: this guarantees the output is empty even if the model fills it, and it injects a durable marker that survives persistence.
 
-One row per order.
+### 3) Treat `kom_name` as optional for momax_bg during missing-field computations
+File: `normalize.py`
+- In `normalize_output(..., is_momax_bg: bool = False)`:
+  - After computing `missing_header = [...]`, if `is_momax_bg`:
+    - Remove `"kom_name"` from `missing_header` before:
+      - computing `missing_header_no_ticket`
+      - status selection (`failed/partial/ok`)
+      - appending “Missing header fields: …”
+- In `refresh_missing_warnings(data)`:
+  - Add a small detector, e.g.:
+    - `is_momax_bg = header.get("kom_name", {}).get("derived_from") == "momax_bg_policy"`
+  - If detected, remove `"kom_name"` from `missing_header` before status/warning recomputation.
 
-#### `Items` sheet columns
-- Fixed columns (in this order):
-  - `order_id`
-  - `ticket_number` (pulled from the order header value)
-  - `kom_nr` (pulled from the order header value)
-  - `kom_name` (pulled from the order header value)
-  - `line_no` (from item dict, fallback to 1-based index)
-- Item field columns (values only):
-  - Ordered as: `EDITABLE_ITEM_FIELDS` first, then any remaining item keys (excluding `line_no`) sorted alphabetically.
+Note: this won’t retroactively change already-saved orders unless they have the marker (newly processed ones will).
 
-One row per item across all exported orders.
+## Tests / Verification
+File: `verify_momax_bg.py`
+- Extend `test_momax_bg_two_pdf_special_case()`:
+  - Assert `header["kom_name"]["value"] == ""`
+  - Assert no warning string contains `"Missing header fields:"` **and** `"kom_name"` (or more directly, that `kom_name` is not listed among missing header fields).
+- Run: `python verify_momax_bg.py`
 
-### 5. Minimal Excel usability tweaks
-- Freeze header rows: `Header!A2`, `Items!A2`.
-- Write the first row as column headers.
-- No styling beyond that (keeps implementation small and robust).
-
-### 6. Keep existing CSV route for compatibility
-- Leave `GET /api/orders.csv` as-is (legacy), but the UI will switch to `.xlsx`.
-
-## Frontend Changes (React)
-### 1. Switch export to the new endpoint
-In `front-end/my-react-app/src/pages/OrdersPage.jsx`:
-- Update the export handler to fetch `/api/orders.xlsx` (preserving the existing query string).
-- Download filename: `orders.xlsx`.
-- Change the busy-action key from `"csv"` to `"excel"` (or keep `"csv"` but recommended to rename for clarity).
-
-### 2. Update UI label and error messages
-In `front-end/my-react-app/src/i18n/translations.js`:
-- Add `common.exportExcel` for `en` and `de`.
-- Add `orders.excelExportFailed` for `en` and `de`.
-In `front-end/my-react-app/src/pages/OrdersPage.jsx`:
-- Button text uses `t("common.exportExcel")`.
-- Error fallback uses `t("orders.excelExportFailed")`.
-
-## Public Interfaces / API Changes
-- New: `GET /api/orders.xlsx` returns an `.xlsx` with sheets `Header` and `Items`.
-- Existing: `GET /api/orders.csv` remains unchanged but is no longer used by the UI after this change.
-
-## Test Plan (Manual)
-1. Start backend and frontend as you do today.
-2. In the Orders page, set filters (date range, status, q search).
-3. Click export and verify `orders.xlsx` downloads.
-4. Open `orders.xlsx` and verify:
-   - Two sheets exist named `Header` and `Items`.
-   - `Header` has one row per order and contains expected header fields (values, not dicts).
-   - `Items` has multiple rows per order where applicable and includes `order_id`, `ticket_number`, `kom_nr`, `line_no`, and item fields.
-5. Spot-check an order with missing fields and verify blanks rather than crashes.
-6. Export with no matching orders and verify you still get a valid workbook with headers and zero data rows.
-
-## Assumptions (Locked)
-- “2 sheets” means a real Excel workbook (`.xlsx`), not a CSV trick.
-- “Displayed data” means field values only (no `source`/`confidence` columns).
-- The export should cover the current filtered result set, not just the current page.
+## Assumptions
+- “Momax BG” is exactly the `use_momax_bg` path (as detected by `momax_bg.is_momax_bg_two_pdf_case()`), including the single-PDF detection behavior.
+- Keeping `kom_name` present-but-empty is acceptable for downstream consumers; we are not removing the key from the schema.

@@ -252,6 +252,17 @@ def process_message(
                     sender=message.sender,
                 )
             parsed = parse_json_response(response_text)
+            if use_momax_bg and isinstance(parsed, dict):
+                header = parsed.get("header")
+                if isinstance(header, dict):
+                    header["kom_name"] = {
+                        "value": "",
+                        "source": "derived",
+                        "confidence": 0.0,
+                        "derived_from": "momax_bg_policy",
+                    }
+                    if "kom_name_pdf" in header:
+                        del header["kom_name_pdf"]
             break  # Success, exit retry loop
         except Exception as exc:
             last_error = exc
