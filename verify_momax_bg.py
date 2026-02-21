@@ -64,7 +64,9 @@ def test_momax_bg_two_pdf_special_case() -> None:
 
     try:
         extractor = MagicMock()
-        extractor.extract.side_effect = RuntimeError("BG case must NOT call extractor.extract()")
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
         extractor.extract_article_details.side_effect = RuntimeError(
             "BG case must skip detail extraction"
         )
@@ -99,7 +101,7 @@ def test_momax_bg_two_pdf_special_case() -> None:
             "warnings": [],
             "errors": [],
         }
-        extractor._create_response.return_value = {"output_text": json.dumps(mock_llm_json)}
+        extractor.extract_with_prompts.return_value = json.dumps(mock_llm_json)
 
         result = pipeline.process_message(message, config, extractor)
         header = result.data.get("header") or {}
@@ -121,7 +123,7 @@ def test_momax_bg_two_pdf_special_case() -> None:
         ]
         assert all("kom_name" not in w for w in missing_header_warnings)
 
-        extractor.extract.assert_not_called()
+        extractor.extract_with_prompts.assert_called_once()
         extractor.extract_article_details.assert_not_called()
 
         print("SUCCESS: Mömax BG two-PDF special-case path used and detail extraction skipped.")
@@ -263,8 +265,11 @@ def test_non_bg_regression_calls_standard_extract() -> None:
 
     try:
         extractor = MagicMock()
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "xxxlutz_default", "confidence": 1.0, "reason": "test"}
+        )
         extractor._create_response.side_effect = RuntimeError("Non-BG must not use _create_response path")
-        extractor.extract.return_value = json.dumps(
+        extractor.extract_with_prompts.return_value = json.dumps(
             {
                 "header": {
                     "kundennummer": {"value": "123", "source": "email", "confidence": 1.0},
@@ -282,10 +287,10 @@ def test_non_bg_regression_calls_standard_extract() -> None:
         extractor.extract_article_details.return_value = json.dumps({})
 
         pipeline.process_message(message, config, extractor)
-        extractor.extract.assert_called()
+        extractor.extract_with_prompts.assert_called()
         extractor.extract_article_details.assert_called()
         extractor._create_response.assert_not_called()
-        print("SUCCESS: Non-BG case uses standard extractor.extract().")
+        print("SUCCESS: Non-BG case uses standard branch extraction path.")
     finally:
         pipeline._prepare_images = original_prepare_images
 
@@ -356,43 +361,43 @@ def test_aiko_bg_pipeline_special_case_and_kom_recovery() -> None:
 
     try:
         extractor = MagicMock()
-        extractor.extract.side_effect = RuntimeError("AIKO BG case must NOT call extractor.extract()")
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
         extractor.extract_article_details.side_effect = RuntimeError(
             "AIKO BG case must skip detail extraction"
         )
-        extractor._create_response.return_value = {
-            "output_text": json.dumps(
-                {
-                    "message_id": "test_aiko_bg_special",
-                    "received_at": "2026-02-13T12:00:00+00:00",
-                    "header": {
-                        "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
-                        "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
-                        "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
-                        "liefertermin": {"value": "20.11.25", "source": "pdf", "confidence": 0.9},
-                        "bestelldatum": {"value": "", "source": "pdf", "confidence": 0.0},
-                        "store_name": {"value": "AIKO BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
-                        "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
-                        "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
-                        "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "post_case": {"value": False, "source": "derived", "confidence": 1.0},
-                    },
-                    "items": [
-                        {
-                            "line_no": 1,
-                            "artikelnummer": {"value": "30156 OJOO", "source": "pdf", "confidence": 0.9},
-                            "modellnummer": {"value": "", "source": "pdf", "confidence": 0.0},
-                            "menge": {"value": 2, "source": "pdf", "confidence": 0.9},
-                            "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
-                        }
-                    ],
-                    "status": "ok",
-                    "warnings": [],
-                    "errors": [],
-                }
-            )
-        }
+        extractor.extract_with_prompts.return_value = json.dumps(
+            {
+                "message_id": "test_aiko_bg_special",
+                "received_at": "2026-02-13T12:00:00+00:00",
+                "header": {
+                    "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                    "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
+                    "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
+                    "liefertermin": {"value": "20.11.25", "source": "pdf", "confidence": 0.9},
+                    "bestelldatum": {"value": "", "source": "pdf", "confidence": 0.0},
+                    "store_name": {"value": "AIKO BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
+                    "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                },
+                "items": [
+                    {
+                        "line_no": 1,
+                        "artikelnummer": {"value": "30156 OJOO", "source": "pdf", "confidence": 0.9},
+                        "modellnummer": {"value": "", "source": "pdf", "confidence": 0.0},
+                        "menge": {"value": 2, "source": "pdf", "confidence": 0.9},
+                        "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                    }
+                ],
+                "status": "ok",
+                "warnings": [],
+                "errors": [],
+            }
+        )
 
         result = pipeline.process_message(message, config, extractor)
         header = result.data.get("header") or {}
@@ -406,8 +411,7 @@ def test_aiko_bg_pipeline_special_case_and_kom_recovery() -> None:
         assert items[0].get("artikelnummer", {}).get("value") == "30156"
         assert items[0].get("modellnummer", {}).get("value") == "OJOO"
 
-        extractor._create_response.assert_called_once()
-        extractor.extract.assert_not_called()
+        extractor.extract_with_prompts.assert_called_once()
         extractor.extract_article_details.assert_not_called()
         print("SUCCESS: AIKO BG case uses special path with kom/date recovery and item split.")
     finally:
@@ -450,43 +454,43 @@ def test_momax_bg_bestelldatum_fallback_from_pdf_suffix() -> None:
 
     try:
         extractor = MagicMock()
-        extractor.extract.side_effect = RuntimeError("BG case must NOT call extractor.extract()")
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
         extractor.extract_article_details.side_effect = RuntimeError(
             "BG case must skip detail extraction"
         )
-        extractor._create_response.return_value = {
-            "output_text": json.dumps(
-                {
-                    "message_id": "test_momax_bg_date_fallback",
-                    "received_at": "2026-02-13T12:00:00+00:00",
-                    "header": {
-                        "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
-                        "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
-                        "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
-                        "liefertermin": {"value": "20.03.26", "source": "pdf", "confidence": 0.9},
-                        "bestelldatum": {"value": "", "source": "pdf", "confidence": 0.0},
-                        "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
-                        "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
-                        "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
-                        "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "post_case": {"value": False, "source": "derived", "confidence": 1.0},
-                    },
-                    "items": [
-                        {
-                            "line_no": 1,
-                            "artikelnummer": {"value": "181", "source": "pdf", "confidence": 0.9},
-                            "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
-                            "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
-                            "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
-                        }
-                    ],
-                    "status": "ok",
-                    "warnings": [],
-                    "errors": [],
-                }
-            )
-        }
+        extractor.extract_with_prompts.return_value = json.dumps(
+            {
+                "message_id": "test_momax_bg_date_fallback",
+                "received_at": "2026-02-13T12:00:00+00:00",
+                "header": {
+                    "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                    "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
+                    "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
+                    "liefertermin": {"value": "20.03.26", "source": "pdf", "confidence": 0.9},
+                    "bestelldatum": {"value": "", "source": "pdf", "confidence": 0.0},
+                    "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
+                    "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                },
+                "items": [
+                    {
+                        "line_no": 1,
+                        "artikelnummer": {"value": "181", "source": "pdf", "confidence": 0.9},
+                        "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
+                        "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                        "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                    }
+                ],
+                "status": "ok",
+                "warnings": [],
+                "errors": [],
+            }
+        )
 
         result = pipeline.process_message(message, config, extractor)
         header = result.data.get("header") or {}
@@ -612,43 +616,43 @@ def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
 
     try:
         extractor = MagicMock()
-        extractor.extract.side_effect = RuntimeError("BG case must NOT call extractor.extract()")
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
         extractor.extract_article_details.side_effect = RuntimeError(
             "BG case must skip detail extraction"
         )
-        extractor._create_response.return_value = {
-            "output_text": json.dumps(
-                {
-                    "message_id": "test_momax_bg_no_raw_fallback",
-                    "received_at": "2026-02-13T12:00:00+00:00",
-                    "header": {
-                        "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
-                        "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
-                        "kom_name": {"value": "TEST", "source": "pdf", "confidence": 0.9},
-                        "liefertermin": {"value": "20.03.26", "source": "pdf", "confidence": 0.9},
-                        "bestelldatum": {"value": "12.12.25", "source": "derived", "confidence": 0.9},
-                        "store_name": {"value": "MOMAX BULGARIA - TEST", "source": "pdf", "confidence": 0.9},
-                        "store_address": {"value": "Unknown Street 999, Unknown City", "source": "pdf", "confidence": 0.9},
-                        "lieferanschrift": {"value": "Unknown Street 999, Unknown City", "source": "pdf", "confidence": 0.9},
-                        "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                        "post_case": {"value": False, "source": "derived", "confidence": 1.0},
-                    },
-                    "items": [
-                        {
-                            "line_no": 1,
-                            "artikelnummer": {"value": "181", "source": "pdf", "confidence": 0.9},
-                            "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
-                            "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
-                            "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
-                        }
-                    ],
-                    "status": "ok",
-                    "warnings": [],
-                    "errors": [],
-                }
-            )
-        }
+        extractor.extract_with_prompts.return_value = json.dumps(
+            {
+                "message_id": "test_momax_bg_no_raw_fallback",
+                "received_at": "2026-02-13T12:00:00+00:00",
+                "header": {
+                    "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                    "kom_nr": {"value": "", "source": "pdf", "confidence": 0.0},
+                    "kom_name": {"value": "TEST", "source": "pdf", "confidence": 0.9},
+                    "liefertermin": {"value": "20.03.26", "source": "pdf", "confidence": 0.9},
+                    "bestelldatum": {"value": "12.12.25", "source": "derived", "confidence": 0.9},
+                    "store_name": {"value": "MOMAX BULGARIA - TEST", "source": "pdf", "confidence": 0.9},
+                    "store_address": {"value": "Unknown Street 999, Unknown City", "source": "pdf", "confidence": 0.9},
+                    "lieferanschrift": {"value": "Unknown Street 999, Unknown City", "source": "pdf", "confidence": 0.9},
+                    "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                },
+                "items": [
+                    {
+                        "line_no": 1,
+                        "artikelnummer": {"value": "181", "source": "pdf", "confidence": 0.9},
+                        "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
+                        "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                        "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                    }
+                ],
+                "status": "ok",
+                "warnings": [],
+                "errors": [],
+            }
+        )
 
         result = pipeline.process_message(message, config, extractor)
         header = result.data.get("header") or {}

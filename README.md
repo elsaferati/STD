@@ -153,8 +153,28 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 | `SMTP_SSL` | `true` | Use TLS (STARTTLS on 587; SSL on 465) |
 | `REPLY_EMAIL_TO` | `00primex.eu@gmail.com` | Recipient for reply-needed notifications |
 | `REPLY_EMAIL_BODY` | - | First line of the reply-needed email body |
+| `ROUTER_ENABLED` | `true` | Enable branch routing classifier before extraction |
+| `ROUTER_MIN_CONFIDENCE` | `0.75` | Minimum confidence to trust classifier-selected branch |
+| `ROUTER_MAX_BODY_CHARS` | `4000` | Max email body chars used for routing |
+| `ROUTER_MAX_PDF_PREVIEW_CHARS` | `2000` | Max first-page PDF chars used per routing preview |
 | `DASHBOARD_TOKEN` | - | Required Bearer token for `/api/*` and protected file downloads |
 | `DASHBOARD_ALLOWED_ORIGINS` | - | Comma-separated CORS allowlist for dashboard frontend origins |
+
+## Adding A New Client Branch
+
+1. Create `prompts_<client_id>.py`.
+2. Add `build_user_instructions_<client_id>(source_priority)` and optionally a custom system prompt.
+3. Register the branch in `extraction_branches.py` with:
+   - `id="<client_id>"`
+   - `description` including identifying routing signals
+   - prompt function reference and branch flags (`enable_detail_extraction`, `is_momax_bg`, optional `hard_detector`)
+4. Add representative sample cases under a client folder (for example `CLIENT CASES/<client_id>/`).
+5. Run verification scripts and manual pipeline checks on those samples.
+
+Routing fallback behavior:
+- Unknown/low-confidence/error routing falls back to `xxxlutz_default`.
+- Fallback forces `human_review_needed=true`.
+- Deterministic hard detectors (currently `momax_bg`) can still override branch selection.
 
 ## Data Files
 

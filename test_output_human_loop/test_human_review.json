@@ -1,16 +1,11 @@
 {
   "header": {
     "kundennummer": {
-      "value": "123456",
+      "value": "12345",
       "source": "pdf",
       "confidence": 0.9
     },
     "human_review_needed": {
-      "value": false,
-      "source": "pdf",
-      "confidence": 1.0
-    },
-    "reply_needed": {
       "value": true,
       "source": "pdf",
       "confidence": 1.0
@@ -95,6 +90,11 @@
       "source": "derived",
       "confidence": 0.0
     },
+    "reply_needed": {
+      "value": true,
+      "source": "derived",
+      "confidence": 1.0
+    },
     "post_case": {
       "value": false,
       "source": "derived",
@@ -104,15 +104,14 @@
   "items": [],
   "warnings": [
     "Routing: selected=xxxlutz_default confidence=1.00 forced=false fallback=false",
-    "Reply needed: STATT X BITTE Y",
     "Missing header fields: adressnummer, kom_nr, kom_name, liefertermin, wunschtermin, bestelldatum, lieferanschrift, tour, store_name, store_address, seller, delivery_week, iln, iln_anl, iln_fil",
     "Reply needed: Missing critical header fields: kom_nr",
     "ticket number is missing",
     "No items extracted.",
-    "Auto-reply email sent to 00primex.eu@gmail.com."
+    "Auto-reply email failed: SMTP_HOST is missing"
   ],
   "errors": [],
-  "message_id": "test_reply_needed",
+  "message_id": "test_human_review",
   "received_at": "2025-01-01T12:00:00",
   "status": "partial"
 }

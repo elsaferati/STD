@@ -67,8 +67,11 @@ class OpenAIExtractor:
     def __init__(self, api_key: str, model: str, temperature: float, max_output_tokens: int) -> None:
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self._supports_response_format = True
+        self._supports_temperature_responses = True
+        self._supports_temperature_chat = True
 
     def extract(
         self,
@@ -81,6 +84,31 @@ class OpenAIExtractor:
         sender: str = "",
     ) -> str:
         user_instructions = build_user_instructions(source_priority)
+        return self.extract_with_prompts(
+            message_id=message_id,
+            received_at=received_at,
+            email_text=email_text,
+            images=images,
+            source_priority=source_priority,
+            subject=subject,
+            sender=sender,
+            system_prompt=SYSTEM_PROMPT,
+            user_instructions=user_instructions,
+        )
+
+    def extract_with_prompts(
+        self,
+        *,
+        message_id: str,
+        received_at: str,
+        email_text: str,
+        images: list[ImageInput],
+        source_priority: list[str],
+        subject: str = "",
+        sender: str = "",
+        system_prompt: str,
+        user_instructions: str,
+    ) -> str:
         content = [
             {"type": "input_text", "text": user_instructions},
             {
@@ -104,7 +132,7 @@ class OpenAIExtractor:
             )
             content.append({"type": "input_image", "image_url": image.data_url})
 
-        response = self._create_response(content)
+        response = self._create_response_with_prompt(content, system_prompt)
 
         return _response_to_text(response)
 
@@ -174,11 +202,24 @@ class OpenAIExtractor:
             ],
             "max_tokens": self.max_output_tokens,
         }
+        if self._supports_temperature_chat:
+            params["temperature"] = self.temperature
 
         try:
             return self.client.chat.completions.create(**params)
+        except TypeError as exc:
+            message = str(exc)
+            if self._supports_temperature_chat and self._is_unsupported_temperature_error(message):
+                self._supports_temperature_chat = False
+                params.pop("temperature", None)
+                return self.client.chat.completions.create(**params)
+            raise
         except Exception as exc:
             message = str(exc)
+            if self._supports_temperature_chat and self._is_unsupported_temperature_error(message):
+                self._supports_temperature_chat = False
+                params.pop("temperature", None)
+                return self.client.chat.completions.create(**params)
             raise
 
     def _responses_create_with_prompt(self, content: list[dict[str, Any]], system_prompt: str) -> Any:
@@ -191,6 +232,8 @@ class OpenAIExtractor:
             ],
             "max_output_tokens": self.max_output_tokens,
         }
+        if self._supports_temperature_responses:
+            params["temperature"] = self.temperature
         if self._supports_response_format:
             params["response_format"] = {"type": "json_object"}
 
@@ -202,6 +245,10 @@ class OpenAIExtractor:
                 self._supports_response_format = False
                 params.pop("response_format", None)
                 return self.client.responses.create(**params)
+            if self._supports_temperature_responses and self._is_unsupported_temperature_error(message):
+                self._supports_temperature_responses = False
+                params.pop("temperature", None)
+                return self.client.responses.create(**params)
             raise
         except Exception as exc:
             message = str(exc)
@@ -210,9 +257,18 @@ class OpenAIExtractor:
                 self._supports_response_format = False
                 params.pop("response_format", None)
                 retried = True
+            if self._supports_temperature_responses and self._is_unsupported_temperature_error(message):
+                self._supports_temperature_responses = False
+                params.pop("temperature", None)
+                retried = True
             if retried:
                 return self.client.responses.create(**params)
             raise
+
+    @staticmethod
+    def _is_unsupported_temperature_error(message: str) -> bool:
+        lowered = (message or "").lower()
+        return ("temperature" in lowered) and ("unsupported parameter" in lowered or "not supported" in lowered)
 
 
 def parse_json_response(text: str) -> dict[str, Any]:

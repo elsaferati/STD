@@ -27,7 +27,10 @@ def test_human_review_preservation():
     }
     
     # Mock extraction method
-    extractor.extract.return_value = json.dumps(mock_response)
+    extractor.complete_text.return_value = json.dumps(
+        {"branch_id": "xxxlutz_default", "confidence": 1.0, "reason": "test"}
+    )
+    extractor.extract_with_prompts.return_value = json.dumps(mock_response)
 
     # Create dummy message
     message = IngestedEmail(

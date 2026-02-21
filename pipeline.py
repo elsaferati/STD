@@ -13,6 +13,8 @@ from PIL import Image
 
 from config import Config
 from email_ingest import Attachment, IngestedEmail
+import extraction_branches
+import extraction_router
 from normalize import normalize_output, refresh_missing_warnings
 from openai_extract import ImageInput, OpenAIExtractor, parse_json_response
 from poppler_utils import pdf_to_images, resolve_pdftoppm
@@ -224,8 +226,12 @@ def process_message(
         )
         body_text = body_text[: config.max_email_chars]
 
+    route = extraction_router.route_message(message, config, extractor)
+    branch = extraction_branches.get_branch(route.selected_branch_id)
+    warnings.append(extraction_router.format_routing_warning(route))
+
     images = _prepare_images(message.attachments, config, warnings)
-    use_momax_bg = momax_bg.is_momax_bg_two_pdf_case(message.attachments)
+    user_instructions = branch.build_user_instructions(config.source_priority)
 
     max_retries = 3
     last_error: Exception | None = None
@@ -233,26 +239,19 @@ def process_message(
     
     for attempt in range(1, max_retries + 1):
         try:
-            if use_momax_bg:
-                response_text = momax_bg.extract_momax_bg(
-                    extractor=extractor,
-                    message=message,
-                    images=images,
-                    source_priority=config.source_priority,
-                    email_text=body_text,
-                )
-            else:
-                response_text = extractor.extract(
-                    message_id=message.message_id,
-                    received_at=message.received_at,
-                    email_text=body_text,
-                    images=images,
-                    source_priority=config.source_priority,
-                    subject=message.subject,
-                    sender=message.sender,
-                )
+            response_text = extractor.extract_with_prompts(
+                message_id=message.message_id,
+                received_at=message.received_at,
+                email_text=body_text,
+                images=images,
+                source_priority=config.source_priority,
+                subject=message.subject,
+                sender=message.sender,
+                system_prompt=branch.system_prompt,
+                user_instructions=user_instructions,
+            )
             parsed = parse_json_response(response_text)
-            if use_momax_bg and isinstance(parsed, dict):
+            if branch.is_momax_bg and isinstance(parsed, dict):
                 header = parsed.get("header")
                 if isinstance(header, dict):
                     header["kom_name"] = {
@@ -294,12 +293,33 @@ def process_message(
         warnings=warnings,
         email_body=body_text,
         sender=message.sender,
-        is_momax_bg=use_momax_bg,
+        is_momax_bg=branch.is_momax_bg,
     )
+
+    if route.used_fallback:
+        header = normalized.get("header")
+        if not isinstance(header, dict):
+            header = {}
+            normalized["header"] = header
+        human_review_entry = header.get("human_review_needed")
+        already_true = (
+            isinstance(human_review_entry, dict)
+            and human_review_entry.get("value") is True
+        )
+        if not already_true:
+            header["human_review_needed"] = {
+                "value": True,
+                "source": "derived",
+                "confidence": 1.0,
+                "derived_from": "routing_fallback",
+            }
+        normalized_warnings = normalized.get("warnings")
+        if isinstance(normalized_warnings, list):
+            normalized_warnings.append("Routing fallback: forced human_review_needed=true")
 
     # BG special-case (MOMAX/MOEMAX/AIKO): keep kom_nr/date fixes only.
     # Kundennummer must come from address-based Excel logic.
-    if use_momax_bg:
+    if branch.is_momax_bg:
         header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
         kom_nr_from_pdf = momax_bg.extract_momax_bg_kom_nr(message.attachments)
         kom_entry = header.get("kom_nr", {})
@@ -350,7 +370,7 @@ def process_message(
         "confidence": 1.0 if ticket_number else 0.0,
     }
 
-    if (not use_momax_bg) and ai_customer_match.should_try_ai_customer_match(
+    if (not branch.is_momax_bg) and ai_customer_match.should_try_ai_customer_match(
         normalized.get("header") or {},
         normalized.get("warnings") or [],
     ):
@@ -444,7 +464,7 @@ def process_message(
     has_pdf_attachment = any(_is_pdf(att) for att in message.attachments)
     has_multipage_tif = any(_is_multipage_tif(att.filename, att.content_type) for att in message.attachments)
     detail_images = pdf_images if pdf_images else ([img for img in images if img.source == "image"] if has_multipage_tif else [])
-    if (not use_momax_bg) and detail_images and (has_pdf_attachment or has_multipage_tif):
+    if branch.enable_detail_extraction and detail_images and (has_pdf_attachment or has_multipage_tif):
         label = "PDF page(s)" if pdf_images else "image page(s)"
         print(f"Running detail extraction on {len(detail_images)} {label}...")
         try:
