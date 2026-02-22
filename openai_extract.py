@@ -108,6 +108,7 @@ class OpenAIExtractor:
         sender: str = "",
         system_prompt: str,
         user_instructions: str,
+        page_text_by_image_name: dict[str, str] | None = None,
     ) -> str:
         content = [
             {"type": "input_text", "text": user_instructions},
@@ -130,6 +131,21 @@ class OpenAIExtractor:
                     "text": f"Image {idx} source: {image.source}; name: {image.name}",
                 }
             )
+            page_text = (
+                page_text_by_image_name.get(image.name, "")
+                if page_text_by_image_name
+                else ""
+            )
+            if page_text:
+                content.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "PDF extracted text for this page (digital, not OCR):\n"
+                            f"{page_text}"
+                        ),
+                    }
+                )
             content.append({"type": "input_image", "image_url": image.data_url})
 
         response = self._create_response_with_prompt(content, system_prompt)
@@ -139,6 +155,7 @@ class OpenAIExtractor:
     def extract_article_details(
         self,
         images: list[ImageInput],
+        page_text_by_image_name: dict[str, str] | None = None,
     ) -> str:
         """
         Second extraction call for detailed article info from furnplan PDFs.
@@ -157,6 +174,21 @@ class OpenAIExtractor:
                     "text": f"Furnplan page {idx}: {image.name}",
                 }
             )
+            page_text = (
+                page_text_by_image_name.get(image.name, "")
+                if page_text_by_image_name
+                else ""
+            )
+            if page_text:
+                content.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "PDF extracted text for this page (digital, not OCR):\n"
+                            f"{page_text}"
+                        ),
+                    }
+                )
             content.append({"type": "input_image", "image_url": image.data_url})
 
         response = self._create_response_with_prompt(content, DETAIL_SYSTEM_PROMPT)

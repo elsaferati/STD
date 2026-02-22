@@ -8,7 +8,6 @@ import mimetypes
 import re
 import tempfile
 from typing import Any
-
 from PIL import Image
 
 from config import Config
@@ -123,10 +122,71 @@ def _to_data_url(data: bytes, mime: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+def _extract_page_number_from_image_name(image_name: str) -> int | None:
+    stem = Path(image_name).stem
+    match = re.search(r"-(\d+)$", stem)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_pdf_page_texts(
+    pdf_bytes: bytes,
+    max_pages: int,
+    max_chars_per_page: int,
+    warnings: list[str],
+    filename: str,
+) -> dict[int, str]:
+    if max_chars_per_page == 0:
+        return {}
+
+    try:
+        import fitz
+    except Exception as exc:
+        warnings.append(f"PDF text extraction failed for {filename}: {exc}")
+        return {}
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        warnings.append(f"PDF text extraction failed for {filename}: {exc}")
+        return {}
+
+    page_texts: dict[int, str] = {}
+    has_non_empty_text = False
+    try:
+        total_pages = doc.page_count
+        limit = total_pages if max_pages <= 0 else min(total_pages, max_pages)
+        for page_index in range(limit):
+            text = doc[page_index].get_text() or ""
+            if max_chars_per_page > 0 and len(text) > max_chars_per_page:
+                warnings.append(
+                    f"PDF text truncated for {filename} page {page_index + 1} to {max_chars_per_page} chars"
+                )
+                text = text[:max_chars_per_page]
+            if text.strip():
+                has_non_empty_text = True
+            page_texts[page_index + 1] = text
+    except Exception as exc:
+        warnings.append(f"PDF text extraction failed for {filename}: {exc}")
+        return {}
+    finally:
+        doc.close()
+
+    if page_texts and not has_non_empty_text:
+        warnings.append(f"No digital PDF text extracted for {filename}; using images only.")
+
+    return page_texts
+
+
 def _prepare_images(
     attachments: list[Attachment], config: Config, warnings: list[str]
-) -> list[ImageInput]:
+) -> tuple[list[ImageInput], dict[str, str]]:
     images: list[ImageInput] = []
+    pdf_text_by_image_name: dict[str, str] = {}
     pdfs = [att for att in attachments if _is_pdf(att)]
 
     pdftoppm_path = ""
@@ -144,6 +204,13 @@ def _prepare_images(
             pdf_name = _safe_name(att.filename) + ".pdf"
             pdf_path = temp_path / pdf_name
             pdf_path.write_bytes(att.data)
+            page_texts = _extract_pdf_page_texts(
+                att.data,
+                config.max_pdf_pages,
+                config.max_pdf_text_chars_per_page,
+                warnings,
+                att.filename or "attachment.pdf",
+            )
             try:
                 image_paths = pdf_to_images(
                     pdf_path,
@@ -161,6 +228,12 @@ def _prepare_images(
                 images.append(
                     ImageInput(name=image_path.name, source="pdf", data_url=data_url)
                 )
+                page_number = _extract_page_number_from_image_name(image_path.name)
+                if page_number is None:
+                    continue
+                page_text = page_texts.get(page_number, "")
+                if page_text.strip():
+                    pdf_text_by_image_name[image_path.name] = page_text
 
         for att in attachments:
             if not _is_image(att):
@@ -183,8 +256,14 @@ def _prepare_images(
             f"Image count truncated from {len(images)} to {config.max_images}."
         )
         images = images[: config.max_images]
+        kept_names = {image.name for image in images}
+        pdf_text_by_image_name = {
+            name: text
+            for name, text in pdf_text_by_image_name.items()
+            if name in kept_names
+        }
 
-    return images
+    return images, pdf_text_by_image_name
 
 
 def _merge_article_details(base_data: dict[str, Any], detail_data: dict[str, Any]) -> dict[str, Any]:
@@ -230,7 +309,12 @@ def process_message(
     branch = extraction_branches.get_branch(route.selected_branch_id)
     warnings.append(extraction_router.format_routing_warning(route))
 
-    images = _prepare_images(message.attachments, config, warnings)
+    prepared_images = _prepare_images(message.attachments, config, warnings)
+    if isinstance(prepared_images, tuple):
+        images, pdf_text_by_image_name = prepared_images
+    else:
+        images = prepared_images
+        pdf_text_by_image_name = {}
     user_instructions = branch.build_user_instructions(config.source_priority)
 
     max_retries = 3
@@ -249,6 +333,7 @@ def process_message(
                 sender=message.sender,
                 system_prompt=branch.system_prompt,
                 user_instructions=user_instructions,
+                page_text_by_image_name=pdf_text_by_image_name,
             )
             parsed = parse_json_response(response_text)
             if branch.is_momax_bg and isinstance(parsed, dict):
@@ -468,11 +553,19 @@ def process_message(
         label = "PDF page(s)" if pdf_images else "image page(s)"
         print(f"Running detail extraction on {len(detail_images)} {label}...")
         try:
-                detail_response = extractor.extract_article_details(detail_images)
-                detail_data = parse_json_response(detail_response)
-                normalized = _merge_article_details(normalized, detail_data)
-                refresh_missing_warnings(normalized)
-                print(f"Detail extraction successful: {len(detail_data.get('articles', []))} articles found")
+            detail_page_text_by_image_name = {
+                image.name: pdf_text_by_image_name[image.name]
+                for image in detail_images
+                if image.name in pdf_text_by_image_name
+            }
+            detail_response = extractor.extract_article_details(
+                detail_images,
+                page_text_by_image_name=detail_page_text_by_image_name,
+            )
+            detail_data = parse_json_response(detail_response)
+            normalized = _merge_article_details(normalized, detail_data)
+            refresh_missing_warnings(normalized)
+            print(f"Detail extraction successful: {len(detail_data.get('articles', []))} articles found")
         except Exception as exc:
             # Detail extraction failure should not break the order
             warnings.append(f"Detail extraction failed (non-critical): {exc}")

@@ -143,6 +143,7 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 | `SOURCE_PRIORITY` | `pdf,email,image` | Trust priority when data conflicts |
 | `PDF_DPI` | `300` | Resolution for PDF to image conversion |
 | `MAX_PDF_PAGES` | `10` | Maximum PDF pages to process |
+| `MAX_PDF_TEXT_CHARS_PER_PAGE` | `8000` | Max extracted PDF text chars per page sent with each PDF image (`0` disables PDF text input) |
 | `EMAIL_POLL_SECONDS` | `30` | Polling interval (0 for single run) |
 | `EMAIL_ONLY_AFTER_START` | `true` | Only process new emails |
 | `EMAIL_MARK_SEEN` | `false` | Mark processed emails as read/deleted (prevents re-processing) |

@@ -65,6 +65,7 @@ class Config:
     source_priority: list[str]
     max_email_chars: int
     max_pdf_pages: int
+    max_pdf_text_chars_per_page: int
     pdf_dpi: int
     max_images: int
     date_dayfirst: bool
@@ -113,6 +114,7 @@ class Config:
             source_priority=priority,
             max_email_chars=_get_int("MAX_EMAIL_CHARS", 20000),
             max_pdf_pages=_get_int("MAX_PDF_PAGES", 10),
+            max_pdf_text_chars_per_page=_get_int("MAX_PDF_TEXT_CHARS_PER_PAGE", 8000),
             pdf_dpi=_get_int("PDF_DPI", 300),
             max_images=_get_int("MAX_IMAGES", 20),
             date_dayfirst=_get_bool("DATE_DAYFIRST", True),
