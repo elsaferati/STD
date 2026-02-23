@@ -229,13 +229,13 @@ def _log_delivery_debug(info: dict[str, Any]) -> None:
 def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: str = None, client_name: str = None) -> str:
     """
     Calculate the delivery week based on:
-      - the calendar week of the order date,
+      - the calendar week of today's date (system date),
       - the tour matrix from the Excel schedule (right table J:P),
       - the tour weekly run schedule (left table A:H),
       - an optional requested delivery week.
 
     Rules:
-      1. Determine order week from Bestelldatum.
+      1. Determine current week from today's date.
       2. From the row for that week, read the earliest possible delivery week
          for the selected tour (right table J:P).
       3. Valid delivery weeks are those where the tour runs (left table A:H).
@@ -251,6 +251,8 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
     """
     debug_info: dict[str, Any] = {
         "current_week": None,
+        "input_order_date": order_date_str if order_date_str else None,
+        "effective_order_date": None,
         "earliest_possible_week": None,
         "requested_week": requested_week_str if requested_week_str else None,
         "earliest_allowed_by_request": None,
@@ -264,19 +266,20 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
         _log_delivery_debug(debug_info)
         return value
 
-    if not order_date_str or not tour:
+    if not tour:
         return _return_with_debug("")
 
     schedule = _load_schedule()
     if schedule is None or _cache_schedule_df is None:
         return _return_with_debug("")
 
-    # 1. Parse Order Date -> order week/year
+    # 1. Always use today's date as effective order date
     try:
-        dt_order = parse(order_date_str, dayfirst=True, fuzzy=True)
+        dt_order = datetime.date.today()
         y_order, w_order, _ = dt_order.isocalendar()
     except Exception:
         return _return_with_debug("")
+    debug_info["effective_order_date"] = dt_order.isoformat()
     debug_info["current_week"] = w_order
 
     # 2. Resolve Tour Column (right table)
