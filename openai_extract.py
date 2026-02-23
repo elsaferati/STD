@@ -204,8 +204,9 @@ class OpenAIExtractor:
         images: list[ImageInput],
         items_snapshot: list[dict[str, Any]],
         page_text_by_image_name: dict[str, str] | None = None,
+        verification_profile: str = "porta",
     ) -> str:
-        user_instructions = build_verify_items_instructions()
+        user_instructions = build_verify_items_instructions(verification_profile)
         content = [
             {"type": "input_text", "text": user_instructions},
             {

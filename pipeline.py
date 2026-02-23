@@ -411,22 +411,66 @@ def process_message(
         is_momax_bg=branch.is_momax_bg,
     )
 
+    if branch.is_momax_bg:
+        wrapped_article_map = momax_bg.extract_momax_bg_wrapped_article_map(message.attachments)
+        if wrapped_article_map:
+            normalized_items = normalized.get("items")
+            normalized_warnings = normalized.get("warnings")
+            if isinstance(normalized_items, list):
+                for index, item in enumerate(normalized_items, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    artikel_entry = item.get("artikelnummer")
+                    if not isinstance(artikel_entry, dict):
+                        artikel_entry = {
+                            "value": artikel_entry if artikel_entry is not None else "",
+                            "source": "derived",
+                            "confidence": 0.0,
+                        }
+                        item["artikelnummer"] = artikel_entry
+                    current_article = str(artikel_entry.get("value", "") or "").strip()
+                    corrected_article = wrapped_article_map.get(current_article, "")
+                    if not corrected_article or corrected_article == current_article:
+                        continue
+                    artikel_entry["value"] = corrected_article
+                    artikel_entry["source"] = "derived"
+                    artikel_entry["confidence"] = 1.0
+                    artikel_entry["derived_from"] = "momax_bg_pdf_wrapped_article_correction"
+                    if isinstance(normalized_warnings, list):
+                        line_no = item.get("line_no", index)
+                        normalized_warnings.append(
+                            f"MOMAX BG wrapped Code/Type correction: item line {line_no} "
+                            f"artikelnummer '{current_article}' -> '{corrected_article}'."
+                        )
+
     if branch.enable_item_code_verification and pdf_images:
         items_snapshot = _build_items_snapshot(normalized.get("items"))
         if items_snapshot:
+            verification_profile = branch.id
+            fields_to_apply = (
+                ("modellnummer", "artikelnummer")
+                if branch.is_momax_bg
+                else None
+            )
             try:
                 verification_text = extractor.verify_items_from_pdf(
                     images=pdf_images,
                     items_snapshot=items_snapshot,
                     page_text_by_image_name=pdf_text_by_image_name,
+                    verification_profile=verification_profile,
                 )
                 verification_data = parse_json_response(verification_text)
-                apply_item_code_verification(normalized, verification_data)
+                apply_item_code_verification(
+                    normalized,
+                    verification_data,
+                    verification_profile=verification_profile,
+                    fields_to_apply=fields_to_apply,
+                )
             except Exception as exc:
                 normalized_warnings = normalized.get("warnings")
                 if isinstance(normalized_warnings, list):
                     normalized_warnings.append(
-                        f"Porta item verification failed (non-critical): {exc}"
+                        f"{branch.label} item verification failed (non-critical): {exc}"
                     )
 
     if route.used_fallback:

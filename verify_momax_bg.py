@@ -663,6 +663,101 @@ def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
         pipeline._prepare_images = original_prepare_images
 
 
+def test_momax_bg_wrapped_article_map_extracts_suffix() -> None:
+    pdf = _make_pdf_bytes(
+        "MOMAX - ORDER\n"
+        "Code/Type Quantity\n"
+        "SN/SN/71/SP/91/180 98 1\n"
+    )
+    att = Attachment(filename="spec.pdf", content_type="application/pdf", data=pdf)
+    mapping = momax_bg.extract_momax_bg_wrapped_article_map([att])
+    assert mapping.get("180") == "18098"
+    print("SUCCESS: momax_bg wrapped Code/Type map extracts article suffix.")
+
+
+def test_momax_bg_pipeline_corrects_wrapped_article_suffix() -> None:
+    pdf_a = _make_pdf_bytes(
+        "Recipient: MOMAX BULGARIA\n"
+        "IDENT No: 20197304\n"
+        "ORDER\n"
+        "No 1711/12.12.25\n"
+        "Term for delivery: 20.03.26\n"
+        "Store: VARNA\n"
+        "Address: Varna, Blvd. Vladislav Varnenchik 277A\n"
+    )
+    pdf_b = _make_pdf_bytes(
+        "MOMAX - ORDER\n"
+        "VARNA - 88801711/12.12.25\n"
+        "Code/Type Quantity\n"
+        "SN/SN/71/SP/91/180 98 1\n"
+    )
+    message = IngestedEmail(
+        message_id="test_momax_bg_wrapped_article",
+        received_at="2026-02-13T12:00:00+00:00",
+        subject="MOMAX BG order",
+        sender="bg@example.com",
+        body_text="",
+        attachments=[
+            Attachment(filename="bg_a.pdf", content_type="application/pdf", data=pdf_a),
+            Attachment(filename="bg_b.pdf", content_type="application/pdf", data=pdf_b),
+        ],
+    )
+    config = Config.from_env()
+
+    original_prepare_images = pipeline._prepare_images
+    pipeline._prepare_images = lambda attachments, config, warnings: ([], {})
+
+    try:
+        extractor = MagicMock()
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
+        extractor.extract_with_prompts.return_value = json.dumps(
+            {
+                "message_id": "test_momax_bg_wrapped_article",
+                "received_at": "2026-02-13T12:00:00+00:00",
+                "header": {
+                    "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                    "kom_nr": {"value": "88801711", "source": "pdf", "confidence": 0.99},
+                    "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
+                    "liefertermin": {"value": "20.03.26", "source": "pdf", "confidence": 0.9},
+                    "bestelldatum": {"value": "12.12.25", "source": "derived", "confidence": 0.9},
+                    "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
+                    "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                },
+                "items": [
+                    {
+                        "line_no": 1,
+                        "artikelnummer": {"value": "180", "source": "pdf", "confidence": 0.9},
+                        "modellnummer": {"value": "SN/SN/71/SP/91", "source": "pdf", "confidence": 0.9},
+                        "menge": {"value": 1, "source": "pdf", "confidence": 0.9},
+                        "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                    }
+                ],
+                "status": "ok",
+                "warnings": [],
+                "errors": [],
+            }
+        )
+
+        result = pipeline.process_message(message, config, extractor)
+        items = result.data.get("items") or []
+        warnings = result.data.get("warnings") or []
+        assert items[0].get("artikelnummer", {}).get("value") == "18098"
+        assert (
+            items[0].get("artikelnummer", {}).get("derived_from")
+            == "momax_bg_pdf_wrapped_article_correction"
+        )
+        assert any("wrapped Code/Type correction" in str(w) for w in warnings)
+        print("SUCCESS: momax_bg pipeline corrects wrapped article suffix from PDF text.")
+    finally:
+        pipeline._prepare_images = original_prepare_images
+
+
 if __name__ == "__main__":
     test_momax_bg_two_pdf_special_case()
     test_momax_bg_excel_address_matching()
@@ -678,3 +773,5 @@ if __name__ == "__main__":
     test_aiko_bg_item_whitespace_pair_normalization()
     test_non_bg_regression_calls_standard_extract()
     test_momax_bg_no_raw_kdnr_fallback_from_pdf()
+    test_momax_bg_wrapped_article_map_extracts_suffix()
+    test_momax_bg_pipeline_corrects_wrapped_article_suffix()
