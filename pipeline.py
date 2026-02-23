@@ -14,6 +14,7 @@ from config import Config
 from email_ingest import Attachment, IngestedEmail
 import extraction_branches
 import extraction_router
+from item_code_verification import apply_item_code_verification
 from normalize import normalize_output, refresh_missing_warnings
 from openai_extract import ImageInput, OpenAIExtractor, parse_json_response
 from poppler_utils import pdf_to_images, resolve_pdftoppm
@@ -294,6 +295,34 @@ def _extract_ticket_number(subject: str) -> str:
     return ""
 
 
+def _entry_value(entry: Any) -> Any:
+    if isinstance(entry, dict):
+        return entry.get("value")
+    return entry
+
+
+def _build_items_snapshot(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    snapshot: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        try:
+            line_no = int(item.get("line_no", index))
+        except (TypeError, ValueError):
+            line_no = index
+        snapshot.append(
+            {
+                "line_no": line_no,
+                "modellnummer": _entry_value(item.get("modellnummer")) or "",
+                "artikelnummer": _entry_value(item.get("artikelnummer")) or "",
+                "menge": _entry_value(item.get("menge")),
+            }
+        )
+    return snapshot
+
+
 def process_message(
     message: IngestedEmail, config: Config, extractor: OpenAIExtractor
 ) -> ProcessedResult:
@@ -315,6 +344,7 @@ def process_message(
     else:
         images = prepared_images
         pdf_text_by_image_name = {}
+    pdf_images = [img for img in images if img.source == "pdf"]
     user_instructions = branch.build_user_instructions(config.source_priority)
 
     max_retries = 3
@@ -380,6 +410,24 @@ def process_message(
         sender=message.sender,
         is_momax_bg=branch.is_momax_bg,
     )
+
+    if branch.enable_item_code_verification and pdf_images:
+        items_snapshot = _build_items_snapshot(normalized.get("items"))
+        if items_snapshot:
+            try:
+                verification_text = extractor.verify_items_from_pdf(
+                    images=pdf_images,
+                    items_snapshot=items_snapshot,
+                    page_text_by_image_name=pdf_text_by_image_name,
+                )
+                verification_data = parse_json_response(verification_text)
+                apply_item_code_verification(normalized, verification_data)
+            except Exception as exc:
+                normalized_warnings = normalized.get("warnings")
+                if isinstance(normalized_warnings, list):
+                    normalized_warnings.append(
+                        f"Porta item verification failed (non-critical): {exc}"
+                    )
 
     if route.used_fallback:
         header = normalized.get("header")
@@ -545,7 +593,6 @@ def process_message(
 
     # SECOND EXTRACTION CALL: Extract detailed article info (primarily from furnplan PDFs).
     # Fallback: if the order is a scanned/multipage TIF, run detail extraction on those images too.
-    pdf_images = [img for img in images if img.source == "pdf"]
     has_pdf_attachment = any(_is_pdf(att) for att in message.attachments)
     has_multipage_tif = any(_is_multipage_tif(att.filename, att.content_type) for att in message.attachments)
     detail_images = pdf_images if pdf_images else ([img for img in images if img.source == "image"] if has_multipage_tif else [])

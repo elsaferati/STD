@@ -12,6 +12,16 @@ from email_ingest import Attachment, IngestedEmail
 from extraction_branches import BRANCHES, DEFAULT_BRANCH_ID
 from openai_extract import OpenAIExtractor, parse_json_response
 
+_PORTA_TOKEN_RE = re.compile(r"\bporta\b", re.IGNORECASE)
+_PORTA_DOMAIN_RE = re.compile(r"(?:@|\b)porta\.de\b", re.IGNORECASE)
+_PORTA_ORDER_RE = re.compile(r"bestellung\s*/\s*order", re.IGNORECASE)
+_PORTA_KUNDENKOMMISSION_RE = re.compile(
+    r"k\s*u\s*n\s*d\s*e\s*n\s*k\s*o\s*m\s*m\s*i\s*s\s*s\s*i\s*o\s*n",
+    re.IGNORECASE,
+)
+_PORTA_SUPPLIER_RE = re.compile(r"lieferantennummer", re.IGNORECASE)
+_PORTA_HOUSE_RE = re.compile(r"gln\s*haus|f[uü]r\s*haus", re.IGNORECASE)
+
 
 @dataclass
 class RouteDecision:
@@ -73,6 +83,52 @@ def _forced_branch_id(detector_results: dict[str, bool]) -> str | None:
     return None
 
 
+def _has_porta_hint(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+
+    if _PORTA_TOKEN_RE.search(normalized) or _PORTA_DOMAIN_RE.search(normalized):
+        return True
+
+    return _has_porta_layout_markers(normalized)
+
+
+def _has_porta_layout_markers(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    has_order_header = bool(_PORTA_ORDER_RE.search(normalized))
+    has_commission_header = bool(_PORTA_KUNDENKOMMISSION_RE.search(normalized))
+    has_supplier_or_house = bool(
+        _PORTA_SUPPLIER_RE.search(normalized) or _PORTA_HOUSE_RE.search(normalized)
+    )
+    return has_order_header and has_commission_header and has_supplier_or_house
+
+
+def _is_porta_hard_match(message: IngestedEmail, config: Config) -> bool:
+    sender_text = _normalize_whitespace(message.sender or "")
+    sender_domain_match = bool(_PORTA_DOMAIN_RE.search(sender_text))
+    pdf_attachments = [a for a in message.attachments if _is_pdf_attachment(a)]
+    if not pdf_attachments:
+        return False
+    if sender_domain_match:
+        return True
+
+    for attachment in pdf_attachments:
+        try:
+            preview_text = _pdf_first_page_text(attachment.data)
+        except Exception:
+            continue
+        preview_text = _truncate(
+            _normalize_whitespace(preview_text),
+            config.router_max_pdf_preview_chars,
+        )
+        if _has_porta_layout_markers(preview_text):
+            return True
+    return False
+
+
 def _build_router_system_prompt() -> str:
     branch_lines = [
         f"- {branch.id}: {branch.description}" for branch in BRANCHES.values()
@@ -90,7 +146,8 @@ def _build_router_system_prompt() -> str:
         "1. branch_id must be one of the listed IDs or unknown.\n"
         "2. confidence must be a float from 0.0 to 1.0.\n"
         "3. If momax_bg_detector is true in the input, return branch_id=\"momax_bg\" and confidence=1.0.\n"
-        "4. If uncertain, return branch_id=\"unknown\" with low confidence."
+        "4. If porta_hint is true, prefer branch_id=\"porta\" with high confidence unless a forced detector applies.\n"
+        "5. If uncertain, return branch_id=\"unknown\" with low confidence."
     )
 
 
@@ -135,6 +192,21 @@ def _build_router_user_text(
         "email_body_preview": body_preview,
         "attachments": attachment_info,
         "pdf_first_page_previews": pdf_previews,
+        "porta_hint": bool(
+            _has_porta_hint(
+                "\n".join(
+                    [
+                        message.sender or "",
+                        message.subject or "",
+                        body_preview,
+                    ]
+                )
+            )
+            or any(
+                _has_porta_hint(preview.get("first_page_text", ""))
+                for preview in pdf_previews
+            )
+        ),
         "momax_bg_detector": bool(detector_results.get("momax_bg", False)),
         "hard_detectors": detector_results,
     }
@@ -174,6 +246,9 @@ def route_message(
 ) -> RouteDecision:
     detector_results = _evaluate_hard_detectors(message.attachments)
     forced_branch_id = _forced_branch_id(detector_results)
+    if not forced_branch_id and _is_porta_hard_match(message, config):
+        forced_branch_id = "porta"
+        detector_results["porta"] = True
 
     if not config.router_enabled:
         return RouteDecision(

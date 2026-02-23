@@ -8,6 +8,10 @@ from openai import OpenAI
 
 from prompts import SYSTEM_PROMPT, build_user_instructions
 from prompts_detail import DETAIL_SYSTEM_PROMPT, build_detail_user_instructions
+from prompts_verify_items import (
+    VERIFY_ITEMS_SYSTEM_PROMPT,
+    build_verify_items_instructions,
+)
 
 
 @dataclass
@@ -193,6 +197,51 @@ class OpenAIExtractor:
 
         response = self._create_response_with_prompt(content, DETAIL_SYSTEM_PROMPT)
 
+        return _response_to_text(response)
+
+    def verify_items_from_pdf(
+        self,
+        images: list[ImageInput],
+        items_snapshot: list[dict[str, Any]],
+        page_text_by_image_name: dict[str, str] | None = None,
+    ) -> str:
+        user_instructions = build_verify_items_instructions()
+        content = [
+            {"type": "input_text", "text": user_instructions},
+            {
+                "type": "input_text",
+                "text": (
+                    "Current extracted items snapshot (use line_no as stable key):\n"
+                    f"{json.dumps(items_snapshot, ensure_ascii=False, indent=2)}"
+                ),
+            },
+        ]
+
+        for idx, image in enumerate(images, start=1):
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": f"PDF page {idx}: {image.name}",
+                }
+            )
+            page_text = (
+                page_text_by_image_name.get(image.name, "")
+                if page_text_by_image_name
+                else ""
+            )
+            if page_text:
+                content.append(
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "PDF extracted text for this page (digital, not OCR):\n"
+                            f"{page_text}"
+                        ),
+                    }
+                )
+            content.append({"type": "input_image", "image_url": image.data_url})
+
+        response = self._create_response_with_prompt(content, VERIFY_ITEMS_SYSTEM_PROMPT)
         return _response_to_text(response)
 
     def complete_text(self, system_prompt: str, user_text: str) -> str:

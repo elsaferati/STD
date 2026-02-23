@@ -1,125 +1,143 @@
-## Hybrid PDF Input (Images + PDF Text) for Code Accuracy
+## Add new client extraction branch: **Porta** (email + PDF)
 
 ### Summary
-Add **digital text extraction from PDFs** (using PyMuPDF) and send that text **alongside each rendered PDF page image** in the same OpenAI request. Update prompts so the model uses the PDF text **only to verify/correct `modellnummer` + `artikelnummer`** (and `article_id` in the detail call), while keeping **item count + `menge` sourced from the image**.
+Add a new extraction branch `porta` with Porta-specific prompts and routing hints. Porta messages are routed via the existing LLM router using “Porta” signals in sender/subject/PDF preview text. After the main extraction, run a **second pass** that **verifies & corrects item codes** (`artikelnummer`/`modellnummer`, optionally `menge`) from the PDF, then **auto-corrects** mismatches and **forces `human_review_needed=true`** with clear warnings.
 
 ---
 
-## Decisions Locked In (per your answers)
-- **PDF strategy:** keep the current **PDF→images** flow (Poppler/`pdftoppm`) and additionally extract PDF text locally.
-- **Validation scope:** only validate **`modellnummer` + `artikelnummer`** (and detail extraction `article_id`) against PDF text; **quantities/item count must come from image**.
-- **Verification method:** **prompt-only** (no extra post-processing validator).
+## Decisions locked in (from you)
+- **Output:** Reuse existing JSON schema + existing XML exporters (`OrderInfo_*.xml`, `OrderArticleInfo_*.xml`).
+- **Routing:** Classifier + PDF hints (no risky hard-force detector until we have real samples).
+- **Second pass goal:** Verify & correct item codes.
+- **Mismatch handling:** Auto-correct + flag human review.
 
 ---
 
-## Implementation Details
+## Changes (repo-level)
 
-### 1) Extract PDF page text (PyMuPDF)
-- Add a helper in `pipeline.py`:
-  - Input: `pdf_bytes`, `max_pages`, `max_chars_per_page`
-  - Output: list of page texts indexed by page number (1-based in labels, 0-based internally)
-- Use `fitz.open(stream=pdf_bytes, filetype="pdf")` and `page.get_text()` for each page up to `MAX_PDF_PAGES`.
+### 1) Create Porta main prompt module
+**Add file:** `prompts_porta.py`
+- Define `PORTA_SYSTEM_PROMPT` (or `SYSTEM_PROMPT_PORTA`) explicitly mentioning **Porta** (avoid “XXXLutz/Mömax” wording).
+- Implement `build_user_instructions_porta(source_priority: list[str]) -> str`:
+  - State: Porta orders always arrive with **email + PDF**.
+  - Enforce the same required German field names + JSON structure the pipeline expects.
+  - Include the “PDF digital text is ONLY for verifying code fields” rule:
+    - Use PDF extracted text to confirm/correct `items[*].modellnummer` and `items[*].artikelnummer`
+    - Quantity/row-count must come from the image table
+  - Provide **generic** label heuristics (since samples come later):
+    - `kundennummer`: “Kundennr / Kunden-Nr / Debitor / Konto”
+    - `kom_nr`: “Auftragsnr / Bestellnr / Order / Kommission”
+    - `bestelldatum`: “Bestelldatum / Datum”
+    - `liefertermin/wunschtermin`: “Liefertermin / Wunschliefertermin”
+    - `lieferanschrift`: “Lieferadresse / Lieferanschrift / Empfänger”
+    - `store_name/store_address/seller`: from letterhead/signature if present
 
-**Truncation rule**
-- Introduce a per-page cap to prevent huge prompts:
-  - `MAX_PDF_TEXT_CHARS_PER_PAGE` (default: `8000`)
-  - If a page’s extracted text exceeds the cap, truncate and add a pipeline warning like:
-    - `"PDF text truncated for <filename> page <n> to <cap> chars"`
+### 2) Register the new branch
+**Update:** `extraction_branches.py`
+- Add a new `ExtractionBranch` entry:
+  - `id="porta"`, `label="Porta"`, `description="Porta orders (email + PDF)…"`
+  - `system_prompt=prompts_porta.<porta system prompt>`
+  - `build_user_instructions=prompts_porta.build_user_instructions_porta`
+- Extend the `ExtractionBranch` dataclass with a new flag:
+  - `enable_item_code_verification: bool = False`
+- Set `enable_item_code_verification=True` for `porta`.
 
-**Failure rule**
-- If extraction fails for a PDF, keep processing images as today and add a warning:
-  - `"PDF text extraction failed for <filename>: <error>"`
+### 3) Add routing “Porta hint” (classifier-only, not forced)
+**Update:** `extraction_router.py`
+- In `_build_router_user_text(...)`, compute `porta_hint` using conservative checks:
+  - case-insensitive match of `\bporta\b` in:
+    - `message.sender`, `message.subject`, `email_body_preview`
+    - any `pdf_first_page_previews[*].first_page_text`
+- Include `porta_hint` in the JSON payload sent to the router LLM.
+- Update `_build_router_system_prompt()` rules to add:
+  - “If `porta_hint` is true, prefer `branch_id="porta"` with high confidence (unless a forced detector applies).”
+- Keep `momax_bg` hard-detector rule as highest priority.
+
+### 4) Implement the Porta verification pass (second extraction call)
+**Add file:** `prompts_verify_items.py`
+- Define:
+  - `VERIFY_ITEMS_SYSTEM_PROMPT` (generic, not client-branded)
+  - `build_verify_items_instructions() -> str`:
+    - Goal: verify/correct **only** item identifiers (and optionally `menge`)
+    - Input includes:
+      - The **current extracted items list** (line_no + current codes)
+      - PDF pages (image + extracted digital text)
+    - Output schema (strict JSON):
+      ```json
+      {
+        "verified_items": [
+          {
+            "line_no": 1,
+            "modellnummer": "string",
+            "artikelnummer": "string",
+            "menge": 1,
+            "confidence": 0.0,
+            "reason": "short"
+          }
+        ],
+        "warnings": []
+      }
+      ```
+    - Rules:
+      - Keep the **same number of items** as provided; don’t invent/remove rows.
+      - If uncertain for a line: echo original values with low confidence.
+
+**Update:** `openai_extract.py`
+- Add a new method, e.g. `verify_items_from_pdf(...)`:
+  - Inputs: `images`, `items_snapshot`, `page_text_by_image_name`
+  - Uses `prompts_verify_items.VERIFY_ITEMS_SYSTEM_PROMPT` + `build_verify_items_instructions()`
+  - Sends items snapshot as `input_text` before images (same image+page_text pattern as other calls)
+  - Returns raw text for `parse_json_response`.
+
+**Update:** `pipeline.py`
+- After `normalized = normalize_output(...)`, add:
+  - If `branch.enable_item_code_verification`:
+    - Select `pdf_images` only (same list already computed for detail extraction).
+    - Build a compact `items_snapshot` list from `normalized["items"]`:
+      - `line_no`, current `modellnummer.value`, `artikelnummer.value`, `menge.value`
+    - Call `extractor.verify_items_from_pdf(...)`.
+    - Parse JSON and apply corrections via a small helper function (new private helper in `pipeline.py` or a new module like `item_code_verification.py`):
+      - For each `verified_item` matched by `line_no`:
+        - If confidence >= **0.75** and value differs:
+          - Overwrite the item field as:
+            - `source="derived"`, `confidence=<verification confidence>`, `derived_from="porta_item_code_verification"`
+          - Record a warning describing the change.
+      - If any correction applied:
+        - Set `header.human_review_needed=true` with `derived_from="porta_item_code_verification"`
+- Ensure this verification step is **Porta-only** (does not change current XXXLutz/Mömax behavior).
+
+### 5) Add scaffolding for Porta samples (no real PDFs yet)
+**Add:**
+- `CLIENT CASES/porta/README.md` describing the expected sample layout:
+  - `ORDER 1/Email Body.txt`
+  - `ORDER 1/<pdf>.pdf`
+- (Optional) `.gitkeep` files so directories exist in git.
+
+### 6) Tests / verification scripts
+**Update:** `verify_routing.py`
+- Add a test that mocks router output to `{"branch_id":"porta","confidence":0.99,...}` and confirms:
+  - Routing warning shows `selected=porta` and `fallback=false`.
+
+**Add:** `verify_porta_verification.py` (unit-ish)
+- Test the “apply corrections” helper directly (no Poppler/PyMuPDF dependency):
+  - Given normalized items with known codes + verified_items with one changed code at high confidence:
+    - item value updated
+    - `human_review_needed` forced true
+    - warning added
+
+### 7) Acceptance criteria (what “done” means)
+- Router can select `porta` and pipeline runs end-to-end without exceptions.
+- Porta main extraction uses Porta prompts (no XXXLutz wording).
+- Second pass runs for Porta when PDF pages exist and:
+  - produces no changes when identical
+  - auto-corrects mismatches at confidence >= 0.75
+  - sets `human_review_needed=true` and adds a human-readable warning on any correction
+- Existing branches (`xxxlutz_default`, `momax_bg`) behavior unchanged.
 
 ---
 
-### 2) Produce a “PDF text by image name” map during image preparation
-- Change `pipeline._prepare_images(...)` to return **two values**:
-  1. `images: list[ImageInput]` (unchanged behavior)
-  2. `pdf_text_by_image_name: dict[str, str]`
-- While converting each PDF to images, also extract its page texts and attach the right page text to the right image by parsing the `-<page>` suffix in the PNG filename.
-- When `MAX_IMAGES` truncates the final `images` list, also drop any corresponding entries from `pdf_text_by_image_name` to keep them consistent.
 
----
-
-### 3) Send PDF text + image together in OpenAI request
-- Update `openai_extract.py`:
-  - Extend `OpenAIExtractor.extract_with_prompts(... )` with an optional parameter:
-    - `page_text_by_image_name: dict[str, str] | None = None`
-  - Extend `OpenAIExtractor.extract_article_details(...)` similarly.
-- In both methods, when iterating images:
-  - Add the existing “Image idx source/name …” text
-  - If `image.name` exists in `page_text_by_image_name`, add an `input_text` block like:
-    - `"PDF extracted text for this page (digital, not OCR):\n<text>"`
-  - Then add the `input_image`.
-
-This ensures the model sees **(label → digital text → image)** per PDF page.
-
----
-
-### 4) Update prompts to enforce the “verify codes only” rule
-Update these files:
-- `prompts.py`
-- `prompts_detail.py`
-- `prompts_momax_bg.py`
-
-Add a short, explicit section (near the top of user instructions) stating:
-
-1) **What the model receives**
-- For PDF pages: an image of the page **and** the page’s **extracted digital PDF text**.
-
-2) **What to use PDF text for**
-- Use PDF text **only** to confirm/correct:
-  - `items[*].modellnummer`
-  - `items[*].artikelnummer`
-  - (detail extraction) `articles[*].article_id`
-
-3) **What NOT to use PDF text for**
-- Do **not** use PDF text to determine:
-  - number of item rows
-  - `items[*].menge`  
-  These must be read from the **image table**.
-
-4) **Confusable character rule (fix the current pitfall)**
-- Replace the current “zero not O” wording with a safer rule:
-  - “Distinguish **letter `O`** vs **digit `0`**. Some codes contain both (e.g. `OJ00` starts with letter `O` and ends with two zeros). When PDF extracted text is available, copy codes from it exactly.”
-
----
-
-### 5) Wire it into the pipeline (main + detail extraction)
-- In `pipeline.process_message(...)`:
-  - Replace `images = _prepare_images(...)` with:
-    - `images, pdf_text_by_image_name = _prepare_images(...)`
-  - Pass `page_text_by_image_name=pdf_text_by_image_name` into:
-    - `extractor.extract_with_prompts(...)`
-    - `extractor.extract_article_details(...)`
-
----
-
-## Config / Env Vars
-- Add to `config.py`:
-  - `max_pdf_text_chars_per_page: int`
-  - Read from env: `MAX_PDF_TEXT_CHARS_PER_PAGE` (default `8000`)
-  - If set to `0`, skip extracting/sending PDF text (feature-off switch)
-- Document in `README.md` config table.
-
----
-
-## Testing / Acceptance Criteria (manual + repo scripts)
-1) **PDF with embedded text**
-- Run your normal pipeline on a known furnplan PDF where you’ve seen `OJ00`-style issues.
-- Confirm the model output no longer flips `OJ00` → `0J00`.
-
-2) **Scanned PDF (no embedded text)**
-- Ensure extraction still works image-only and no crashes; warnings should note missing/empty PDF text if applicable.
-
-3) **Multi-attachment mix**
-- PDF + image attachments: confirm images still sent, and only PDF-derived images get adjacent PDF text blocks.
-
-4) **Detail extraction**
-- Verify `article_id` comes out with correct characters when PDF text exists, while quantities remain image-derived.
-
----
-
-## Notes / Assumptions
-- PyMuPDF (`fitz`) is already a dependency and used elsewhere in the repo (routing), so we reuse it.
-- This improves accuracy substantially for **digitally-generated PDFs**; for scanned PDFs, the extracted text may be empty and the model will rely on vision as before.
+## Assumptions (explicit)
+- Porta still outputs the same JSON header/item schema and uses the same XML exporters.
+- No dedicated Porta-only output directory or filename conventions are required.
+- Until samples arrive, routing and prompts use conservative generic Porta identifiers (“porta” token in sender/subject/PDF text).
