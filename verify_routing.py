@@ -195,6 +195,54 @@ def test_routing_porta_hard_match_from_sender_domain() -> None:
     print("SUCCESS: sender @porta.de + PDF forces porta routing.")
 
 
+def test_routing_momax_bg_hard_match_from_aiko_subject() -> None:
+    extractor = MagicMock()
+    extractor.complete_text.return_value = json.dumps(
+        {"branch_id": "unknown", "confidence": 0.10, "reason": "unsure"}
+    )
+    extractor.extract_with_prompts.return_value = _base_extraction_response()
+
+    result = pipeline.process_message(
+        _message(subject="AIKO - ORDER", sender="orders@example.com"),
+        _config(),
+        extractor,
+    )
+    warnings = result.data.get("warnings") or []
+    assert any(
+        "Routing: selected=momax_bg" in str(w)
+        and "forced=true" in str(w)
+        and "fallback=false" in str(w)
+        for w in warnings
+    )
+    print("SUCCESS: AIKO in subject forces momax_bg routing.")
+
+
+def test_routing_momax_bg_hard_match_from_recipient_hint_in_email() -> None:
+    extractor = MagicMock()
+    extractor.complete_text.return_value = json.dumps(
+        {"branch_id": "unknown", "confidence": 0.10, "reason": "unsure"}
+    )
+    extractor.extract_with_prompts.return_value = _base_extraction_response()
+
+    result = pipeline.process_message(
+        _message(
+            subject="Order",
+            sender="orders@example.com",
+            body_text="Recipient: MOEMAX BULGARIA\nPlease process this order.",
+        ),
+        _config(),
+        extractor,
+    )
+    warnings = result.data.get("warnings") or []
+    assert any(
+        "Routing: selected=momax_bg" in str(w)
+        and "forced=true" in str(w)
+        and "fallback=false" in str(w)
+        for w in warnings
+    )
+    print("SUCCESS: Recipient: MOEMAX BULGARIA in email forces momax_bg routing.")
+
+
 if __name__ == "__main__":
     test_routing_high_confidence_branch()
     test_routing_unknown_forces_human_review()
@@ -202,3 +250,5 @@ if __name__ == "__main__":
     test_routing_porta_branch_selected()
     test_porta_hint_from_pdf_layout_markers()
     test_routing_porta_hard_match_from_sender_domain()
+    test_routing_momax_bg_hard_match_from_aiko_subject()
+    test_routing_momax_bg_hard_match_from_recipient_hint_in_email()

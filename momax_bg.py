@@ -102,7 +102,9 @@ def is_momax_bg_two_pdf_case(attachments: list[Attachment]) -> bool:
         combined = "".join(ch for ch in combined if not unicodedata.combining(ch))
 
         has_brand = re.search(r"\b(?:moe?max|aiko)(?:\s+bulgaria)?\b", combined) is not None
-        has_order = re.search(r"\b(?:moe?max|aiko)\s*-\s*order\b", combined) is not None
+        has_order = re.search(
+            r"\b(?:momax|moemax|aiko)\s*[-–—]\s*order\b", combined
+        ) is not None
         has_term = re.search(r"\bterm\s+(?:for|of)\s+delivery\b", combined) is not None
         has_kom = bool(extract_momax_bg_kom_nr(attachments))
 
