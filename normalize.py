@@ -56,8 +56,7 @@ HEADER_FIELD_ALIASES = {
     "address_number": "adressnummer",
     "addressnumber": "adressnummer",
     "address_no": "adressnummer",
-    "iln": "adressnummer",
-    "gln": "adressnummer",
+    "gln": "iln",
     "delivery_address_number": "adressnummer",
     # iln_anl aliases (delivery location ILN)
     "delivery_iln": "iln_anl",
@@ -646,6 +645,15 @@ def _enrich_from_excel(
             delivery_address = header["lieferanschrift"]["value"]
         else:
             warnings.append(f"ILN-Anl {iln_anl_val} not found in Excel mapping")
+        iln_entry = header.get("iln", {})
+        iln_current = iln_entry.get("value") if isinstance(iln_entry, dict) else iln_entry
+        if not iln_current or str(iln_current).strip() != str(iln_anl_val).strip():
+            header["iln"] = {
+                "value": iln_anl_val,
+                "source": "derived",
+                "confidence": 1.0,
+                "derived_from": "iln_anl_copy",
+            }
 
     # 2. Map ILN-Fil (Store/Branch) -> store_address and get company + filiale hint for Kundennummer disambiguation
     iln_company: Optional[str] = None
@@ -666,8 +674,12 @@ def _enrich_from_excel(
         else:
             warnings.append(f"ILN-Fil {iln_fil_val} not found in Excel mapping")
 
-    # Find ILN from ILN Excel (using delivery address if available)
-    if (not is_momax_bg) and delivery_address:
+    # Find ILN from ILN Excel (using delivery address if available) only if missing
+    iln_entry = header.get("iln")
+    iln_current = (
+        iln_entry.get("value") if isinstance(iln_entry, dict) else (str(iln_entry).strip() if iln_entry else "")
+    )
+    if (not is_momax_bg) and delivery_address and not iln_current:
         iln_val = lookup.find_iln_by_address(delivery_address)
         if iln_val:
             header["iln"] = {
