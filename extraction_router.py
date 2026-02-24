@@ -21,6 +21,11 @@ _PORTA_KUNDENKOMMISSION_RE = re.compile(
 )
 _PORTA_SUPPLIER_RE = re.compile(r"lieferantennummer", re.IGNORECASE)
 _PORTA_HOUSE_RE = re.compile(r"gln\s*haus|f[uü]r\s*haus", re.IGNORECASE)
+_MOMAX_BG_RECIPIENT_RE = re.compile(
+    r"recipient\s*:\s*moe?max\s*(?:bulgaria|aiko)\b",
+    re.IGNORECASE,
+)
+_MOMAX_BG_AIKO_RE = re.compile(r"\baiko\b", re.IGNORECASE)
 
 
 @dataclass
@@ -51,6 +56,21 @@ def _pdf_first_page_text(pdf_bytes: bytes) -> str:
             return ""
         page = doc.load_page(0)
         return page.get_text() or ""
+    finally:
+        doc.close()
+
+
+def _pdf_any_page_matches(pdf_bytes: bytes, pattern: re.Pattern[str]) -> bool:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        if doc.page_count <= 0:
+            return False
+        for page_index in range(doc.page_count):
+            page = doc.load_page(page_index)
+            page_text = _normalize_whitespace(page.get_text() or "")
+            if pattern.search(page_text):
+                return True
+        return False
     finally:
         doc.close()
 
@@ -104,6 +124,37 @@ def _has_porta_layout_markers(text: str) -> bool:
         _PORTA_SUPPLIER_RE.search(normalized) or _PORTA_HOUSE_RE.search(normalized)
     )
     return has_order_header and has_commission_header and has_supplier_or_house
+
+
+def _has_momax_bg_recipient_hint(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    return bool(_MOMAX_BG_RECIPIENT_RE.search(normalized))
+
+
+def _is_momax_bg_hard_match(message: IngestedEmail) -> bool:
+    sender_subject_text = _normalize_whitespace(
+        "\n".join([message.sender or "", message.subject or ""])
+    )
+    if _MOMAX_BG_AIKO_RE.search(sender_subject_text):
+        return True
+
+    email_hint_text = _normalize_whitespace(
+        "\n".join([message.sender or "", message.subject or "", message.body_text or ""])
+    )
+    if _has_momax_bg_recipient_hint(email_hint_text):
+        return True
+
+    for attachment in message.attachments:
+        if not _is_pdf_attachment(attachment):
+            continue
+        try:
+            if _pdf_any_page_matches(attachment.data, _MOMAX_BG_RECIPIENT_RE):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _is_porta_hard_match(message: IngestedEmail, config: Config) -> bool:
@@ -245,6 +296,8 @@ def route_message(
     extractor: OpenAIExtractor,
 ) -> RouteDecision:
     detector_results = _evaluate_hard_detectors(message.attachments)
+    if not detector_results.get("momax_bg") and _is_momax_bg_hard_match(message):
+        detector_results["momax_bg"] = True
     forced_branch_id = _forced_branch_id(detector_results)
     if not forced_branch_id and _is_porta_hard_match(message, config):
         forced_branch_id = "porta"

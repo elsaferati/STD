@@ -35,6 +35,9 @@ def _first_page_text(pdf_bytes: bytes) -> str:
 _BG_KOM_WITH_DATE_RE = re.compile(
     r"(?<!\d)(\d{3,12})/(\d{2}\.\d{2}\.\d{2})(?=[^0-9]|$)"
 )
+_BG_WRAPPED_ARTICLE_RE = re.compile(
+    r"(?:[A-Za-z0-9]+/){2,}[A-Za-z0-9]+/(\d{2,5})\s+(\d{2})(?=[^0-9]|$)"
+)
 
 
 def _extract_momax_bg_order_candidates(attachments: list[Attachment]) -> list[tuple[str, str]]:
@@ -45,6 +48,36 @@ def _extract_momax_bg_order_candidates(attachments: list[Attachment]) -> list[tu
     if not combined:
         return []
     return [(m.group(1), m.group(2)) for m in _BG_KOM_WITH_DATE_RE.finditer(combined)]
+
+
+def extract_momax_bg_wrapped_article_map(attachments: list[Attachment]) -> dict[str, str]:
+    """
+    Extract wrapped Code/Type article endings from BG PDFs.
+
+    Some PDFs split the final article segment across whitespace/newline, e.g.:
+      "SN/SN/71/SP/91/180 98"  -> base "180", full "18098"
+
+    Returns a map: base_article -> full_article.
+    """
+    pdfs = [a for a in attachments if _is_pdf_attachment(a)]
+    if not pdfs:
+        return {}
+
+    combined = "\n".join(_first_page_text(p.data) for p in pdfs).strip()
+    if not combined:
+        return {}
+
+    mapping: dict[str, str] = {}
+    for match in _BG_WRAPPED_ARTICLE_RE.finditer(combined):
+        base_article = (match.group(1) or "").strip()
+        suffix = (match.group(2) or "").strip()
+        if not (base_article.isdigit() and suffix.isdigit()):
+            continue
+        full_article = f"{base_article}{suffix}"
+        if len(full_article) <= len(base_article):
+            continue
+        mapping[base_article] = full_article
+    return mapping
 
 
 def extract_momax_bg_kom_nr(attachments: list[Attachment]) -> str:
@@ -102,7 +135,9 @@ def is_momax_bg_two_pdf_case(attachments: list[Attachment]) -> bool:
         combined = "".join(ch for ch in combined if not unicodedata.combining(ch))
 
         has_brand = re.search(r"\b(?:moe?max|aiko)(?:\s+bulgaria)?\b", combined) is not None
-        has_order = re.search(r"\b(?:moe?max|aiko)\s*-\s*order\b", combined) is not None
+        has_order = re.search(
+            r"\b(?:momax|moemax|aiko)\s*[-–—]\s*order\b", combined
+        ) is not None
         has_term = re.search(r"\bterm\s+(?:for|of)\s+delivery\b", combined) is not None
         has_kom = bool(extract_momax_bg_kom_nr(attachments))
 

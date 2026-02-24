@@ -3,7 +3,27 @@ from __future__ import annotations
 from typing import Any
 
 VERIFICATION_CONFIDENCE_THRESHOLD = 0.75
-VERIFICATION_DERIVED_FROM = "porta_item_code_verification"
+DEFAULT_VERIFICATION_PROFILE = "porta"
+DEFAULT_FIELDS_TO_APPLY = ("modellnummer", "artikelnummer", "menge")
+
+
+def _normalized_profile(verification_profile: str) -> str:
+    profile = str(verification_profile or "").strip().lower()
+    return profile or DEFAULT_VERIFICATION_PROFILE
+
+
+def _profile_label(verification_profile: str) -> str:
+    profile = _normalized_profile(verification_profile)
+    if profile == "porta":
+        return "Porta"
+    if profile == "momax_bg":
+        return "MOMAX BG"
+    return profile.replace("_", " ").upper()
+
+
+def _profile_derived_from(verification_profile: str) -> str:
+    profile = _normalized_profile(verification_profile)
+    return f"{profile}_item_code_verification"
 
 
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
@@ -73,7 +93,10 @@ def _ensure_warnings(normalized: dict[str, Any]) -> list[str]:
     return warnings
 
 
-def _set_human_review_needed(normalized: dict[str, Any]) -> None:
+def _set_human_review_needed(
+    normalized: dict[str, Any],
+    verification_profile: str,
+) -> None:
     header = normalized.get("header")
     if not isinstance(header, dict):
         header = {}
@@ -82,10 +105,11 @@ def _set_human_review_needed(normalized: dict[str, Any]) -> None:
     entry["value"] = True
     entry["source"] = "derived"
     entry["confidence"] = 1.0
-    entry["derived_from"] = VERIFICATION_DERIVED_FROM
+    entry["derived_from"] = _profile_derived_from(verification_profile)
 
 
 def _format_change_warning(
+    profile_label: str,
     line_no: int,
     field: str,
     previous: Any,
@@ -95,7 +119,7 @@ def _format_change_warning(
 ) -> str:
     reason_suffix = f"; reason={reason}" if reason else ""
     return (
-        f"Porta verification corrected item line {line_no} field {field}: "
+        f"{profile_label} verification corrected item line {line_no} field {field}: "
         f"'{previous}' -> '{updated}' (confidence={confidence:.2f}{reason_suffix})"
     )
 
@@ -104,10 +128,16 @@ def apply_item_code_verification(
     normalized: dict[str, Any],
     verification_data: dict[str, Any],
     confidence_threshold: float = VERIFICATION_CONFIDENCE_THRESHOLD,
+    verification_profile: str = DEFAULT_VERIFICATION_PROFILE,
+    fields_to_apply: tuple[str, ...] | None = None,
 ) -> bool:
     items = normalized.get("items")
     if not isinstance(items, list) or not items:
         return False
+
+    profile_label = _profile_label(verification_profile)
+    derived_from = _profile_derived_from(verification_profile)
+    fields = fields_to_apply or DEFAULT_FIELDS_TO_APPLY
 
     verified_items = verification_data.get("verified_items")
     if not isinstance(verified_items, list):
@@ -119,7 +149,7 @@ def apply_item_code_verification(
         for warning in aux_warnings:
             text = _string_value(warning)
             if text:
-                warnings.append(f"Porta verification note: {text}")
+                warnings.append(f"{profile_label} verification note: {text}")
 
     items_by_line: dict[int, dict[str, Any]] = {}
     for index, item in enumerate(items, start=1):
@@ -150,8 +180,7 @@ def apply_item_code_verification(
             continue
 
         reason = _string_value(verified.get("reason"))
-        fields_to_apply = ("modellnummer", "artikelnummer", "menge")
-        for field in fields_to_apply:
+        for field in fields:
             if field not in verified:
                 continue
             target_entry = _ensure_field(item, field)
@@ -168,9 +197,10 @@ def apply_item_code_verification(
             target_entry["value"] = updated_value
             target_entry["source"] = "derived"
             target_entry["confidence"] = confidence
-            target_entry["derived_from"] = VERIFICATION_DERIVED_FROM
+            target_entry["derived_from"] = derived_from
             warnings.append(
                 _format_change_warning(
+                    profile_label=profile_label,
                     line_no=line_no,
                     field=field,
                     previous=previous_value,
@@ -182,9 +212,10 @@ def apply_item_code_verification(
             corrections_applied += 1
 
     if corrections_applied > 0:
-        _set_human_review_needed(normalized)
+        _set_human_review_needed(normalized, verification_profile)
         warnings.append(
-            "Porta verification applied automatic item-code correction(s); human review forced."
+            f"{profile_label} verification applied automatic item-code correction(s); "
+            "human review forced."
         )
         return True
     return False

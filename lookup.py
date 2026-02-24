@@ -12,7 +12,7 @@ except ImportError:
 # Cache for the Excel data to avoid reloading on every request
 _excel_cache: Optional[pd.DataFrame] = None
 EXCEL_PATH = "Primex_Kunden_mit_Verband.xlsb"
-VERBAND_FILTER = (27750, 29000, 30000)
+VERBAND_FILTER = (27750, 29000, 30000, 32119)
 
 _iln_cache: Optional[pd.DataFrame] = None
 ILN_EXCEL_PATH = "ALL ILN LISTE_20.01.2026_LH.xlsx"

@@ -381,6 +381,16 @@ def _normalize_momax_bg_modellnummer(value: Any) -> str:
     return re.sub(r"[/\s]+", "", text)
 
 
+def _normalize_momax_bg_artikelnummer(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    # Wrapped Code/Type tails can produce "180 98"; collapse digit-only groups.
+    if re.fullmatch(r"\d+(?:\s+\d+)+", text):
+        return re.sub(r"\s+", "", text)
+    return text
+
+
 _BG_NUMERIC_ALPHA_PAIR_RE = re.compile(r"^(\d{2,12})\s+([A-Za-z][A-Za-z0-9]*)$")
 
 
@@ -421,8 +431,11 @@ def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
     artikel_entry = _ensure_field(item, "artikelnummer")
     modell_entry = _ensure_field(item, "modellnummer")
 
-    artikel_value = _clean_text(artikel_entry.get("value"))
+    artikel_value = _normalize_momax_bg_artikelnummer(artikel_entry.get("value"))
     modell_value = _clean_text(modell_entry.get("value"))
+    if artikel_value != _clean_text(artikel_entry.get("value")):
+        artikel_entry["value"] = artikel_value
+        _mark_momax_bg_code_derived(artikel_entry)
     split_result: tuple[str, str] | None = _split_momax_bg_code(artikel_value)
 
     # Only split from modellnummer when artikelnummer is missing (or duplicated).
