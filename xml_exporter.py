@@ -7,10 +7,13 @@ import re
 
 from config import Config
 
-try:
-    from prompts_detail import MANUFACTURER_ILN_MAP as _MANUFACTURER_ILN_MAP
-except Exception:
-    _MANUFACTURER_ILN_MAP = {"staud": "4039262000004"}
+_MANUFACTURER_ILN_MAP = {
+    "staud": "4039262000004",
+    "rauch": "4003769000008",
+    "nolte": "4022956000006",
+    "wimex": "4011808000003",
+    "express": "4013227000009",
+}
 
 def _get_val(data: Dict[str, Any], key: str, default: str = "") -> str:
     """Helper to safely get value from data dict structure."""
@@ -189,8 +192,7 @@ def generate_order_info_xml(data: Dict[str, Any], base_name: str, config: Config
 def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: Path) -> Path:
     """
     Generates OrderArticleInfo_TIMESTAMP.xml
-    Uses detailed article data from second extraction if available,
-    otherwise falls back to basic items array.
+    Uses optional `articles` data when present, otherwise falls back to basic `items`.
     """
     header = data.get("header", {})
     items = data.get("items", [])
@@ -199,7 +201,7 @@ def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: 
         program_info = {}
     articles = data.get("articles", [])
     
-    # Determine if we have detailed article data
+    # Use optional article-level payload when present.
     use_detailed = bool(articles)
     
     # Root with namespace
@@ -246,7 +248,7 @@ def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: 
         ET.SubElement(remarks, "Remarkline").text = f"furncloud: [{furncloud_id}]"
     
     if use_detailed:
-        # Use detailed articles from second extraction
+        # Use article-level payload when available.
         _build_lines_from_articles(prog, articles)
     else:
         # Fallback to basic items array

@@ -1,6 +1,19 @@
-﻿import json
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import sys
+import types
+
+try:
+    import fitz  # noqa: F401
+except ModuleNotFoundError:
+    fitz_stub = types.ModuleType("fitz")
+
+    def _missing_fitz(*args, **kwargs):
+        raise ModuleNotFoundError("PyMuPDF (fitz) is required for PDF text helpers.")
+
+    fitz_stub.open = _missing_fitz
+    sys.modules["fitz"] = fitz_stub
 
 import extraction_router
 import pipeline
@@ -113,7 +126,7 @@ def test_routing_porta_branch_selected() -> None:
         {"branch_id": "porta", "confidence": 0.99, "reason": "porta_hint"}
     )
     extractor.extract_with_prompts.return_value = _base_extraction_response()
-    extractor.verify_items_from_pdf.return_value = json.dumps(
+    extractor.verify_items_from_text.return_value = json.dumps(
         {"verified_items": [], "warnings": []}
     )
 
@@ -376,3 +389,4 @@ if __name__ == "__main__":
     test_routing_momax_bg_hard_match_from_aiko_subject()
     test_routing_momax_bg_hard_match_from_recipient_hint_in_email()
     test_routing_xxxlutz_default_hard_match_from_office_lutz_mail_hint()
+

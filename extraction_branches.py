@@ -36,7 +36,8 @@ BRANCHES: dict[str, ExtractionBranch] = {
         ),
         system_prompt=prompts.SYSTEM_PROMPT,
         build_user_instructions=prompts.build_user_instructions,
-        enable_detail_extraction=True,
+        enable_detail_extraction=False,
+        enable_item_code_verification=True,
         is_momax_bg=False,
     ),
     "momax_bg": ExtractionBranch(

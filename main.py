@@ -72,7 +72,6 @@ def main() -> int:
     extractor = OpenAIExtractor(
         api_key=config.openai_api_key,
         model=config.openai_model,
-        temperature=config.openai_temperature,
         max_output_tokens=config.openai_max_output_tokens,
     )
 

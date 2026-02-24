@@ -59,7 +59,7 @@ def test_momax_bg_two_pdf_special_case() -> None:
     config.output_dir = Path("./tmp_momax_bg_verify")
     config.output_dir.mkdir(exist_ok=True)
 
-    # Force at least one PDF image so the "detail extraction" block would run unless guarded.
+    # Force at least one PDF image so extraction continues through PDF-related post-processing.
     original_prepare_images = pipeline._prepare_images
     pipeline._prepare_images = lambda attachments, config, warnings: [
         ImageInput(name="dummy_pdf_page.png", source="pdf", data_url="data:image/png;base64,")
@@ -69,9 +69,6 @@ def test_momax_bg_two_pdf_special_case() -> None:
         extractor = MagicMock()
         extractor.complete_text.return_value = json.dumps(
             {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
-        )
-        extractor.extract_article_details.side_effect = RuntimeError(
-            "BG case must skip detail extraction"
         )
 
         mock_llm_json = {
@@ -127,9 +124,8 @@ def test_momax_bg_two_pdf_special_case() -> None:
         assert all("kom_name" not in w for w in missing_header_warnings)
 
         extractor.extract_with_prompts.assert_called_once()
-        extractor.extract_article_details.assert_not_called()
 
-        print("SUCCESS: Mömax BG two-PDF special-case path used and detail extraction skipped.")
+        print("SUCCESS: Mömax BG two-PDF special-case path used.")
     finally:
         pipeline._prepare_images = original_prepare_images
 
@@ -249,7 +245,7 @@ def test_momax_bg_no_match_does_not_fallback_to_standard_lookup() -> None:
     print("SUCCESS: momax_bg no-match path does not fallback to standard lookup.")
 
 
-def test_non_bg_regression_calls_standard_extract() -> None:
+def test_non_bg_regression_uses_single_extraction_path() -> None:
     pdf = _make_pdf_bytes("Some other PDF content")
     message = IngestedEmail(
         message_id="test_non_bg",
@@ -287,13 +283,11 @@ def test_non_bg_regression_calls_standard_extract() -> None:
                 "status": "ok",
             }
         )
-        extractor.extract_article_details.return_value = json.dumps({})
 
         pipeline.process_message(message, config, extractor)
         extractor.extract_with_prompts.assert_called()
-        extractor.extract_article_details.assert_called()
         extractor._create_response.assert_not_called()
-        print("SUCCESS: Non-BG case uses standard branch extraction path.")
+        print("SUCCESS: Non-BG case uses standard single extraction path.")
     finally:
         pipeline._prepare_images = original_prepare_images
 
@@ -367,9 +361,6 @@ def test_aiko_bg_pipeline_special_case_and_kom_recovery() -> None:
         extractor.complete_text.return_value = json.dumps(
             {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
         )
-        extractor.extract_article_details.side_effect = RuntimeError(
-            "AIKO BG case must skip detail extraction"
-        )
         extractor.extract_with_prompts.return_value = json.dumps(
             {
                 "message_id": "test_aiko_bg_special",
@@ -415,7 +406,6 @@ def test_aiko_bg_pipeline_special_case_and_kom_recovery() -> None:
         assert items[0].get("modellnummer", {}).get("value") == "OJOO"
 
         extractor.extract_with_prompts.assert_called_once()
-        extractor.extract_article_details.assert_not_called()
         print("SUCCESS: AIKO BG case uses special path with kom/date recovery and item split.")
     finally:
         pipeline._prepare_images = original_prepare_images
@@ -459,9 +449,6 @@ def test_momax_bg_bestelldatum_fallback_from_pdf_suffix() -> None:
         extractor = MagicMock()
         extractor.complete_text.return_value = json.dumps(
             {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
-        )
-        extractor.extract_article_details.side_effect = RuntimeError(
-            "BG case must skip detail extraction"
         )
         extractor.extract_with_prompts.return_value = json.dumps(
             {
@@ -621,9 +608,6 @@ def test_momax_bg_no_raw_kdnr_fallback_from_pdf() -> None:
         extractor = MagicMock()
         extractor.complete_text.return_value = json.dumps(
             {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
-        )
-        extractor.extract_article_details.side_effect = RuntimeError(
-            "BG case must skip detail extraction"
         )
         extractor.extract_with_prompts.return_value = json.dumps(
             {
@@ -893,9 +877,10 @@ def test_momax_bg_pipeline_strict_after_verifier_conflict() -> None:
     config = Config.from_env()
 
     original_prepare_images = pipeline._prepare_images
-    pipeline._prepare_images = lambda attachments, config, warnings: [
-        ImageInput(name="dummy_pdf_page.png", source="pdf", data_url="data:image/png;base64,")
-    ]
+    pipeline._prepare_images = lambda attachments, config, warnings: (
+        [ImageInput(name="dummy_pdf_page.png", source="pdf", data_url="data:image/png;base64,")],
+        {"dummy_pdf_page.png": "Code/Type Quantity\n60812/XP/CQSN/91 1"},
+    )
 
     try:
         extractor = MagicMock()
@@ -933,7 +918,7 @@ def test_momax_bg_pipeline_strict_after_verifier_conflict() -> None:
                 "errors": [],
             }
         )
-        extractor.verify_items_from_pdf.return_value = json.dumps(
+        extractor.verify_items_from_text.return_value = json.dumps(
             {
                 "verified_items": [
                     {
@@ -971,7 +956,7 @@ if __name__ == "__main__":
     test_momax_bg_bestelldatum_fallback_from_pdf_suffix()
     test_momax_bg_modellnummer_compaction()
     test_aiko_bg_item_whitespace_pair_normalization()
-    test_non_bg_regression_calls_standard_extract()
+    test_non_bg_regression_uses_single_extraction_path()
     test_momax_bg_no_raw_kdnr_fallback_from_pdf()
     test_momax_bg_wrapped_article_map_extracts_suffix()
     test_momax_bg_pipeline_corrects_wrapped_article_suffix()

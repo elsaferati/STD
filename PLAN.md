@@ -1,50 +1,118 @@
-# MOMAX BG Item-Code Repair And Backfill
+## Remove Detail Extraction + Make Second-Pass Verification Text-Only
 
-## Summary
-1. Confirmed the agent output is wrong for your five scanned PDFs, and the errors are persisted in output JSON/XML.
-2. Confirmed root cause is rule logic, not just UI rendering: current MOMAX BG logic assumes slash-last-segment is always `artikelnummer` and lacks strict `artikelnummer` validation, causing swaps and bad XB/XP placement.
-3. Implement a deterministic MOMAX BG strict code-correction layer, then backfill existing output files and regenerate XML.
+### Summary
+Implement three coordinated changes:
+1. Remove Detailed extraction from the pipeline entirely.
+2. Enable Second pass item verification for `xxxlutz_default`.
+3. Change Second pass item verification to use only digital PDF text (no images), comparing text evidence against first-pass extracted item fields to detect/correct character mismatches.
 
-## Confirmed Wrong Behavior
-1. `3386460` (Ticket 1): `artikelnummer=74430XB`, `modellnummer=CQ9191` should become `artikelnummer=74430`, `modellnummer=CQ9191XB`. Evidence: [CAJgTRbVy...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbVyDFUFHqWW1XEQa_2rhQtYuybSJ2i-w8-5XPhS9jEc0Q_mail.gmail.com.json:115).
-2. `3424290` (Ticket 2): `artikelnummer=CQ1616`, `modellnummer=42821KXB` should become `artikelnummer=42821K`, `modellnummer=CQ1616XB`. Evidence: [CAJgTRbUq3...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbUq3Vqx88_AkQWrJLEW4QbK7Txu4U-O__B6atsaZR_yOg_mail.gmail.com.json:115).
-3. `3413460` (Ticket 4): `artikelnummer=CQ9191`, `modellnummer=74405XB` should become `artikelnummer=74405`, `modellnummer=CQ9191XB`. Evidence: [CAJgTRbUpm...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbUpmXe_8q6Vyu43LGxFXGRC3O5MVi0N5smN7qo_stnPYw_mail.gmail.com.json:115).
-4. `3413160` (Ticket 5): `artikelnummer=XP`, `modellnummer=CQ222206363` should become `artikelnummer=06363`, `modellnummer=CQ2222XP`. Evidence: [CAJgTRbVbJ...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbVbJFpHCszfvVRq0VQrKfmquHZ5ohCfdLt3RYSZROCaZA_mail.gmail.com.json:115).
-5. `3402830` (Ticket 6): outputs like `artikelnummer=91`, `modellnummer=60812XPCQSN` should become `artikelnummer=60812`, `modellnummer=CQSN91XP`. Evidence: [CAJgTRbX_0...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbX_0UXFw1LUVkPJ5NKtzHn1AAW8-4-LMuf8SB_eDUvReg_mail.gmail.com.json:115).
-6. Current rules enforcing problematic behavior are in [prompts_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/prompts_momax_bg.py:83), [prompts_verify_items.py](c:/Users/Admin/Documents/GitHub/STD/prompts_verify_items.py:87), and [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py:402).
+Selected behavior for missing digital text: **skip second-pass verification and append a warning**.
 
-## Important Interface/Type Changes
-1. Add exported helper in [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py): `apply_momax_bg_strict_item_code_corrections(data: dict[str, Any]) -> int` returning number of corrected lines.
-2. Add new `derived_from` values on corrected fields: `momax_bg_strict_code_parser` and `momax_bg_suffix_relocation`.
-3. Add new maintenance CLI script [backfill_momax_bg_codes.py](c:/Users/Admin/Documents/GitHub/STD/backfill_momax_bg_codes.py) with args: `dir`, `--dry-run`, `--only-id`.
+### Scope and Intent
+- In scope:
+  - Backend extraction branch config and pipeline flow.
+  - Verifier prompt/input contract and extractor method signatures.
+  - Tests for new gating and text-only verification behavior.
+- Out of scope:
+  - Changing first-pass extraction behavior.
+  - Changing correction application thresholds or human-review forcing logic (unless required by failing tests).
 
-## Implementation Plan
-1. In [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py), enforce strict `artikelnummer` format for MOMAX BG: `^\d{5}[A-Z]?$` (leading zero allowed), and forbid `XB/XP` as standalone article.
-2. Add deterministic correction rules in this order for each MOMAX BG item:
-3. Rule A: If `artikelnummer` is `^\d{5}(XB|XP)$`, split suffix to `modellnummer` tail.
-4. Rule B: If `artikelnummer` looks model-like (`CQ*`, `OJ*`, `0J*`) and `modellnummer` looks article-like plus optional `XB/XP`, swap and relocate suffix.
-5. Rule C: If `artikelnummer` is only `XB|XP` and `modellnummer` ends with 5-digit article tail, extract tail as article and keep suffix on model.
-6. Rule D: If `artikelnummer` is short numeric (like `91`) and `modellnummer` starts with 5-digit article then `XB|XP`, rebuild as article=leading 5-digit token, model=`alpha_parts + old_short_numeric + suffix`.
-7. Rule E: For slash tokens, pick article token by strict article regex, then build model as `alpha tokens + numeric tail tokens + XP/XB suffix` (selected policy).
-8. Keep existing MOMAX BG corrections (wrapped article merge, slash compaction) but execute strict correction after them and again after item-verification apply in [pipeline.py](c:/Users/Admin/Documents/GitHub/STD/pipeline.py:446) to guarantee final consistency.
-9. Update MOMAX BG prompt text in [prompts_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/prompts_momax_bg.py) and verifier prompt in [prompts_verify_items.py](c:/Users/Admin/Documents/GitHub/STD/prompts_verify_items.py) to match strict article/model constraints and XP/XB behavior.
+### Decision-Complete Implementation Plan
 
-## Test Cases And Scenarios
-1. Add regression tests in [verify_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/verify_momax_bg.py) for the five exact ticket patterns above.
-2. Add test for slash reorder behavior: `60812/XP/CQSN/91 -> artikel=60812, modell=CQSN91XP`.
-3. Add test for `06363` leading-zero preservation.
-4. Add test ensuring existing wrapped-article correction (`180 98 -> 18098`) still passes.
-5. Add pipeline-level test ensuring strict correction remains true even when verifier returns conflicting fields with confidence >= threshold.
-6. Run full MOMAX BG test suite and confirm no regressions in existing cases.
+1. **Disable and remove Detailed extraction flow**
+- File: `extraction_branches.py`
+  - Set `xxxlutz_default.enable_detail_extraction=False`.
+- File: `pipeline.py`
+  - Remove second extraction block currently labeled `SECOND EXTRACTION CALL`.
+  - Remove helper `_merge_article_details(...)` and its callsite.
+  - Remove any now-unused imports/variables tied only to detail extraction.
+- File: `openai_extract.py`
+  - Remove `extract_article_details(...)` method.
+- File: `prompts_detail.py`
+  - Remove module and references if no longer used anywhere.
+- File: any docs/comments referencing detail extraction
+  - Update to reflect complete removal.
 
-## Backfill And Rollout
-1. Implement [backfill_momax_bg_codes.py](c:/Users/Admin/Documents/GitHub/STD/backfill_momax_bg_codes.py) to process existing `output/*.json`.
-2. Detect MOMAX BG records via routing warning or `kom_name.derived_from == momax_bg_policy`.
-3. Apply strict corrections, refresh warnings/status, write JSON only if changed, regenerate XML with current exporter.
-4. Run first in `--dry-run`, then apply to all affected orders including both `3402830` outputs (`1000006` and `1000010`).
+2. **Enable second-pass item verification for `xxxlutz_default`**
+- File: `extraction_branches.py`
+  - Set `xxxlutz_default.enable_item_code_verification=True`.
+- Keep existing verification flags for `porta`, `braun`, `momax_bg` unless explicitly disabled later.
 
-## Assumptions And Defaults Chosen
-1. Scope is global for all MOMAX BG orders, not only these five.
-2. Slash model build policy is `alpha+numeric then XP/XB suffix`.
-3. Existing bad outputs will be auto-backfilled and XML regenerated.
-4. Ticket 1 canonical correction is `artikelnummer=74430`, `modellnummer=CQ9191XB`.
+3. **Convert second-pass verification to text-only**
+- File: `pipeline.py`
+  - Change verification gate from `branch.enable_item_code_verification and pdf_images` to:
+    - branch verification enabled
+    - non-empty `items_snapshot`
+    - at least one usable digital-text page exists in `pdf_text_by_image_name`
+  - Build a text-only payload object from `pdf_text_by_image_name` (ordered by page/index/name for determinism).
+  - If no usable digital text:
+    - skip verifier call
+    - append warning: `<branch label> item verification skipped: no digital PDF text available.`
+- File: `openai_extract.py`
+  - Replace/rename verifier entrypoint:
+    - from `verify_items_from_pdf(images, items_snapshot, page_text_by_image_name, verification_profile)`
+    - to text-only API, e.g. `verify_items_from_text(items_snapshot, page_text_by_image_name, verification_profile)`
+  - Build request content using:
+    - instructions text
+    - serialized `items_snapshot`
+    - per-page digital text blocks
+  - Do **not** append any `input_image`.
+- File: `prompts_verify_items.py`
+  - Update global and profile-specific prompt wording from “PDF pages (image + digital text)” to “digital PDF text only”.
+  - Add explicit rule: verify/correct only from provided text + existing snapshot; do not infer from image evidence.
+  - Keep profile-specific code rules (Porta/MOMAX/Braun) unchanged unless contradictory.
+
+4. **Keep correction application behavior stable**
+- File: `item_code_verification.py`
+  - No logic changes expected.
+  - Continue applying high-confidence corrections by `line_no`.
+  - Continue forcing `human_review_needed=true` when corrections are applied.
+
+5. **Cleanup/refactor for clarity**
+- Rename any misleading symbols/comments mentioning “from_pdf/images” where now text-only (minimally invasive but clear).
+- Ensure no dead code remains tied to detail extraction.
+
+### Public APIs / Interfaces / Types Changes
+- Internal extractor interface change:
+  - Old: `verify_items_from_pdf(images, items_snapshot, page_text_by_image_name, verification_profile)`
+  - New: `verify_items_from_text(items_snapshot, page_text_by_image_name, verification_profile)` (or equivalent text-only signature).
+- Pipeline behavior contract:
+  - Verification no longer requires or sends images.
+  - Verification skipped when no digital PDF text exists (non-fatal warning).
+
+### Test Plan
+
+1. **Branch config tests**
+- `xxxlutz_default` has:
+  - `enable_detail_extraction == False`
+  - `enable_item_code_verification == True`
+
+2. **Pipeline verification gating**
+- Case A: digital text present + items present -> verifier called.
+- Case B: no digital text -> verifier not called, skip warning added.
+- Case C: empty items snapshot -> verifier not called.
+
+3. **Verifier payload tests**
+- Assert no `input_image` parts are included for second-pass verification requests.
+- Assert per-page text is present and item snapshot included.
+
+4. **Behavior regression tests**
+- High-confidence correction still updates fields and sets `human_review_needed=true`.
+- Low-confidence outputs remain no-op.
+- MOMAX special post-processing still runs after verification.
+
+5. **Removal regression**
+- No code path invokes detail extraction.
+- `program/articles` from former detail pass are not added anymore.
+
+### Acceptance Criteria
+- No detailed extraction call exists in runtime pipeline.
+- `xxxlutz_default` runs second-pass verification when digital PDF text is available.
+- Second-pass verification sends only text (no page images).
+- Orders with scanned/no-text PDFs do not fail; verification is skipped with explicit warning.
+- Existing correction semantics (confidence threshold, warnings, human review forcing) remain intact.
+
+### Assumptions and Defaults
+- “Change Second pass item verification to only text” applies to all verification profiles (`xxxlutz_default`, `porta`, `braun`, `momax_bg`), not only `xxxlutz_default`.
+- Missing digital text handling is the chosen default: **skip + warning**.
+- No requirement to preserve former detail-extraction outputs (`program`, `articles`) in final normalized payload.

@@ -6,7 +6,7 @@ An automated order extraction system specifically designed for **XXLUTZ/MÖMAX**
 
 ### Format 1: Standard XXLUTZ Orders (Email + PDF)
 - Email body with structured order data
-- Optional furnplan PDF/TIF attachment with detailed article specifications
+- Optional furnplan PDF/TIF attachment with article/item references
 - Common fields: KDNR, ILN codes, Komm (commission), Liefertermin (KW format)
 - Article codes like `CQ9606XA-60951` split into modellnummer + artikelnummer
 
@@ -77,7 +77,7 @@ Complete extracted data including all fields, confidence scores, and source info
 
 ### XML Output (Two files per order)
 - `OrderInfo_[name].xml` - Order header information (customer, delivery, store details)
-- `OrderArticleInfo_[name].xml` - Detailed article specifications with dimensions and configurations
+- `OrderArticleInfo_[name].xml` - Article lines (model/article IDs and quantities)
 
 ## Web Dashboard
 
@@ -143,7 +143,7 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 | `SOURCE_PRIORITY` | `pdf,email,image` | Trust priority when data conflicts |
 | `PDF_DPI` | `300` | Resolution for PDF to image conversion |
 | `MAX_PDF_PAGES` | `10` | Maximum PDF pages to process |
-| `MAX_PDF_TEXT_CHARS_PER_PAGE` | `8000` | Max extracted PDF text chars per page sent with each PDF image (`0` disables PDF text input) |
+| `MAX_PDF_TEXT_CHARS_PER_PAGE` | `8000` | Max extracted digital PDF text chars per page (`0` disables PDF text extraction) |
 | `EMAIL_POLL_SECONDS` | `30` | Polling interval (0 for single run) |
 | `EMAIL_ONLY_AFTER_START` | `true` | Only process new emails |
 | `EMAIL_MARK_SEEN` | `false` | Mark processed emails as read/deleted (prevents re-processing) |
@@ -168,7 +168,7 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 3. Register the branch in `extraction_branches.py` with:
    - `id="<client_id>"`
    - `description` including identifying routing signals
-   - prompt function reference and branch flags (`enable_detail_extraction`, `is_momax_bg`, optional `hard_detector`)
+   - prompt function reference and branch flags (`enable_item_code_verification`, `is_momax_bg`, optional `hard_detector`)
 4. Add representative sample cases under a client folder (for example `CLIENT CASES/<client_id>/`).
 5. Run verification scripts and manual pipeline checks on those samples.
 
@@ -191,7 +191,6 @@ The system uses Excel files for customer/ILN lookup:
 ├── pipeline.py          # Main processing pipeline
 ├── openai_extract.py    # OpenAI API integration
 ├── prompts.py           # XXLUTZ extraction prompts
-├── prompts_detail.py    # Furnplan detail extraction prompts
 ├── normalize.py         # Data normalization and field mapping
 ├── lookup.py            # Excel customer/ILN lookup
 ├── delivery_logic.py    # Delivery week calculation

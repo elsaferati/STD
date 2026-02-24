@@ -271,22 +271,6 @@ def _prepare_images(
     return images, pdf_text_by_image_name
 
 
-def _merge_article_details(base_data: dict[str, Any], detail_data: dict[str, Any]) -> dict[str, Any]:
-    """
-    Merge detailed article info from second extraction into the base extraction.
-    Adds program info and detailed article data (full IDs, descriptions, dimensions, remarks).
-    """
-    # Add program info if available
-    if "program" in detail_data and detail_data["program"]:
-        base_data["program"] = detail_data["program"]
-    
-    # Add articles array if available (used by xml_exporter for detailed output)
-    if "articles" in detail_data and detail_data["articles"]:
-        base_data["articles"] = detail_data["articles"]
-    
-    return base_data
-
-
 def _extract_ticket_number(subject: str) -> str:
     if not subject:
         return ""
@@ -327,6 +311,28 @@ def _build_items_snapshot(items: Any) -> list[dict[str, Any]]:
     return snapshot
 
 
+def _ordered_verification_page_texts(
+    page_text_by_image_name: dict[str, str],
+) -> dict[str, str]:
+    ordered_pages: list[tuple[str, str, int, str]] = []
+    for image_name, page_text in page_text_by_image_name.items():
+        text = str(page_text or "")
+        if not text.strip():
+            continue
+        page_number = _extract_page_number_from_image_name(image_name)
+        ordered_pages.append(
+            (
+                image_name,
+                text,
+                page_number if page_number is not None else 10**9,
+                image_name,
+            )
+        )
+
+    ordered_pages.sort(key=lambda item: (item[2], item[3]))
+    return {image_name: text for image_name, text, _, _ in ordered_pages}
+
+
 def process_message(
     message: IngestedEmail, config: Config, extractor: OpenAIExtractor
 ) -> ProcessedResult:
@@ -348,7 +354,6 @@ def process_message(
     else:
         images = prepared_images
         pdf_text_by_image_name = {}
-    pdf_images = [img for img in images if img.source == "pdf"]
     user_instructions = branch.build_user_instructions(config.source_priority)
 
     max_retries = 3
@@ -449,37 +454,46 @@ def process_message(
                         )
         apply_momax_bg_strict_item_code_corrections(normalized)
 
-    if branch.enable_item_code_verification and pdf_images:
+    if branch.enable_item_code_verification:
         items_snapshot = _build_items_snapshot(normalized.get("items"))
         if items_snapshot:
-            verification_profile = branch.id
-            fields_to_apply = (
-                ("modellnummer", "artikelnummer")
-                if branch.is_momax_bg
-                else None
+            verification_page_text_by_name = _ordered_verification_page_texts(
+                pdf_text_by_image_name
             )
-            try:
-                verification_text = extractor.verify_items_from_pdf(
-                    images=pdf_images,
-                    items_snapshot=items_snapshot,
-                    page_text_by_image_name=pdf_text_by_image_name,
-                    verification_profile=verification_profile,
-                )
-                verification_data = parse_json_response(verification_text)
-                apply_item_code_verification(
-                    normalized,
-                    verification_data,
-                    verification_profile=verification_profile,
-                    fields_to_apply=fields_to_apply,
-                )
-                if branch.is_momax_bg:
-                    apply_momax_bg_strict_item_code_corrections(normalized)
-            except Exception as exc:
+            if not verification_page_text_by_name:
                 normalized_warnings = normalized.get("warnings")
                 if isinstance(normalized_warnings, list):
                     normalized_warnings.append(
-                        f"{branch.label} item verification failed (non-critical): {exc}"
+                        f"{branch.label} item verification skipped: no digital PDF text available."
                     )
+            else:
+                verification_profile = branch.id
+                fields_to_apply = (
+                    ("modellnummer", "artikelnummer")
+                    if branch.is_momax_bg
+                    else None
+                )
+                try:
+                    verification_text = extractor.verify_items_from_text(
+                        items_snapshot=items_snapshot,
+                        page_text_by_image_name=verification_page_text_by_name,
+                        verification_profile=verification_profile,
+                    )
+                    verification_data = parse_json_response(verification_text)
+                    apply_item_code_verification(
+                        normalized,
+                        verification_data,
+                        verification_profile=verification_profile,
+                        fields_to_apply=fields_to_apply,
+                    )
+                    if branch.is_momax_bg:
+                        apply_momax_bg_strict_item_code_corrections(normalized)
+                except Exception as exc:
+                    normalized_warnings = normalized.get("warnings")
+                    if isinstance(normalized_warnings, list):
+                        normalized_warnings.append(
+                            f"{branch.label} item verification failed (non-critical): {exc}"
+                        )
 
     if route.used_fallback:
         header = normalized.get("header")
@@ -642,33 +656,6 @@ def process_message(
         if isinstance(w, list):
             w.append(f"Auto-reply email failed: {exc}")
         print(f"Auto-reply email failed for {message.message_id}: {exc}")
-
-    # SECOND EXTRACTION CALL: Extract detailed article info (primarily from furnplan PDFs).
-    # Fallback: if the order is a scanned/multipage TIF, run detail extraction on those images too.
-    has_pdf_attachment = any(_is_pdf(att) for att in message.attachments)
-    has_multipage_tif = any(_is_multipage_tif(att.filename, att.content_type) for att in message.attachments)
-    detail_images = pdf_images if pdf_images else ([img for img in images if img.source == "image"] if has_multipage_tif else [])
-    if branch.enable_detail_extraction and detail_images and (has_pdf_attachment or has_multipage_tif):
-        label = "PDF page(s)" if pdf_images else "image page(s)"
-        print(f"Running detail extraction on {len(detail_images)} {label}...")
-        try:
-            detail_page_text_by_image_name = {
-                image.name: pdf_text_by_image_name[image.name]
-                for image in detail_images
-                if image.name in pdf_text_by_image_name
-            }
-            detail_response = extractor.extract_article_details(
-                detail_images,
-                page_text_by_image_name=detail_page_text_by_image_name,
-            )
-            detail_data = parse_json_response(detail_response)
-            normalized = _merge_article_details(normalized, detail_data)
-            refresh_missing_warnings(normalized)
-            print(f"Detail extraction successful: {len(detail_data.get('articles', []))} articles found")
-        except Exception as exc:
-            # Detail extraction failure should not break the order
-            warnings.append(f"Detail extraction failed (non-critical): {exc}")
-            print(f"Detail extraction failed: {exc}")
 
     output_name = _safe_name(message.message_id)
 

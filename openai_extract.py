@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
+import re
 from typing import Any
 
 from openai import OpenAI
 
 from prompts import SYSTEM_PROMPT, build_user_instructions
-from prompts_detail import DETAIL_SYSTEM_PROMPT, build_detail_user_instructions
 from prompts_verify_items import (
     VERIFY_ITEMS_SYSTEM_PROMPT,
     build_verify_items_instructions,
@@ -19,6 +20,17 @@ class ImageInput:
     name: str
     source: str
     data_url: str
+
+
+def _verification_page_sort_key(page_name: str) -> tuple[int, str]:
+    stem = Path(page_name or "").stem
+    match = re.search(r"-(\d+)$", stem)
+    if match:
+        try:
+            return int(match.group(1)), page_name or ""
+        except ValueError:
+            pass
+    return (10**9), page_name or ""
 
 
 def _response_to_text(response: Any) -> str:
@@ -68,14 +80,11 @@ def _response_to_text(response: Any) -> str:
 
 
 class OpenAIExtractor:
-    def __init__(self, api_key: str, model: str, temperature: float, max_output_tokens: int) -> None:
+    def __init__(self, api_key: str, model: str, max_output_tokens: int) -> None:
         self.client = OpenAI(api_key=api_key)
         self.model = model
-        self.temperature = temperature
         self.max_output_tokens = max_output_tokens
         self._supports_response_format = True
-        self._supports_temperature_responses = True
-        self._supports_temperature_chat = True
 
     def extract(
         self,
@@ -156,52 +165,8 @@ class OpenAIExtractor:
 
         return _response_to_text(response)
 
-    def extract_article_details(
+    def verify_items_from_text(
         self,
-        images: list[ImageInput],
-        page_text_by_image_name: dict[str, str] | None = None,
-    ) -> str:
-        """
-        Second extraction call for detailed article info from furnplan PDFs.
-        Extracts manufacturer info, full article IDs, descriptions, dimensions,
-        hierarchical positions, and configuration remarks.
-        """
-        user_instructions = build_detail_user_instructions()
-        content = [
-            {"type": "input_text", "text": user_instructions},
-        ]
-
-        for idx, image in enumerate(images, start=1):
-            content.append(
-                {
-                    "type": "input_text",
-                    "text": f"Furnplan page {idx}: {image.name}",
-                }
-            )
-            page_text = (
-                page_text_by_image_name.get(image.name, "")
-                if page_text_by_image_name
-                else ""
-            )
-            if page_text:
-                content.append(
-                    {
-                        "type": "input_text",
-                        "text": (
-                            "PDF extracted text for this page (digital, not OCR):\n"
-                            f"{page_text}"
-                        ),
-                    }
-                )
-            content.append({"type": "input_image", "image_url": image.data_url})
-
-        response = self._create_response_with_prompt(content, DETAIL_SYSTEM_PROMPT)
-
-        return _response_to_text(response)
-
-    def verify_items_from_pdf(
-        self,
-        images: list[ImageInput],
         items_snapshot: list[dict[str, Any]],
         page_text_by_image_name: dict[str, str] | None = None,
         verification_profile: str = "porta",
@@ -218,29 +183,30 @@ class OpenAIExtractor:
             },
         ]
 
-        for idx, image in enumerate(images, start=1):
+        usable_page_texts: list[tuple[str, str]] = []
+        if page_text_by_image_name:
+            for page_name, page_text in page_text_by_image_name.items():
+                text = str(page_text or "")
+                if text.strip():
+                    usable_page_texts.append((page_name, text))
+
+        usable_page_texts.sort(key=lambda item: _verification_page_sort_key(item[0]))
+        for idx, (page_name, page_text) in enumerate(usable_page_texts, start=1):
             content.append(
                 {
                     "type": "input_text",
-                    "text": f"PDF page {idx}: {image.name}",
+                    "text": f"PDF text page {idx}: {page_name}",
                 }
             )
-            page_text = (
-                page_text_by_image_name.get(image.name, "")
-                if page_text_by_image_name
-                else ""
+            content.append(
+                {
+                    "type": "input_text",
+                    "text": (
+                        "Digital PDF text for this page (no image evidence is provided):\n"
+                        f"{page_text}"
+                    ),
+                }
             )
-            if page_text:
-                content.append(
-                    {
-                        "type": "input_text",
-                        "text": (
-                            "PDF extracted text for this page (digital, not OCR):\n"
-                            f"{page_text}"
-                        ),
-                    }
-                )
-            content.append({"type": "input_image", "image_url": image.data_url})
 
         response = self._create_response_with_prompt(content, VERIFY_ITEMS_SYSTEM_PROMPT)
         return _response_to_text(response)
@@ -284,24 +250,10 @@ class OpenAIExtractor:
             ],
             "max_tokens": self.max_output_tokens,
         }
-        if self._supports_temperature_chat:
-            params["temperature"] = self.temperature
 
         try:
             return self.client.chat.completions.create(**params)
-        except TypeError as exc:
-            message = str(exc)
-            if self._supports_temperature_chat and self._is_unsupported_temperature_error(message):
-                self._supports_temperature_chat = False
-                params.pop("temperature", None)
-                return self.client.chat.completions.create(**params)
-            raise
-        except Exception as exc:
-            message = str(exc)
-            if self._supports_temperature_chat and self._is_unsupported_temperature_error(message):
-                self._supports_temperature_chat = False
-                params.pop("temperature", None)
-                return self.client.chat.completions.create(**params)
+        except Exception:
             raise
 
     def _responses_create_with_prompt(self, content: list[dict[str, Any]], system_prompt: str) -> Any:
@@ -314,8 +266,6 @@ class OpenAIExtractor:
             ],
             "max_output_tokens": self.max_output_tokens,
         }
-        if self._supports_temperature_responses:
-            params["temperature"] = self.temperature
         if self._supports_response_format:
             params["response_format"] = {"type": "json_object"}
 
@@ -327,10 +277,6 @@ class OpenAIExtractor:
                 self._supports_response_format = False
                 params.pop("response_format", None)
                 return self.client.responses.create(**params)
-            if self._supports_temperature_responses and self._is_unsupported_temperature_error(message):
-                self._supports_temperature_responses = False
-                params.pop("temperature", None)
-                return self.client.responses.create(**params)
             raise
         except Exception as exc:
             message = str(exc)
@@ -339,18 +285,9 @@ class OpenAIExtractor:
                 self._supports_response_format = False
                 params.pop("response_format", None)
                 retried = True
-            if self._supports_temperature_responses and self._is_unsupported_temperature_error(message):
-                self._supports_temperature_responses = False
-                params.pop("temperature", None)
-                retried = True
             if retried:
                 return self.client.responses.create(**params)
             raise
-
-    @staticmethod
-    def _is_unsupported_temperature_error(message: str) -> bool:
-        lowered = (message or "").lower()
-        return ("temperature" in lowered) and ("unsupported parameter" in lowered or "not supported" in lowered)
 
 
 def parse_json_response(text: str) -> dict[str, Any]:
