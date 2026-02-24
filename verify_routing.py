@@ -328,6 +328,41 @@ def test_routing_momax_bg_hard_match_from_recipient_hint_in_email() -> None:
     print("SUCCESS: Recipient: MOEMAX BULGARIA in email forces momax_bg routing.")
 
 
+def test_routing_xxxlutz_default_hard_match_from_office_lutz_mail_hint() -> None:
+    extractor = MagicMock()
+    extractor.complete_text.side_effect = AssertionError(
+        "Router classifier should not run for xxxlutz_default mail hint."
+    )
+    extractor.extract_with_prompts.return_value = _base_extraction_response()
+
+    result = pipeline.process_message(
+        _message(
+            subject="Order",
+            sender="orders@example.com",
+            body_text=(
+                "Hello,\n"
+                "Please process.\n"
+                "Mail:OFFICE-LUTZ@LUTZ.AT\n"
+                "Thanks."
+            ),
+        ),
+        _config(),
+        extractor,
+    )
+    warnings = result.data.get("warnings") or []
+
+    assert any(
+        "Routing: selected=xxxlutz_default" in str(w)
+        and "forced=true" in str(w)
+        and "fallback=false" in str(w)
+        for w in warnings
+    )
+    extractor.complete_text.assert_not_called()
+    print(
+        "SUCCESS: Mail:OFFICE-LUTZ@LUTZ.AT in body forces xxxlutz_default and skips classifier."
+    )
+
+
 if __name__ == "__main__":
     test_routing_high_confidence_branch()
     test_routing_unknown_forces_human_review()
@@ -340,3 +375,4 @@ if __name__ == "__main__":
     test_routing_braun_hard_match_forces_branch()
     test_routing_momax_bg_hard_match_from_aiko_subject()
     test_routing_momax_bg_hard_match_from_recipient_hint_in_email()
+    test_routing_xxxlutz_default_hard_match_from_office_lutz_mail_hint()

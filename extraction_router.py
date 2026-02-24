@@ -32,6 +32,10 @@ _MOMAX_BG_RECIPIENT_RE = re.compile(
     re.IGNORECASE,
 )
 _MOMAX_BG_AIKO_RE = re.compile(r"\baiko\b", re.IGNORECASE)
+_XXXLUTZ_DEFAULT_MAIL_HINT_RE = re.compile(
+    r"mail\s*:\s*office-lutz@lutz\.at\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -148,6 +152,13 @@ def _has_momax_bg_recipient_hint(text: str) -> bool:
     if not normalized:
         return False
     return bool(_MOMAX_BG_RECIPIENT_RE.search(normalized))
+
+
+def _has_xxxlutz_default_mail_hint_in_body(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    return bool(_XXXLUTZ_DEFAULT_MAIL_HINT_RE.search(normalized))
 
 
 def _is_momax_bg_hard_match(message: IngestedEmail) -> bool:
@@ -344,6 +355,16 @@ def route_message(
     config: Config,
     extractor: OpenAIExtractor,
 ) -> RouteDecision:
+    if _has_xxxlutz_default_mail_hint_in_body(message.body_text or ""):
+        return RouteDecision(
+            selected_branch_id=DEFAULT_BRANCH_ID,
+            classifier_branch_id=DEFAULT_BRANCH_ID,
+            confidence=1.0,
+            reason="xxxlutz_default_mail_hint",
+            forced_by_detector=True,
+            used_fallback=False,
+        )
+
     detector_results = _evaluate_hard_detectors(message.attachments)
     if not detector_results.get("momax_bg") and _is_momax_bg_hard_match(message):
         detector_results["momax_bg"] = True
