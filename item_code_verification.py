@@ -16,6 +16,8 @@ def _profile_label(verification_profile: str) -> str:
     profile = _normalized_profile(verification_profile)
     if profile == "porta":
         return "Porta"
+    if profile == "braun":
+        return "Braun"
     if profile == "momax_bg":
         return "MOMAX BG"
     return profile.replace("_", " ").upper()

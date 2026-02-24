@@ -1,143 +1,145 @@
-## Add new client extraction branch: **Porta** (email + PDF)
+## Add new client extraction branch: `braun` (like `porta`)
 
 ### Summary
-Add a new extraction branch `porta` with Porta-specific prompts and routing hints. Porta messages are routed via the existing LLM router using “Porta” signals in sender/subject/PDF preview text. After the main extraction, run a **second pass** that **verifies & corrects item codes** (`artikelnummer`/`modellnummer`, optionally `menge`) from the PDF, then **auto-corrects** mismatches and **forces `human_review_needed=true`** with clear warnings.
+Add a new extraction branch `braun` for **BRAUN Möbel-Center** orders. It will:
+- Route to `braun` using **Braun-specific hints** (subject/sender/body + PDF first-page text).
+- **Force-route** to `braun` when strong markers like “Braun Möbel-Center” are detected in a PDF (similar to Porta hard-match behavior).
+- Run the **second-pass PDF item-code verification** (like `porta`) and force `human_review_needed=true` if corrections are applied.
 
 ---
 
 ## Decisions locked in (from you)
-- **Output:** Reuse existing JSON schema + existing XML exporters (`OrderInfo_*.xml`, `OrderArticleInfo_*.xml`).
-- **Routing:** Classifier + PDF hints (no risky hard-force detector until we have real samples).
-- **Second pass goal:** Verify & correct item codes.
-- **Mismatch handling:** Auto-correct + flag human review.
+- Branch ID: `braun`; label: `Braun`.
+- Routing signals: match **Braun + Möbel context** (not bare “braun” alone).
+- Force routing: if “Braun Möbel(-)Center” markers are found and a PDF is attached, it’s definitely Braun → force `braun`.
+- Verification: enabled (same mechanism as Porta), but with **Braun-generic** verification rules (not Porta-specific code mappings).
 
 ---
 
-## Changes (repo-level)
+## Repo changes (exact)
 
-### 1) Create Porta main prompt module
-**Add file:** `prompts_porta.py`
-- Define `PORTA_SYSTEM_PROMPT` (or `SYSTEM_PROMPT_PORTA`) explicitly mentioning **Porta** (avoid “XXXLutz/Mömax” wording).
-- Implement `build_user_instructions_porta(source_priority: list[str]) -> str`:
-  - State: Porta orders always arrive with **email + PDF**.
-  - Enforce the same required German field names + JSON structure the pipeline expects.
-  - Include the “PDF digital text is ONLY for verifying code fields” rule:
-    - Use PDF extracted text to confirm/correct `items[*].modellnummer` and `items[*].artikelnummer`
-    - Quantity/row-count must come from the image table
-  - Provide **generic** label heuristics (since samples come later):
-    - `kundennummer`: “Kundennr / Kunden-Nr / Debitor / Konto”
-    - `kom_nr`: “Auftragsnr / Bestellnr / Order / Kommission”
-    - `bestelldatum`: “Bestelldatum / Datum”
-    - `liefertermin/wunschtermin`: “Liefertermin / Wunschliefertermin”
-    - `lieferanschrift`: “Lieferadresse / Lieferanschrift / Empfänger”
-    - `store_name/store_address/seller`: from letterhead/signature if present
+### 1) Add Braun prompt module
+**Add file:** `prompts_braun.py`
+- Define `BRAUN_SYSTEM_PROMPT` similar to `prompts_porta.PORTA_SYSTEM_PROMPT`, but branded for Braun.
+- Implement `build_user_instructions_braun(source_priority: list[str]) -> str`:
+  - Reuse the same required header/item keys and “field object format” contract used by Porta.
+  - State input is **email + PDF**.
+  - Keep the same “PDF digital text only for code confirmation” guidance:
+    - Use extracted PDF text to confirm/correct `items[*].modellnummer` and `items[*].artikelnummer`.
+    - Determine row count + `menge` primarily from the table image.
+  - Use generic header label hints (kundennummer/kom_nr/bestelldatum/liefertermin/lieferanschrift/ILN blocks) like Porta.
 
 ### 2) Register the new branch
-**Update:** `extraction_branches.py`
+**Update file:** `extraction_branches.py`
+- `import prompts_braun`
 - Add a new `ExtractionBranch` entry:
-  - `id="porta"`, `label="Porta"`, `description="Porta orders (email + PDF)…"`
-  - `system_prompt=prompts_porta.<porta system prompt>`
-  - `build_user_instructions=prompts_porta.build_user_instructions_porta`
-- Extend the `ExtractionBranch` dataclass with a new flag:
-  - `enable_item_code_verification: bool = False`
-- Set `enable_item_code_verification=True` for `porta`.
+  - `id="braun"`
+  - `label="Braun"`
+  - `description="BRAUN Möbel-Center orders (email + PDF) with second-pass item-code verification."`
+  - `system_prompt=prompts_braun.BRAUN_SYSTEM_PROMPT`
+  - `build_user_instructions=prompts_braun.build_user_instructions_braun`
+  - `enable_detail_extraction=False`
+  - `enable_item_code_verification=True`
+  - `is_momax_bg=False`
 
-### 3) Add routing “Porta hint” (classifier-only, not forced)
-**Update:** `extraction_router.py`
-- In `_build_router_user_text(...)`, compute `porta_hint` using conservative checks:
-  - case-insensitive match of `\bporta\b` in:
-    - `message.sender`, `message.subject`, `email_body_preview`
-    - any `pdf_first_page_previews[*].first_page_text`
-- Include `porta_hint` in the JSON payload sent to the router LLM.
-- Update `_build_router_system_prompt()` rules to add:
-  - “If `porta_hint` is true, prefer `branch_id="porta"` with high confidence (unless a forced detector applies).”
-- Keep `momax_bg` hard-detector rule as highest priority.
+### 3) Add routing hint + hard-match
+**Update file:** `extraction_router.py`
 
-### 4) Implement the Porta verification pass (second extraction call)
-**Add file:** `prompts_verify_items.py`
-- Define:
-  - `VERIFY_ITEMS_SYSTEM_PROMPT` (generic, not client-branded)
-  - `build_verify_items_instructions() -> str`:
-    - Goal: verify/correct **only** item identifiers (and optionally `menge`)
-    - Input includes:
-      - The **current extracted items list** (line_no + current codes)
-      - PDF pages (image + extracted digital text)
-    - Output schema (strict JSON):
-      ```json
-      {
-        "verified_items": [
-          {
-            "line_no": 1,
-            "modellnummer": "string",
-            "artikelnummer": "string",
-            "menge": 1,
-            "confidence": 0.0,
-            "reason": "short"
-          }
-        ],
-        "warnings": []
-      }
-      ```
-    - Rules:
-      - Keep the **same number of items** as provided; don’t invent/remove rows.
-      - If uncertain for a line: echo original values with low confidence.
+#### 3a) Add Braun regex patterns (top of file)
+Add:
+- `_BRAUN_TOKEN_RE = re.compile(r"\\bbraun\\b", re.IGNORECASE)`
+- `_BRAUN_MOEBEL_RE = re.compile(r"m[oö]bel", re.IGNORECASE)`
+- `_BRAUN_MOEBELCENTER_RE = re.compile(r"m[oö]bel\\s*[- ]?\\s*center", re.IGNORECASE)`
 
-**Update:** `openai_extract.py`
-- Add a new method, e.g. `verify_items_from_pdf(...)`:
-  - Inputs: `images`, `items_snapshot`, `page_text_by_image_name`
-  - Uses `prompts_verify_items.VERIFY_ITEMS_SYSTEM_PROMPT` + `build_verify_items_instructions()`
-  - Sends items snapshot as `input_text` before images (same image+page_text pattern as other calls)
-  - Returns raw text for `parse_json_response`.
+#### 3b) Implement hint detection
+Add:
+- `_has_braun_hint(text: str) -> bool` that returns `True` when:
+  - text contains `braun` AND (contains `möbel` OR `möbel-center`).
+  - (This matches your preference: “Braun Möbel / Braun Möbel-Center etc.”, not bare “braun”.)
 
-**Update:** `pipeline.py`
-- After `normalized = normalize_output(...)`, add:
-  - If `branch.enable_item_code_verification`:
-    - Select `pdf_images` only (same list already computed for detail extraction).
-    - Build a compact `items_snapshot` list from `normalized["items"]`:
-      - `line_no`, current `modellnummer.value`, `artikelnummer.value`, `menge.value`
-    - Call `extractor.verify_items_from_pdf(...)`.
-    - Parse JSON and apply corrections via a small helper function (new private helper in `pipeline.py` or a new module like `item_code_verification.py`):
-      - For each `verified_item` matched by `line_no`:
-        - If confidence >= **0.75** and value differs:
-          - Overwrite the item field as:
-            - `source="derived"`, `confidence=<verification confidence>`, `derived_from="porta_item_code_verification"`
-          - Record a warning describing the change.
-      - If any correction applied:
-        - Set `header.human_review_needed=true` with `derived_from="porta_item_code_verification"`
-- Ensure this verification step is **Porta-only** (does not change current XXXLutz/Mömax behavior).
+#### 3c) Implement forced hard-match (PDF required)
+Add:
+- `_is_braun_hard_match(message: IngestedEmail, config: Config) -> bool`
+  - Require at least one PDF attachment (same safety pattern as Porta).
+  - Check strong markers in:
+    - combined sender+subject+body preview text, and
+    - PDF first-page extracted text (use `_pdf_first_page_text` + `_truncate` like Porta).
+  - “Strong marker” condition: `_BRAUN_TOKEN_RE` AND `_BRAUN_MOEBEL_RE` (or `_BRAUN_MOEBELCENTER_RE`).
 
-### 5) Add scaffolding for Porta samples (no real PDFs yet)
-**Add:**
-- `CLIENT CASES/porta/README.md` describing the expected sample layout:
-  - `ORDER 1/Email Body.txt`
-  - `ORDER 1/<pdf>.pdf`
-- (Optional) `.gitkeep` files so directories exist in git.
+#### 3d) Add `braun_hint` into router payload
+In `_build_router_user_text(...)`, add:
+- `"braun_hint": bool(_has_braun_hint(joined email text) or any(_has_braun_hint(pdf first-page preview)))`
 
-### 6) Tests / verification scripts
-**Update:** `verify_routing.py`
-- Add a test that mocks router output to `{"branch_id":"porta","confidence":0.99,...}` and confirms:
-  - Routing warning shows `selected=porta` and `fallback=false`.
+#### 3e) Teach classifier to prefer Braun when hinted
+In `_build_router_system_prompt()` rules section, add a rule similar to Porta’s:
+- If `braun_hint` is true, prefer `branch_id="braun"` with high confidence unless a forced detector applies.
 
-**Add:** `verify_porta_verification.py` (unit-ish)
-- Test the “apply corrections” helper directly (no Poppler/PyMuPDF dependency):
-  - Given normalized items with known codes + verified_items with one changed code at high confidence:
-    - item value updated
-    - `human_review_needed` forced true
-    - warning added
+#### 3f) Apply forced Braun routing
+In `route_message(...)`, after MOMAX BG hard-match handling and before Porta hard-match handling:
+- If no `forced_branch_id` yet and `_is_braun_hard_match(...)` is true:
+  - set `forced_branch_id = "braun"`
+  - set `detector_results["braun"] = True`
 
-### 7) Acceptance criteria (what “done” means)
-- Router can select `porta` and pipeline runs end-to-end without exceptions.
-- Porta main extraction uses Porta prompts (no XXXLutz wording).
-- Second pass runs for Porta when PDF pages exist and:
-  - produces no changes when identical
-  - auto-corrects mismatches at confidence >= 0.75
-  - sets `human_review_needed=true` and adds a human-readable warning on any correction
-- Existing branches (`xxxlutz_default`, `momax_bg`) behavior unchanged.
+### 4) Add Braun verification-profile prompt
+**Update file:** `prompts_verify_items.py`
+- Add `_build_braun_verify_items_instructions() -> str`:
+  - Same output schema as existing verification.
+  - Scope: `modellnummer`, `artikelnummer`, optional `menge` if certain.
+  - Rules:
+    - Keep same number of lines; match by `line_no`; never invent/remove rows.
+    - Use PDF digital text to confirm exact characters (preserve leading zeros; preserve O vs 0).
+    - If uncertain, echo original values with low confidence.
+- Update `build_verify_items_instructions(verification_profile: str)` to return Braun instructions when `profile == "braun"`.
+
+### 5) Make verification warnings read nicely for Braun
+**Update file:** `item_code_verification.py`
+- In `_profile_label()`, add:
+  - `if profile == "braun": return "Braun"`
+- No other behavior changes needed (derived_from will naturally become `braun_item_code_verification`).
+
+### 6) Add Braun sample scaffolding
+**Add file:** `CLIENT CASES/braun/README.md`
+- Mirror `CLIENT CASES/porta/README.md`, but named “Braun Sample Layout”.
+
+### 7) Verification scripts/tests to add/update
+**Update file:** `verify_routing.py`
+Add tests analogous to Porta:
+- `test_routing_braun_branch_selected()`
+  - Mock classifier response to `{"branch_id":"braun","confidence":0.99,...}`
+  - Assert routing warning shows `selected=braun` and `fallback=false`.
+- `test_braun_hint_from_pdf_markers()`
+  - Patch `extraction_router._pdf_first_page_text` to return text containing e.g. `BRAUN Möbel-Center`
+  - Call `extraction_router._build_router_user_text(...)`
+  - Assert payload `braun_hint` is `True`.
+- `test_routing_braun_hard_match_forces_branch()`
+  - Create message with a PDF attachment
+  - Patch `_pdf_first_page_text` to include strong markers
+  - Mock classifier to return `unknown`
+  - Assert pipeline routes with `forced=true` and `selected=braun`.
+
+**Add file:** `verify_braun_verification.py` (or extend `verify_porta_verification.py`)
+- Create a small unit-style test calling `apply_item_code_verification(...)` with:
+  - `verification_profile="braun"`
+  - One high-confidence correction
+- Assert:
+  - corrected field(s) have `derived_from == "braun_item_code_verification"`
+  - `header.human_review_needed.value == True` and `derived_from == "braun_item_code_verification"`
+  - warnings contain “Braun verification …”
 
 ---
 
+## Acceptance criteria
+- `extraction_branches.BRANCHES` includes `braun` and pipeline runs end-to-end without exceptions.
+- Routing:
+  - `braun_hint` becomes `true` for PDFs/emails that contain “Braun Möbel / Braun Möbel-Center”.
+  - Hard-match forces `selected=braun` when strong markers are found and a PDF is attached.
+- Verification:
+  - Runs for `braun` when PDF pages exist.
+  - Applies corrections only when confidence is high, and forces human review when it changes anything.
+- Existing branches (`xxxlutz_default`, `momax_bg`, `porta`) unchanged.
 
-## Assumptions (explicit)
-- Porta still outputs the same JSON header/item schema and uses the same XML exporters.
-- No dedicated Porta-only output directory or filename conventions are required.
-- Until samples arrive, routing and prompts use conservative generic Porta identifiers (“porta” token in sender/subject/PDF text).
+---
+
+## Assumptions / defaults
+- Braun orders are effectively **email + PDF** (Porta-like); hard-match requires a PDF attachment to avoid misrouting on random text.
+- Until real Braun samples/rules exist, Braun item-code verification uses **generic “verify against PDF” rules**, not client-specific code-mapping logic.

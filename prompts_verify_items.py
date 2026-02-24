@@ -120,8 +120,49 @@ def _build_momax_bg_verify_items_instructions() -> str:
     )
 
 
+def _build_braun_verify_items_instructions() -> str:
+    return (
+        "=== TASK ===\n"
+        "Verify and correct Braun item identifiers from PDF pages.\n"
+        "Input contains current extracted items and PDF pages (image + digital text).\n"
+        "\n"
+        "=== SCOPE ===\n"
+        "- Primary: modellnummer and artikelnummer\n"
+        "- Optional: menge (only if clearly visible and certain)\n"
+        "- Do not modify unrelated fields.\n"
+        "\n"
+        "=== BRAUN GENERIC VERIFICATION RULES ===\n"
+        "1) Keep the exact same number of item lines as provided.\n"
+        "2) Never invent rows and never remove rows.\n"
+        "3) Match output lines by line_no.\n"
+        "4) Use digital PDF text to confirm exact characters for code fields.\n"
+        "5) Preserve leading zeros exactly.\n"
+        "6) Preserve O vs 0 exactly as shown (do not normalize).\n"
+        "7) If uncertain for a line, echo original values with low confidence.\n"
+        "8) Confidence must be in [0.0, 1.0].\n"
+        "9) reason should be short and specific.\n"
+        "\n"
+        "=== REQUIRED OUTPUT JSON ===\n"
+        "{\n"
+        '  "verified_items": [\n'
+        "    {\n"
+        '      "line_no": 1,\n'
+        '      "modellnummer": "string",\n'
+        '      "artikelnummer": "string",\n'
+        '      "menge": 1,\n'
+        '      "confidence": 0.0,\n'
+        '      "reason": "short"\n'
+        "    }\n"
+        "  ],\n"
+        '  "warnings": []\n'
+        "}\n"
+    )
+
+
 def build_verify_items_instructions(verification_profile: str = "porta") -> str:
     profile = (verification_profile or "").strip().lower()
     if profile == "momax_bg":
         return _build_momax_bg_verify_items_instructions()
+    if profile == "braun":
+        return _build_braun_verify_items_instructions()
     return _build_porta_verify_items_instructions()
