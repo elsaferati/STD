@@ -6,6 +6,7 @@ from typing import Callable
 from email_ingest import Attachment
 import momax_bg
 import prompts
+import prompts_braun
 import prompts_momax_bg
 import prompts_porta
 
@@ -60,6 +61,18 @@ BRANCHES: dict[str, ExtractionBranch] = {
         ),
         system_prompt=prompts_porta.PORTA_SYSTEM_PROMPT,
         build_user_instructions=prompts_porta.build_user_instructions_porta,
+        enable_detail_extraction=False,
+        enable_item_code_verification=True,
+        is_momax_bg=False,
+    ),
+    "braun": ExtractionBranch(
+        id="braun",
+        label="Braun",
+        description=(
+            "BRAUN Moebel-Center orders (email + PDF) with second-pass item-code verification."
+        ),
+        system_prompt=prompts_braun.BRAUN_SYSTEM_PROMPT,
+        build_user_instructions=prompts_braun.build_user_instructions_braun,
         enable_detail_extraction=False,
         enable_item_code_verification=True,
         is_momax_bg=False,

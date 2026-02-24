@@ -9,7 +9,10 @@ import momax_bg
 import pipeline
 from config import Config
 from email_ingest import Attachment, IngestedEmail
-from normalize import normalize_output
+from normalize import (
+    apply_momax_bg_strict_item_code_corrections,
+    normalize_output,
+)
 from openai_extract import ImageInput
 
 
@@ -758,6 +761,203 @@ def test_momax_bg_pipeline_corrects_wrapped_article_suffix() -> None:
         pipeline._prepare_images = original_prepare_images
 
 
+def _momax_bg_item_data(artikel: str, modell: str) -> dict:
+    return {
+        "header": {
+            "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.95},
+            "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+            "kom_name": {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "momax_bg_policy"},
+        },
+        "items": [
+            {
+                "line_no": 1,
+                "artikelnummer": {"value": artikel, "source": "pdf", "confidence": 0.95},
+                "modellnummer": {"value": modell, "source": "pdf", "confidence": 0.95},
+                "menge": {"value": 1, "source": "pdf", "confidence": 0.95},
+                "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+            }
+        ],
+    }
+
+
+def test_momax_bg_strict_code_ticket_regressions() -> None:
+    cases = [
+        ("74430XB", "CQ9191", "74430", "CQ9191XB"),
+        ("CQ1616", "42821KXB", "42821K", "CQ1616XB"),
+        ("CQ9191", "74405XB", "74405", "CQ9191XB"),
+        ("XP", "CQ222206363", "06363", "CQ2222XP"),
+        ("91", "60812XPCQSN", "60812", "CQSN91XP"),
+    ]
+    for artikel_in, modell_in, artikel_out, modell_out in cases:
+        normalized = normalize_output(
+            _momax_bg_item_data(artikel_in, modell_in),
+            message_id=f"strict_{artikel_in}_{modell_in}",
+            received_at="2026-02-13T12:00:00+00:00",
+            dayfirst=True,
+            warnings=[],
+            email_body="",
+            sender="bg@example.com",
+            is_momax_bg=True,
+        )
+        item = (normalized.get("items") or [{}])[0]
+        artikel_entry = item.get("artikelnummer", {})
+        modell_entry = item.get("modellnummer", {})
+        assert artikel_entry.get("value") == artikel_out
+        assert modell_entry.get("value") == modell_out
+        assert artikel_entry.get("derived_from") in {
+            "momax_bg_strict_code_parser",
+            "momax_bg_suffix_relocation",
+        }
+        assert modell_entry.get("derived_from") in {
+            "momax_bg_strict_code_parser",
+            "momax_bg_suffix_relocation",
+        }
+    print("SUCCESS: momax_bg strict rules fix all five known ticket patterns.")
+
+
+def test_momax_bg_strict_slash_reorder_policy() -> None:
+    data = _momax_bg_item_data("91", "60812/XP/CQSN")
+    corrected = apply_momax_bg_strict_item_code_corrections(data)
+    item = (data.get("items") or [{}])[0]
+    assert corrected == 1
+    assert item.get("artikelnummer", {}).get("value") == "60812"
+    assert item.get("modellnummer", {}).get("value") == "CQSN91XP"
+
+    data_alt = _momax_bg_item_data("60812", "XP/CQSN/91")
+    corrected_alt = apply_momax_bg_strict_item_code_corrections(data_alt)
+    item_alt = (data_alt.get("items") or [{}])[0]
+    assert corrected_alt == 1
+    assert item_alt.get("artikelnummer", {}).get("value") == "60812"
+    assert item_alt.get("modellnummer", {}).get("value") == "CQSN91XP"
+    print("SUCCESS: momax_bg strict slash reorder policy is applied.")
+
+
+def test_momax_bg_strict_leading_zero_preserved() -> None:
+    data = _momax_bg_item_data("XP", "CQ222206363")
+    corrected = apply_momax_bg_strict_item_code_corrections(data)
+    item = (data.get("items") or [{}])[0]
+    assert corrected == 1
+    assert item.get("artikelnummer", {}).get("value") == "06363"
+    assert item.get("modellnummer", {}).get("value") == "CQ2222XP"
+    print("SUCCESS: momax_bg strict correction preserves leading-zero artikelnummer.")
+
+
+def test_momax_bg_wrapped_article_merge_still_passes() -> None:
+    normalized = normalize_output(
+        _momax_bg_item_data("180 98", "SN/SN/71/SP/91"),
+        message_id="strict_wrapped_article",
+        received_at="2026-02-13T12:00:00+00:00",
+        dayfirst=True,
+        warnings=[],
+        email_body="",
+        sender="bg@example.com",
+        is_momax_bg=True,
+    )
+    item = (normalized.get("items") or [{}])[0]
+    assert item.get("artikelnummer", {}).get("value") == "18098"
+    assert item.get("modellnummer", {}).get("value") == "SNSN71SP91"
+    print("SUCCESS: momax_bg wrapped article merge still works with strict parser.")
+
+
+def test_momax_bg_pipeline_strict_after_verifier_conflict() -> None:
+    pdf_a = _make_pdf_bytes(
+        "Recipient: MOMAX BULGARIA\n"
+        "IDENT No: 20197304\n"
+        "ORDER\n"
+        "No 1823/20.12.25\n"
+        "Term for delivery: 24.03.26\n"
+        "Store: VARNA\n"
+        "Address: Varna, Blvd. Vladislav Varnenchik 277A\n"
+    )
+    pdf_b = _make_pdf_bytes(
+        "MOMAX - ORDER\n"
+        "VARNA - 88801823/20.12.25\n"
+        "Code/Type Quantity\n"
+        "60812/XP/CQSN/91 1\n"
+    )
+    message = IngestedEmail(
+        message_id="test_momax_bg_verifier_conflict",
+        received_at="2026-02-13T12:00:00+00:00",
+        subject="MOMAX BG order",
+        sender="bg@example.com",
+        body_text="",
+        attachments=[
+            Attachment(filename="bg_a.pdf", content_type="application/pdf", data=pdf_a),
+            Attachment(filename="bg_b.pdf", content_type="application/pdf", data=pdf_b),
+        ],
+    )
+    config = Config.from_env()
+
+    original_prepare_images = pipeline._prepare_images
+    pipeline._prepare_images = lambda attachments, config, warnings: [
+        ImageInput(name="dummy_pdf_page.png", source="pdf", data_url="data:image/png;base64,")
+    ]
+
+    try:
+        extractor = MagicMock()
+        extractor.complete_text.return_value = json.dumps(
+            {"branch_id": "momax_bg", "confidence": 1.0, "reason": "test"}
+        )
+        extractor.extract_with_prompts.return_value = json.dumps(
+            {
+                "message_id": "test_momax_bg_verifier_conflict",
+                "received_at": "2026-02-13T12:00:00+00:00",
+                "header": {
+                    "kundennummer": {"value": "20197304", "source": "pdf", "confidence": 0.99},
+                    "kom_nr": {"value": "88801823", "source": "pdf", "confidence": 0.99},
+                    "kom_name": {"value": "VARNA", "source": "pdf", "confidence": 0.9},
+                    "liefertermin": {"value": "24.03.26", "source": "pdf", "confidence": 0.9},
+                    "bestelldatum": {"value": "20.12.25", "source": "pdf", "confidence": 0.9},
+                    "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.9},
+                    "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "lieferanschrift": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.9},
+                    "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+                    "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+                },
+                "items": [
+                    {
+                        "line_no": 1,
+                        "artikelnummer": {"value": "60812", "source": "pdf", "confidence": 0.95},
+                        "modellnummer": {"value": "CQSN91XP", "source": "pdf", "confidence": 0.95},
+                        "menge": {"value": 1, "source": "pdf", "confidence": 0.95},
+                        "furncloud_id": {"value": "", "source": "derived", "confidence": 0.0},
+                    }
+                ],
+                "status": "ok",
+                "warnings": [],
+                "errors": [],
+            }
+        )
+        extractor.verify_items_from_pdf.return_value = json.dumps(
+            {
+                "verified_items": [
+                    {
+                        "line_no": 1,
+                        "modellnummer": "60812XPCQSN",
+                        "artikelnummer": "91",
+                        "confidence": 0.99,
+                        "reason": "conflicting test payload",
+                    }
+                ],
+                "warnings": [],
+            }
+        )
+
+        result = pipeline.process_message(message, config, extractor)
+        item = (result.data.get("items") or [{}])[0]
+        assert item.get("artikelnummer", {}).get("value") == "60812"
+        assert item.get("modellnummer", {}).get("value") == "CQSN91XP"
+        assert result.data.get("header", {}).get("human_review_needed", {}).get("value") is True
+        print("SUCCESS: momax_bg strict correction is re-applied after verifier conflicts.")
+    finally:
+        pipeline._prepare_images = original_prepare_images
+
+
 if __name__ == "__main__":
     test_momax_bg_two_pdf_special_case()
     test_momax_bg_excel_address_matching()
@@ -775,3 +975,8 @@ if __name__ == "__main__":
     test_momax_bg_no_raw_kdnr_fallback_from_pdf()
     test_momax_bg_wrapped_article_map_extracts_suffix()
     test_momax_bg_pipeline_corrects_wrapped_article_suffix()
+    test_momax_bg_strict_code_ticket_regressions()
+    test_momax_bg_strict_slash_reorder_policy()
+    test_momax_bg_strict_leading_zero_preserved()
+    test_momax_bg_wrapped_article_merge_still_passes()
+    test_momax_bg_pipeline_strict_after_verifier_conflict()

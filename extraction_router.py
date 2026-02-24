@@ -15,6 +15,12 @@ from openai_extract import OpenAIExtractor, parse_json_response
 _PORTA_TOKEN_RE = re.compile(r"\bporta\b", re.IGNORECASE)
 _PORTA_DOMAIN_RE = re.compile(r"(?:@|\b)porta\.de\b", re.IGNORECASE)
 _PORTA_ORDER_RE = re.compile(r"bestellung\s*/\s*order", re.IGNORECASE)
+_BRAUN_TOKEN_RE = re.compile(r"\bbraun\b", re.IGNORECASE)
+_BRAUN_MOEBEL_RE = re.compile(r"m(?:oe|o|\u00f6)bel", re.IGNORECASE)
+_BRAUN_MOEBELCENTER_RE = re.compile(
+    r"m(?:oe|o|\u00f6)bel\s*[- ]?\s*center",
+    re.IGNORECASE,
+)
 _PORTA_KUNDENKOMMISSION_RE = re.compile(
     r"k\s*u\s*n\s*d\s*e\s*n\s*k\s*o\s*m\s*m\s*i\s*s\s*s\s*i\s*o\s*n",
     re.IGNORECASE,
@@ -26,6 +32,10 @@ _MOMAX_BG_RECIPIENT_RE = re.compile(
     re.IGNORECASE,
 )
 _MOMAX_BG_AIKO_RE = re.compile(r"\baiko\b", re.IGNORECASE)
+_XXXLUTZ_DEFAULT_MAIL_HINT_RE = re.compile(
+    r"mail\s*:\s*office-lutz@lutz\.at\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -114,6 +124,17 @@ def _has_porta_hint(text: str) -> bool:
     return _has_porta_layout_markers(normalized)
 
 
+def _has_braun_hint(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    has_braun = bool(_BRAUN_TOKEN_RE.search(normalized))
+    has_moebel_context = bool(
+        _BRAUN_MOEBEL_RE.search(normalized) or _BRAUN_MOEBELCENTER_RE.search(normalized)
+    )
+    return has_braun and has_moebel_context
+
+
 def _has_porta_layout_markers(text: str) -> bool:
     normalized = _normalize_whitespace(text or "")
     if not normalized:
@@ -131,6 +152,13 @@ def _has_momax_bg_recipient_hint(text: str) -> bool:
     if not normalized:
         return False
     return bool(_MOMAX_BG_RECIPIENT_RE.search(normalized))
+
+
+def _has_xxxlutz_default_mail_hint_in_body(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    return bool(_XXXLUTZ_DEFAULT_MAIL_HINT_RE.search(normalized))
 
 
 def _is_momax_bg_hard_match(message: IngestedEmail) -> bool:
@@ -180,6 +208,37 @@ def _is_porta_hard_match(message: IngestedEmail, config: Config) -> bool:
     return False
 
 
+def _is_braun_hard_match(message: IngestedEmail, config: Config) -> bool:
+    pdf_attachments = [a for a in message.attachments if _is_pdf_attachment(a)]
+    if not pdf_attachments:
+        return False
+
+    email_preview = _normalize_whitespace(
+        "\n".join(
+            [
+                message.sender or "",
+                message.subject or "",
+                _truncate(message.body_text or "", config.router_max_body_chars),
+            ]
+        )
+    )
+    if _has_braun_hint(email_preview):
+        return True
+
+    for attachment in pdf_attachments:
+        try:
+            preview_text = _pdf_first_page_text(attachment.data)
+        except Exception:
+            continue
+        preview_text = _truncate(
+            _normalize_whitespace(preview_text),
+            config.router_max_pdf_preview_chars,
+        )
+        if _has_braun_hint(preview_text):
+            return True
+    return False
+
+
 def _build_router_system_prompt() -> str:
     branch_lines = [
         f"- {branch.id}: {branch.description}" for branch in BRANCHES.values()
@@ -198,7 +257,8 @@ def _build_router_system_prompt() -> str:
         "2. confidence must be a float from 0.0 to 1.0.\n"
         "3. If momax_bg_detector is true in the input, return branch_id=\"momax_bg\" and confidence=1.0.\n"
         "4. If porta_hint is true, prefer branch_id=\"porta\" with high confidence unless a forced detector applies.\n"
-        "5. If uncertain, return branch_id=\"unknown\" with low confidence."
+        "5. If braun_hint is true, prefer branch_id=\"braun\" with high confidence unless a forced detector applies.\n"
+        "6. If uncertain, return branch_id=\"unknown\" with low confidence."
     )
 
 
@@ -208,6 +268,7 @@ def _build_router_user_text(
     detector_results: dict[str, bool],
 ) -> str:
     body_preview = _truncate(message.body_text or "", config.router_max_body_chars)
+    joined_email_text = "\n".join([message.sender or "", message.subject or "", body_preview])
     attachment_info: list[dict[str, Any]] = []
     pdf_previews: list[dict[str, str]] = []
 
@@ -244,17 +305,16 @@ def _build_router_user_text(
         "attachments": attachment_info,
         "pdf_first_page_previews": pdf_previews,
         "porta_hint": bool(
-            _has_porta_hint(
-                "\n".join(
-                    [
-                        message.sender or "",
-                        message.subject or "",
-                        body_preview,
-                    ]
-                )
-            )
+            _has_porta_hint(joined_email_text)
             or any(
                 _has_porta_hint(preview.get("first_page_text", ""))
+                for preview in pdf_previews
+            )
+        ),
+        "braun_hint": bool(
+            _has_braun_hint(joined_email_text)
+            or any(
+                _has_braun_hint(preview.get("first_page_text", ""))
                 for preview in pdf_previews
             )
         ),
@@ -295,10 +355,23 @@ def route_message(
     config: Config,
     extractor: OpenAIExtractor,
 ) -> RouteDecision:
+    if _has_xxxlutz_default_mail_hint_in_body(message.body_text or ""):
+        return RouteDecision(
+            selected_branch_id=DEFAULT_BRANCH_ID,
+            classifier_branch_id=DEFAULT_BRANCH_ID,
+            confidence=1.0,
+            reason="xxxlutz_default_mail_hint",
+            forced_by_detector=True,
+            used_fallback=False,
+        )
+
     detector_results = _evaluate_hard_detectors(message.attachments)
     if not detector_results.get("momax_bg") and _is_momax_bg_hard_match(message):
         detector_results["momax_bg"] = True
     forced_branch_id = _forced_branch_id(detector_results)
+    if not forced_branch_id and _is_braun_hard_match(message, config):
+        forced_branch_id = "braun"
+        detector_results["braun"] = True
     if not forced_branch_id and _is_porta_hard_match(message, config):
         forced_branch_id = "porta"
         detector_results["porta"] = True
