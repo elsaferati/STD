@@ -154,6 +154,8 @@ def test_verify_items_payload_is_text_only() -> None:
     extractor = OpenAIExtractor(
         api_key="test-key",
         model="gpt-5.1-chat-latest",
+        temperature=0.0,
+        reasoning_effort="none",
         max_output_tokens=200,
     )
     captured: dict[str, object] = {}

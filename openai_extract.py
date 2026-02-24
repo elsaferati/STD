@@ -80,9 +80,18 @@ def _response_to_text(response: Any) -> str:
 
 
 class OpenAIExtractor:
-    def __init__(self, api_key: str, model: str, max_output_tokens: int) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        temperature: float,
+        reasoning_effort: str,
+        max_output_tokens: int,
+    ) -> None:
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.temperature = temperature
+        self.reasoning_effort = reasoning_effort
         self.max_output_tokens = max_output_tokens
         self._supports_response_format = True
 
@@ -264,6 +273,8 @@ class OpenAIExtractor:
                 {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
                 {"role": "user", "content": content},
             ],
+            "temperature": self.temperature,
+            "reasoning": {"effort": self.reasoning_effort},
             "max_output_tokens": self.max_output_tokens,
         }
         if self._supports_response_format:

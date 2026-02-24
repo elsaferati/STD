@@ -36,6 +36,8 @@ def _get_float(name: str, default: float) -> float:
 class Config:
     openai_api_key: str
     openai_model: str
+    openai_temperature: float
+    openai_reasoning_effort: str
     openai_max_output_tokens: int
     poppler_path: str
     email_protocol: str
@@ -81,6 +83,8 @@ class Config:
         return cls(
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-5.2-chat-latest").strip(),
+            openai_temperature=_get_float("OPENAI_TEMPERATURE", 0.0),
+            openai_reasoning_effort=os.getenv("OPENAI_REASONING_EFFORT", "none").strip() or "none",
             openai_max_output_tokens=_get_int("OPENAI_MAX_OUTPUT_TOKENS", 2000),
             poppler_path=os.getenv("POPPLER_PATH", "").strip(),
             email_protocol=os.getenv("EMAIL_PROTOCOL", "imap").strip().lower(),
