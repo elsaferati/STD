@@ -15,7 +15,11 @@ from email_ingest import Attachment, IngestedEmail
 import extraction_branches
 import extraction_router
 from item_code_verification import apply_item_code_verification
-from normalize import normalize_output, refresh_missing_warnings
+from normalize import (
+    apply_momax_bg_strict_item_code_corrections,
+    normalize_output,
+    refresh_missing_warnings,
+)
 from openai_extract import ImageInput, OpenAIExtractor, parse_json_response
 from poppler_utils import pdf_to_images, resolve_pdftoppm
 import reply_email
@@ -442,6 +446,7 @@ def process_message(
                             f"MOMAX BG wrapped Code/Type correction: item line {line_no} "
                             f"artikelnummer '{current_article}' -> '{corrected_article}'."
                         )
+        apply_momax_bg_strict_item_code_corrections(normalized)
 
     if branch.enable_item_code_verification and pdf_images:
         items_snapshot = _build_items_snapshot(normalized.get("items"))
@@ -466,6 +471,8 @@ def process_message(
                     verification_profile=verification_profile,
                     fields_to_apply=fields_to_apply,
                 )
+                if branch.is_momax_bg:
+                    apply_momax_bg_strict_item_code_corrections(normalized)
             except Exception as exc:
                 normalized_warnings = normalized.get("warnings")
                 if isinstance(normalized_warnings, list):

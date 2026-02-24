@@ -1,145 +1,50 @@
-## Add new client extraction branch: `braun` (like `porta`)
+# MOMAX BG Item-Code Repair And Backfill
 
-### Summary
-Add a new extraction branch `braun` for **BRAUN Möbel-Center** orders. It will:
-- Route to `braun` using **Braun-specific hints** (subject/sender/body + PDF first-page text).
-- **Force-route** to `braun` when strong markers like “Braun Möbel-Center” are detected in a PDF (similar to Porta hard-match behavior).
-- Run the **second-pass PDF item-code verification** (like `porta`) and force `human_review_needed=true` if corrections are applied.
+## Summary
+1. Confirmed the agent output is wrong for your five scanned PDFs, and the errors are persisted in output JSON/XML.
+2. Confirmed root cause is rule logic, not just UI rendering: current MOMAX BG logic assumes slash-last-segment is always `artikelnummer` and lacks strict `artikelnummer` validation, causing swaps and bad XB/XP placement.
+3. Implement a deterministic MOMAX BG strict code-correction layer, then backfill existing output files and regenerate XML.
 
----
+## Confirmed Wrong Behavior
+1. `3386460` (Ticket 1): `artikelnummer=74430XB`, `modellnummer=CQ9191` should become `artikelnummer=74430`, `modellnummer=CQ9191XB`. Evidence: [CAJgTRbVy...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbVyDFUFHqWW1XEQa_2rhQtYuybSJ2i-w8-5XPhS9jEc0Q_mail.gmail.com.json:115).
+2. `3424290` (Ticket 2): `artikelnummer=CQ1616`, `modellnummer=42821KXB` should become `artikelnummer=42821K`, `modellnummer=CQ1616XB`. Evidence: [CAJgTRbUq3...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbUq3Vqx88_AkQWrJLEW4QbK7Txu4U-O__B6atsaZR_yOg_mail.gmail.com.json:115).
+3. `3413460` (Ticket 4): `artikelnummer=CQ9191`, `modellnummer=74405XB` should become `artikelnummer=74405`, `modellnummer=CQ9191XB`. Evidence: [CAJgTRbUpm...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbUpmXe_8q6Vyu43LGxFXGRC3O5MVi0N5smN7qo_stnPYw_mail.gmail.com.json:115).
+4. `3413160` (Ticket 5): `artikelnummer=XP`, `modellnummer=CQ222206363` should become `artikelnummer=06363`, `modellnummer=CQ2222XP`. Evidence: [CAJgTRbVbJ...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbVbJFpHCszfvVRq0VQrKfmquHZ5ohCfdLt3RYSZROCaZA_mail.gmail.com.json:115).
+5. `3402830` (Ticket 6): outputs like `artikelnummer=91`, `modellnummer=60812XPCQSN` should become `artikelnummer=60812`, `modellnummer=CQSN91XP`. Evidence: [CAJgTRbX_0...json](c:/Users/Admin/Documents/GitHub/STD/output/CAJgTRbX_0UXFw1LUVkPJ5NKtzHn1AAW8-4-LMuf8SB_eDUvReg_mail.gmail.com.json:115).
+6. Current rules enforcing problematic behavior are in [prompts_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/prompts_momax_bg.py:83), [prompts_verify_items.py](c:/Users/Admin/Documents/GitHub/STD/prompts_verify_items.py:87), and [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py:402).
 
-## Decisions locked in (from you)
-- Branch ID: `braun`; label: `Braun`.
-- Routing signals: match **Braun + Möbel context** (not bare “braun” alone).
-- Force routing: if “Braun Möbel(-)Center” markers are found and a PDF is attached, it’s definitely Braun → force `braun`.
-- Verification: enabled (same mechanism as Porta), but with **Braun-generic** verification rules (not Porta-specific code mappings).
+## Important Interface/Type Changes
+1. Add exported helper in [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py): `apply_momax_bg_strict_item_code_corrections(data: dict[str, Any]) -> int` returning number of corrected lines.
+2. Add new `derived_from` values on corrected fields: `momax_bg_strict_code_parser` and `momax_bg_suffix_relocation`.
+3. Add new maintenance CLI script [backfill_momax_bg_codes.py](c:/Users/Admin/Documents/GitHub/STD/backfill_momax_bg_codes.py) with args: `dir`, `--dry-run`, `--only-id`.
 
----
+## Implementation Plan
+1. In [normalize.py](c:/Users/Admin/Documents/GitHub/STD/normalize.py), enforce strict `artikelnummer` format for MOMAX BG: `^\d{5}[A-Z]?$` (leading zero allowed), and forbid `XB/XP` as standalone article.
+2. Add deterministic correction rules in this order for each MOMAX BG item:
+3. Rule A: If `artikelnummer` is `^\d{5}(XB|XP)$`, split suffix to `modellnummer` tail.
+4. Rule B: If `artikelnummer` looks model-like (`CQ*`, `OJ*`, `0J*`) and `modellnummer` looks article-like plus optional `XB/XP`, swap and relocate suffix.
+5. Rule C: If `artikelnummer` is only `XB|XP` and `modellnummer` ends with 5-digit article tail, extract tail as article and keep suffix on model.
+6. Rule D: If `artikelnummer` is short numeric (like `91`) and `modellnummer` starts with 5-digit article then `XB|XP`, rebuild as article=leading 5-digit token, model=`alpha_parts + old_short_numeric + suffix`.
+7. Rule E: For slash tokens, pick article token by strict article regex, then build model as `alpha tokens + numeric tail tokens + XP/XB suffix` (selected policy).
+8. Keep existing MOMAX BG corrections (wrapped article merge, slash compaction) but execute strict correction after them and again after item-verification apply in [pipeline.py](c:/Users/Admin/Documents/GitHub/STD/pipeline.py:446) to guarantee final consistency.
+9. Update MOMAX BG prompt text in [prompts_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/prompts_momax_bg.py) and verifier prompt in [prompts_verify_items.py](c:/Users/Admin/Documents/GitHub/STD/prompts_verify_items.py) to match strict article/model constraints and XP/XB behavior.
 
-## Repo changes (exact)
+## Test Cases And Scenarios
+1. Add regression tests in [verify_momax_bg.py](c:/Users/Admin/Documents/GitHub/STD/verify_momax_bg.py) for the five exact ticket patterns above.
+2. Add test for slash reorder behavior: `60812/XP/CQSN/91 -> artikel=60812, modell=CQSN91XP`.
+3. Add test for `06363` leading-zero preservation.
+4. Add test ensuring existing wrapped-article correction (`180 98 -> 18098`) still passes.
+5. Add pipeline-level test ensuring strict correction remains true even when verifier returns conflicting fields with confidence >= threshold.
+6. Run full MOMAX BG test suite and confirm no regressions in existing cases.
 
-### 1) Add Braun prompt module
-**Add file:** `prompts_braun.py`
-- Define `BRAUN_SYSTEM_PROMPT` similar to `prompts_porta.PORTA_SYSTEM_PROMPT`, but branded for Braun.
-- Implement `build_user_instructions_braun(source_priority: list[str]) -> str`:
-  - Reuse the same required header/item keys and “field object format” contract used by Porta.
-  - State input is **email + PDF**.
-  - Keep the same “PDF digital text only for code confirmation” guidance:
-    - Use extracted PDF text to confirm/correct `items[*].modellnummer` and `items[*].artikelnummer`.
-    - Determine row count + `menge` primarily from the table image.
-  - Use generic header label hints (kundennummer/kom_nr/bestelldatum/liefertermin/lieferanschrift/ILN blocks) like Porta.
+## Backfill And Rollout
+1. Implement [backfill_momax_bg_codes.py](c:/Users/Admin/Documents/GitHub/STD/backfill_momax_bg_codes.py) to process existing `output/*.json`.
+2. Detect MOMAX BG records via routing warning or `kom_name.derived_from == momax_bg_policy`.
+3. Apply strict corrections, refresh warnings/status, write JSON only if changed, regenerate XML with current exporter.
+4. Run first in `--dry-run`, then apply to all affected orders including both `3402830` outputs (`1000006` and `1000010`).
 
-### 2) Register the new branch
-**Update file:** `extraction_branches.py`
-- `import prompts_braun`
-- Add a new `ExtractionBranch` entry:
-  - `id="braun"`
-  - `label="Braun"`
-  - `description="BRAUN Möbel-Center orders (email + PDF) with second-pass item-code verification."`
-  - `system_prompt=prompts_braun.BRAUN_SYSTEM_PROMPT`
-  - `build_user_instructions=prompts_braun.build_user_instructions_braun`
-  - `enable_detail_extraction=False`
-  - `enable_item_code_verification=True`
-  - `is_momax_bg=False`
-
-### 3) Add routing hint + hard-match
-**Update file:** `extraction_router.py`
-
-#### 3a) Add Braun regex patterns (top of file)
-Add:
-- `_BRAUN_TOKEN_RE = re.compile(r"\\bbraun\\b", re.IGNORECASE)`
-- `_BRAUN_MOEBEL_RE = re.compile(r"m[oö]bel", re.IGNORECASE)`
-- `_BRAUN_MOEBELCENTER_RE = re.compile(r"m[oö]bel\\s*[- ]?\\s*center", re.IGNORECASE)`
-
-#### 3b) Implement hint detection
-Add:
-- `_has_braun_hint(text: str) -> bool` that returns `True` when:
-  - text contains `braun` AND (contains `möbel` OR `möbel-center`).
-  - (This matches your preference: “Braun Möbel / Braun Möbel-Center etc.”, not bare “braun”.)
-
-#### 3c) Implement forced hard-match (PDF required)
-Add:
-- `_is_braun_hard_match(message: IngestedEmail, config: Config) -> bool`
-  - Require at least one PDF attachment (same safety pattern as Porta).
-  - Check strong markers in:
-    - combined sender+subject+body preview text, and
-    - PDF first-page extracted text (use `_pdf_first_page_text` + `_truncate` like Porta).
-  - “Strong marker” condition: `_BRAUN_TOKEN_RE` AND `_BRAUN_MOEBEL_RE` (or `_BRAUN_MOEBELCENTER_RE`).
-
-#### 3d) Add `braun_hint` into router payload
-In `_build_router_user_text(...)`, add:
-- `"braun_hint": bool(_has_braun_hint(joined email text) or any(_has_braun_hint(pdf first-page preview)))`
-
-#### 3e) Teach classifier to prefer Braun when hinted
-In `_build_router_system_prompt()` rules section, add a rule similar to Porta’s:
-- If `braun_hint` is true, prefer `branch_id="braun"` with high confidence unless a forced detector applies.
-
-#### 3f) Apply forced Braun routing
-In `route_message(...)`, after MOMAX BG hard-match handling and before Porta hard-match handling:
-- If no `forced_branch_id` yet and `_is_braun_hard_match(...)` is true:
-  - set `forced_branch_id = "braun"`
-  - set `detector_results["braun"] = True`
-
-### 4) Add Braun verification-profile prompt
-**Update file:** `prompts_verify_items.py`
-- Add `_build_braun_verify_items_instructions() -> str`:
-  - Same output schema as existing verification.
-  - Scope: `modellnummer`, `artikelnummer`, optional `menge` if certain.
-  - Rules:
-    - Keep same number of lines; match by `line_no`; never invent/remove rows.
-    - Use PDF digital text to confirm exact characters (preserve leading zeros; preserve O vs 0).
-    - If uncertain, echo original values with low confidence.
-- Update `build_verify_items_instructions(verification_profile: str)` to return Braun instructions when `profile == "braun"`.
-
-### 5) Make verification warnings read nicely for Braun
-**Update file:** `item_code_verification.py`
-- In `_profile_label()`, add:
-  - `if profile == "braun": return "Braun"`
-- No other behavior changes needed (derived_from will naturally become `braun_item_code_verification`).
-
-### 6) Add Braun sample scaffolding
-**Add file:** `CLIENT CASES/braun/README.md`
-- Mirror `CLIENT CASES/porta/README.md`, but named “Braun Sample Layout”.
-
-### 7) Verification scripts/tests to add/update
-**Update file:** `verify_routing.py`
-Add tests analogous to Porta:
-- `test_routing_braun_branch_selected()`
-  - Mock classifier response to `{"branch_id":"braun","confidence":0.99,...}`
-  - Assert routing warning shows `selected=braun` and `fallback=false`.
-- `test_braun_hint_from_pdf_markers()`
-  - Patch `extraction_router._pdf_first_page_text` to return text containing e.g. `BRAUN Möbel-Center`
-  - Call `extraction_router._build_router_user_text(...)`
-  - Assert payload `braun_hint` is `True`.
-- `test_routing_braun_hard_match_forces_branch()`
-  - Create message with a PDF attachment
-  - Patch `_pdf_first_page_text` to include strong markers
-  - Mock classifier to return `unknown`
-  - Assert pipeline routes with `forced=true` and `selected=braun`.
-
-**Add file:** `verify_braun_verification.py` (or extend `verify_porta_verification.py`)
-- Create a small unit-style test calling `apply_item_code_verification(...)` with:
-  - `verification_profile="braun"`
-  - One high-confidence correction
-- Assert:
-  - corrected field(s) have `derived_from == "braun_item_code_verification"`
-  - `header.human_review_needed.value == True` and `derived_from == "braun_item_code_verification"`
-  - warnings contain “Braun verification …”
-
----
-
-## Acceptance criteria
-- `extraction_branches.BRANCHES` includes `braun` and pipeline runs end-to-end without exceptions.
-- Routing:
-  - `braun_hint` becomes `true` for PDFs/emails that contain “Braun Möbel / Braun Möbel-Center”.
-  - Hard-match forces `selected=braun` when strong markers are found and a PDF is attached.
-- Verification:
-  - Runs for `braun` when PDF pages exist.
-  - Applies corrections only when confidence is high, and forces human review when it changes anything.
-- Existing branches (`xxxlutz_default`, `momax_bg`, `porta`) unchanged.
-
----
-
-## Assumptions / defaults
-- Braun orders are effectively **email + PDF** (Porta-like); hard-match requires a PDF attachment to avoid misrouting on random text.
-- Until real Braun samples/rules exist, Braun item-code verification uses **generic “verify against PDF” rules**, not client-specific code-mapping logic.
+## Assumptions And Defaults Chosen
+1. Scope is global for all MOMAX BG orders, not only these five.
+2. Slash model build policy is `alpha+numeric then XP/XB suffix`.
+3. Existing bad outputs will be auto-backfilled and XML regenerated.
+4. Ticket 1 canonical correction is `artikelnummer=74430`, `modellnummer=CQ9191XB`.

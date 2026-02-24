@@ -392,6 +392,16 @@ def _normalize_momax_bg_artikelnummer(value: Any) -> str:
 
 
 _BG_NUMERIC_ALPHA_PAIR_RE = re.compile(r"^(\d{2,12})\s+([A-Za-z][A-Za-z0-9]*)$")
+_BG_SUFFIX_ONLY_RE = re.compile(r"^(XB|XP)$", re.IGNORECASE)
+_BG_ARTIKEL_STRICT_RE = re.compile(r"^\d{5}[A-Z]?$")
+_BG_ARTIKEL_WITH_TRAILING_SUFFIX_RE = re.compile(r"^(\d{5})(XB|XP)$", re.IGNORECASE)
+_BG_ARTIKEL_LIKE_WITH_SUFFIX_RE = re.compile(r"^(\d{5}[A-Z]?)(XB|XP)?$", re.IGNORECASE)
+_BG_MODEL_LIKE_RE = re.compile(r"^(?:CQ|OJ|0J)[A-Z0-9]+$", re.IGNORECASE)
+_BG_SHORT_NUMERIC_RE = re.compile(r"^\d{1,4}$")
+_BG_LEADING_ARTIKEL_SUFFIX_MODEL_RE = re.compile(
+    r"^(\d{5})(XB|XP)([A-Z0-9]+)$",
+    re.IGNORECASE,
+)
 
 
 def _split_momax_bg_code(raw: Any) -> tuple[str, str] | None:
@@ -425,6 +435,212 @@ def _mark_momax_bg_code_derived(entry: dict[str, Any]) -> None:
     entry["source"] = "derived"
     entry["confidence"] = 1.0
     entry["derived_from"] = "momax_bg_code_normalization"
+
+
+def _mark_momax_bg_strict_derived(entry: dict[str, Any], derived_from: str) -> None:
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = derived_from
+
+
+def _append_unique_suffix(modell: str, suffix: str) -> str:
+    base = _normalize_momax_bg_modellnummer(modell)
+    suffix_text = str(suffix or "").upper()
+    if not suffix_text:
+        return base
+    if base.upper().endswith(suffix_text):
+        return base
+    return f"{base}{suffix_text}"
+
+
+def _is_momax_bg_model_like(value: str) -> bool:
+    text = _normalize_momax_bg_modellnummer(value)
+    return bool(_BG_MODEL_LIKE_RE.fullmatch(text))
+
+
+def _extract_artikel_and_suffix(value: str) -> tuple[str, str] | None:
+    text = _normalize_momax_bg_artikelnummer(value).upper()
+    match = _BG_ARTIKEL_LIKE_WITH_SUFFIX_RE.fullmatch(text)
+    if not match:
+        return None
+    artikel = match.group(1)
+    suffix = (match.group(2) or "").upper()
+    return artikel, suffix
+
+
+def _strict_artikel_token(value: str) -> str:
+    return _normalize_momax_bg_artikelnummer(value).upper()
+
+
+def _build_momax_bg_codes_from_slash_tokens(
+    artikel: str,
+    modell: str,
+) -> tuple[str, str] | None:
+    clean_modell = _clean_text(modell)
+    clean_artikel = _clean_text(artikel)
+    if "/" not in clean_modell and "/" not in clean_artikel:
+        return None
+
+    tokens: list[str] = []
+    if clean_modell:
+        for token in clean_modell.split("/"):
+            cleaned = _normalize_momax_bg_artikelnummer(token)
+            if cleaned:
+                tokens.append(cleaned)
+    if clean_artikel:
+        if "/" in clean_artikel:
+            for token in clean_artikel.split("/"):
+                cleaned = _normalize_momax_bg_artikelnummer(token)
+                if cleaned:
+                    tokens.append(cleaned)
+        else:
+            tokens.append(_normalize_momax_bg_artikelnummer(clean_artikel))
+    if len(tokens) < 2:
+        return None
+
+    article_idx = -1
+    article_token = ""
+    for idx, token in enumerate(tokens):
+        candidate = token.upper()
+        if _BG_ARTIKEL_STRICT_RE.fullmatch(candidate):
+            article_idx = idx
+            article_token = candidate
+            break
+    if article_idx < 0 or not article_token:
+        return None
+
+    suffix_token = ""
+    model_tokens: list[str] = []
+    for idx, token in enumerate(tokens):
+        if idx == article_idx:
+            continue
+        upper_token = token.upper()
+        if not suffix_token and _BG_SUFFIX_ONLY_RE.fullmatch(upper_token):
+            suffix_token = upper_token
+            continue
+        model_tokens.append(token)
+
+    alpha_tokens = [token for token in model_tokens if re.search(r"[A-Za-z]", token)]
+    numeric_tokens = [token for token in model_tokens if not re.search(r"[A-Za-z]", token)]
+    model_text = _normalize_momax_bg_modellnummer("".join(alpha_tokens + numeric_tokens))
+    if suffix_token:
+        model_text = _append_unique_suffix(model_text, suffix_token)
+    return article_token, model_text
+
+
+def _apply_momax_bg_strict_item_code_correction(item: dict[str, Any]) -> bool:
+    artikel_entry = _ensure_field(item, "artikelnummer")
+    modell_entry = _ensure_field(item, "modellnummer")
+
+    old_artikel = _clean_text(artikel_entry.get("value"))
+    old_modell = _clean_text(modell_entry.get("value"))
+    artikel = _normalize_momax_bg_artikelnummer(old_artikel)
+    modell = _clean_text(old_modell)
+
+    derived_from = ""
+    rule_applied = False
+    upper_artikel = _strict_artikel_token(artikel)
+
+    # Rule A: article token carries XB/XP suffix that belongs to model.
+    match_a = _BG_ARTIKEL_WITH_TRAILING_SUFFIX_RE.fullmatch(upper_artikel)
+    if match_a:
+        artikel = match_a.group(1)
+        modell = _append_unique_suffix(modell, match_a.group(2).upper())
+        derived_from = "momax_bg_suffix_relocation"
+        rule_applied = True
+
+    # Rule B: swapped model/article values with optional model suffix on article token.
+    if not rule_applied:
+        model_candidate = _extract_artikel_and_suffix(modell)
+        if _is_momax_bg_model_like(artikel) and model_candidate:
+            new_artikel, suffix = model_candidate
+            new_modell = _normalize_momax_bg_modellnummer(artikel)
+            if suffix:
+                new_modell = _append_unique_suffix(new_modell, suffix)
+                derived_from = "momax_bg_suffix_relocation"
+            else:
+                derived_from = "momax_bg_strict_code_parser"
+            artikel = new_artikel
+            modell = new_modell
+            rule_applied = True
+
+    # Rule C: standalone XP/XB article; extract trailing strict article from model.
+    if not rule_applied:
+        suffix_only = _BG_SUFFIX_ONLY_RE.fullmatch(upper_artikel)
+        if suffix_only:
+            compact_model = _normalize_momax_bg_modellnummer(modell)
+            tail_match = re.fullmatch(r"(.+?)(\d{5})", compact_model)
+            if tail_match:
+                artikel = tail_match.group(2)
+                modell = _append_unique_suffix(tail_match.group(1), suffix_only.group(1).upper())
+                derived_from = "momax_bg_suffix_relocation"
+                rule_applied = True
+
+    # Rule D: short numeric article moved from model tail in slash-compact patterns.
+    if not rule_applied:
+        compact_artikel = _normalize_momax_bg_artikelnummer(artikel)
+        compact_model = _normalize_momax_bg_modellnummer(modell)
+        match_d = _BG_LEADING_ARTIKEL_SUFFIX_MODEL_RE.fullmatch(compact_model)
+        if (
+            match_d
+            and _BG_SHORT_NUMERIC_RE.fullmatch(compact_artikel)
+            and len(compact_artikel) < 5
+        ):
+            artikel = match_d.group(1)
+            suffix = match_d.group(2).upper()
+            model_head = match_d.group(3)
+            modell = _append_unique_suffix(f"{model_head}{compact_artikel}", suffix)
+            derived_from = "momax_bg_suffix_relocation"
+            rule_applied = True
+
+    # Rule E: explicit slash tokens -> choose strict article token and rebuild model.
+    if not rule_applied:
+        slash_rebuild = _build_momax_bg_codes_from_slash_tokens(artikel, modell)
+        if slash_rebuild:
+            artikel, modell = slash_rebuild
+            derived_from = "momax_bg_strict_code_parser"
+            rule_applied = True
+
+    if not derived_from:
+        return False
+
+    new_artikel = _normalize_momax_bg_artikelnummer(artikel)
+    new_modell = _normalize_momax_bg_modellnummer(modell)
+    changed = False
+
+    if new_artikel != old_artikel:
+        artikel_entry["value"] = new_artikel
+        _mark_momax_bg_strict_derived(artikel_entry, derived_from)
+        changed = True
+    if new_modell != old_modell:
+        modell_entry["value"] = new_modell
+        _mark_momax_bg_strict_derived(modell_entry, derived_from)
+        changed = True
+
+    return changed
+
+
+def apply_momax_bg_strict_item_code_corrections(data: dict[str, Any]) -> int:
+    """
+    Apply deterministic MOMAX BG strict article/model correction rules.
+
+    Returns the number of item lines that changed.
+    """
+    if not isinstance(data, dict):
+        return 0
+    items = data.get("items")
+    if not isinstance(items, list) or not items:
+        return 0
+
+    corrected_lines = 0
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        if not item.get("line_no"):
+            item["line_no"] = index
+        if _apply_momax_bg_strict_item_code_correction(item):
+            corrected_lines += 1
+    return corrected_lines
 
 
 def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
@@ -969,6 +1185,8 @@ def normalize_output(
         items = []
     data["items"] = items
     _normalize_items(items, dayfirst, warnings, is_momax_bg=is_momax_bg)
+    if is_momax_bg:
+        apply_momax_bg_strict_item_code_corrections(data)
     _propagate_furncloud_id(items, warnings)
     apply_program_furncloud_to_items(data, warnings)
 
