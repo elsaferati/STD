@@ -93,12 +93,16 @@
         <td>
           {% if is_editable and row.field in editable_header_fields %}
             {% if row.field in ["lieferanschrift", "store_address"] %}
-            <textarea class="textarea" name="header_{{ row.field }}" rows="2">{{ row.value }}</textarea>
+            <textarea class="textarea" name="header_{{ row.field }}" rows="{% if row.field == 'lieferanschrift' %}3{% else %}2{% endif %}">{{ row.value }}</textarea>
             {% else %}
             <input class="input" type="text" name="header_{{ row.field }}" value="{{ row.value }}">
             {% endif %}
           {% else %}
+            {% if row.field in ["lieferanschrift", "store_address"] %}
+            <div class="pre-line">{{ row.value or "-" }}</div>
+            {% else %}
             {{ row.value or "-" }}
+            {% endif %}
           {% endif %}
         </td>
         <td>{{ row.source or "-" }}</td>

@@ -409,6 +409,7 @@ def process_message(
         email_body=body_text,
         sender=message.sender,
         is_momax_bg=branch.is_momax_bg,
+        branch_id=branch.id,
     )
 
     if branch.is_momax_bg:

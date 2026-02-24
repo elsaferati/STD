@@ -170,6 +170,215 @@ CRITICAL_REPLY_FIELDS = ["kom_nr", "kundennummer"]
 CRITICAL_ITEM_REPLY_FIELDS = ["artikelnummer", "modellnummer"]
 MISSING_CRITICAL_REPLY_PREFIX = "Missing critical header fields:"
 MISSING_CRITICAL_ITEM_REPLY_PREFIX = "Missing critical item fields:"
+_ADDRESS_PLZ_RE = re.compile(r"\b\d{5}\b")
+_ADDRESS_GLUE_PLZ_RE = re.compile(r"(\d{1,4}[A-Za-z]?)(\d{5})\b")
+_ILN_TOKEN_RE = re.compile(r"\b\d{13}\b")
+_ILN_GLN_LABEL_RE = re.compile(r"\b(?:iln|gln)\b", re.IGNORECASE)
+_LIEFER_STREET_PATTERN = (
+    r"(?:\b(?:[A-Za-z0-9][A-Za-z0-9.\-]*\s+){0,4}"
+    r"(?:Str\.?|Strasse|Straße|Weg|Platz|Allee|Chaussee|Ring|Gasse|Damm|Ufer|Pfad|Steig|Kai|Markt|Berg|Stieg)\s+"
+    r"\d{1,4}[A-Za-z]?(?:\s*[-/]\s*\d{1,4}[A-Za-z]?)?\b)"
+    r"|"
+    r"(?:\b[A-Za-z0-9][A-Za-z0-9.\-]*"
+    r"(?:str\.?|strasse|straße|weg|platz|allee|chaussee|ring|gasse|damm|ufer|pfad|steig|kai|markt|berg|stieg)\s+"
+    r"\d{1,4}[A-Za-z]?(?:\s*[-/]\s*\d{1,4}[A-Za-z]?)?\b)"
+)
+_LIEFER_STREET_LOOKAHEAD_RE = re.compile(rf"(?=({_LIEFER_STREET_PATTERN}))", re.IGNORECASE)
+_LIEFER_STREET_RE = re.compile(_LIEFER_STREET_PATTERN, re.IGNORECASE)
+_COMPANY_LEGAL_TOKEN_RE = re.compile(r"^(?:&|co\.?kg|co\.?|kg|gmbh|mbh|ag|ohg|ek|e\.k\.)$", re.IGNORECASE)
+_STREET_KEYWORD_START_RE = re.compile(
+    r"^(?:Str\.?|Strasse|Straße|Weg|Platz|Allee|Chaussee|Ring|Gasse|Damm|Ufer|Pfad|Steig|Kai|Markt|Berg|Stieg)\b",
+    re.IGNORECASE,
+)
+
+
+def _format_german_address_lines(value: str) -> str:
+    """
+    Enforce a 2-line German address format:
+    Line 1: Street + HouseNo
+    Line 2: PLZ + City
+    """
+    if not value:
+        return value
+    s = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not _ADDRESS_PLZ_RE.search(s):
+        return s
+    # Collapse existing line breaks to re-apply a single PLZ line break.
+    s = re.sub(r"\s*\n\s*", " ", s)
+    # Split glued house+PLZ tokens (e.g., "10133332" -> "101 33332").
+    s = _ADDRESS_GLUE_PLZ_RE.sub(r"\1 \2", s)
+    # Insert newline before the first PLZ.
+    s = _ADDRESS_PLZ_RE.sub(r"\n\g<0>", s, count=1)
+    # Clean up spaces around newline.
+    s = re.sub(r"[ \t]*\n[ \t]*", "\n", s)
+    return s
+
+
+def _format_lieferanschrift_lines(value: str) -> str:
+    """
+    Preserve multi-line delivery addresses while ensuring a PLZ line break.
+    Allows 3+ lines when company names are present.
+    """
+    if not value:
+        return value
+    s = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in s.splitlines() if line.strip()]
+    # OCR sometimes glues legal form + street start (e.g. "Co.KGDelitzscher").
+    lines = [
+        re.sub(
+            r"\b(Co\.?KG|GmbH|mbH|AG|OHG|KG)(?=[A-ZÄÖÜ][a-zäöü])",
+            r"\1 ",
+            line,
+        )
+        for line in lines
+    ]
+    filtered_lines = []
+    for line in lines:
+        has_iln = bool(_ILN_TOKEN_RE.search(line))
+        only_iln_digits = bool(re.fullmatch(r"\d{13}", re.sub(r"\D", "", line)))
+        labeled_iln = bool(_ILN_GLN_LABEL_RE.search(line))
+        if has_iln and (only_iln_digits or labeled_iln):
+            continue
+        filtered_lines.append(line)
+    lines = filtered_lines
+    if not lines:
+        return ""
+    if not any(_ADDRESS_PLZ_RE.search(line) for line in lines):
+        return "\n".join(lines)
+
+    def _split_company_street(left_text: str) -> tuple[str, str] | None:
+        left = left_text.strip(" ,")
+        if not left:
+            return None
+        street_match = None
+        street_match_len = -1
+        for candidate in _LIEFER_STREET_LOOKAHEAD_RE.finditer(left):
+            first_token = (candidate.group(1).split() or [""])[0].strip(".,")
+            if _COMPANY_LEGAL_TOKEN_RE.fullmatch(first_token):
+                continue
+            cand_street = candidate.group(1).strip(" ,")
+            cand_len = len(cand_street)
+            if cand_len > street_match_len:
+                street_match = candidate
+                street_match_len = cand_len
+        if not street_match:
+            return None
+        company = left[: street_match.start(1)].strip(" ,")
+        street = street_match.group(1).strip(" ,")
+        # If street starts with only a street-type token ("Str. 6"),
+        # pull the trailing token from company into the street line.
+        if company and _STREET_KEYWORD_START_RE.match(street):
+            company_tokens = company.split()
+            if company_tokens:
+                street = f"{company_tokens[-1]} {street}".strip()
+                company = " ".join(company_tokens[:-1]).strip(" ,")
+        if not company or not street:
+            return None
+        return company, street
+
+    if len(lines) == 1:
+        one_line = lines[0]
+        # Remove inline ILN/GLN tokens before address splitting.
+        one_line = _ILN_TOKEN_RE.sub(" ", one_line)
+        one_line = re.sub(r"\s+", " ", one_line).strip()
+        plz_match = _ADDRESS_PLZ_RE.search(one_line)
+        if not plz_match:
+            return one_line
+
+        left = one_line[: plz_match.start()].strip(" ,")
+        plz_city = one_line[plz_match.start() :].strip()
+        company_street = _split_company_street(left)
+        if company_street:
+            company, street = company_street
+            return f"{company}\n{street}\n{plz_city}"
+        return f"{left}\n{plz_city}" if left else plz_city
+
+    plz_idx = next(i for i, line in enumerate(lines) if _ADDRESS_PLZ_RE.search(line))
+    plz_line = lines[plz_idx]
+    formatted = _format_german_address_lines(plz_line)
+    if "\n" in formatted:
+        street, plzcity = formatted.split("\n", 1)
+        prefix = " ".join(lines[:plz_idx]).strip()
+        company_street = _split_company_street(prefix) if prefix else None
+        if company_street:
+            company, street_line = company_street
+            new_lines = [company, street_line, plzcity] + lines[plz_idx + 1 :]
+        elif street.strip():
+            new_lines = lines[:plz_idx] + [street, plzcity] + lines[plz_idx + 1 :]
+        else:
+            new_lines = lines[:plz_idx] + [plzcity] + lines[plz_idx + 1 :]
+        return "\n".join(new_lines)
+    return "\n".join(lines)
+
+
+def _strip_company_from_lieferanschrift_for_porta(value: str) -> str:
+    """
+    Porta-only cleanup: keep address lines (street + PLZ/city), drop company/label prefix lines.
+    Fallback: if no clear street+PLZ is detected, preserve raw input unchanged.
+    """
+    if not value:
+        return value
+
+    raw_value = str(value)
+    formatted = _format_lieferanschrift_lines(raw_value)
+    lines = [
+        _ADDRESS_GLUE_PLZ_RE.sub(
+            r"\1 \2",
+            re.sub(
+                r"\b((?:str\.?|strasse|straße|weg|platz|allee|chaussee|ring|gasse|damm|ufer|pfad|steig|kai|markt|berg|stieg))(?=\d)",
+                r"\1 ",
+                re.sub(
+                r"([a-zäöüß])([A-ZÄÖÜ])",
+                r"\1 \2",
+                re.sub(r"[ \t]+", " ", line).strip(),
+                ),
+                flags=re.IGNORECASE,
+            ),
+        )
+        for line in formatted.splitlines()
+        if line.strip()
+    ]
+    if len(lines) < 2:
+        if len(lines) != 1:
+            return raw_value
+        single_line = lines[0]
+        plz_match = _ADDRESS_PLZ_RE.search(single_line)
+        if not plz_match:
+            return raw_value
+        left = single_line[: plz_match.start()].strip(" ,")
+        plz_city = single_line[plz_match.start() :].strip()
+        street_match = None
+        for candidate in _LIEFER_STREET_LOOKAHEAD_RE.finditer(left):
+            first_token = (candidate.group(1).split() or [""])[0].strip(".,")
+            if _COMPANY_LEGAL_TOKEN_RE.fullmatch(first_token):
+                continue
+            street_match = candidate
+        if not street_match:
+            return raw_value
+        street = street_match.group(1).strip(" ,")
+        if not street:
+            return raw_value
+        if _STREET_KEYWORD_START_RE.match(street):
+            prefix_tokens = left[: street_match.start(1)].split()
+            if prefix_tokens:
+                street = f"{prefix_tokens[-1]} {street}".strip()
+        return f"{street}\n{plz_city}"
+
+    plz_idx = next((i for i, line in enumerate(lines) if _ADDRESS_PLZ_RE.search(line)), -1)
+    if plz_idx <= 0:
+        return raw_value
+
+    street_idx = -1
+    for i in range(plz_idx):
+        if _LIEFER_STREET_RE.search(lines[i]):
+            street_idx = i
+    if street_idx < 0:
+        return raw_value
+
+    stripped_lines = lines[street_idx:]
+    if not stripped_lines:
+        return raw_value
+    return "\n".join(stripped_lines)
 
 
 def _wrap_as_field_entry(value: Any, source: str = "derived") -> dict[str, Any]:
@@ -909,6 +1118,7 @@ def normalize_output(
     email_body: str = "",
     sender: str = "",
     is_momax_bg: bool = False,
+    branch_id: str = "",
 ) -> dict[str, Any]:
     data = data or {}
     
@@ -955,6 +1165,19 @@ def normalize_output(
         sender=sender,
         is_momax_bg=is_momax_bg,
     )
+    for field in ("lieferanschrift", "store_address"):
+        entry = header.get(field)
+        if isinstance(entry, dict):
+            value = entry.get("value", "")
+            if field == "lieferanschrift":
+                if (branch_id or "").strip() == "porta":
+                    formatted = _strip_company_from_lieferanschrift_for_porta(value)
+                else:
+                    formatted = _format_lieferanschrift_lines(value)
+            else:
+                formatted = _format_german_address_lines(value)
+            if formatted != value:
+                entry["value"] = formatted
 
     # When agent used ILN fallback or AI-assisted match, require human review (header-only edit)
     kdnr_entry = header.get("kundennummer", {})
