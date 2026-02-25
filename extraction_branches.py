@@ -50,7 +50,7 @@ BRANCHES: dict[str, ExtractionBranch] = {
         system_prompt=prompts.SYSTEM_PROMPT,
         build_user_instructions=prompts_momax_bg.build_user_instructions_momax_bg,
         enable_detail_extraction=False,
-        enable_item_code_verification=True,
+        enable_item_code_verification=False,
         is_momax_bg=True,
         hard_detector=momax_bg.is_momax_bg_two_pdf_case,
     ),
