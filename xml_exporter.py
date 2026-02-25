@@ -83,6 +83,15 @@ def _normalize_address_spacing(address: str) -> str:
     return address
 
 
+def _split_article_id(article_id: str) -> tuple:
+    """Split article_id on first hyphen into (model_number, article_number)."""
+    fixed = _fix_article_id_ocr(str(article_id or ""))
+    if "-" in fixed:
+        idx = fixed.index("-")
+        return fixed[:idx], fixed[idx + 1:]
+    return fixed, ""
+
+
 def _fix_article_id_ocr(article_id: str) -> str:
     """
     Fix common OCR character swap errors in Article IDs.
@@ -200,150 +209,64 @@ def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: 
     if not isinstance(program_info, dict):
         program_info = {}
     articles = data.get("articles", [])
-    
-    # Use optional article-level payload when present.
+
+    root = ET.Element("OrderItems")
+    ET.SubElement(root, "OrderID").text = _get_val(header, "ticket_number")
+    items_elem = ET.SubElement(root, "Items")
+
+    program_name = str(program_info.get("program_name", "") or "")
+    program_furncloud = str(program_info.get("furncloud_id", "") or "")
+
     use_detailed = bool(articles)
-    
-    # Root with namespace
-    root = ET.Element("Documents", {"xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance"})
-    doc = ET.SubElement(root, "Document")
-    orders = ET.SubElement(doc, "Orders")
-    order = ET.SubElement(orders, "Order")
-    
-    ET.SubElement(order, "transaction_ID")  # Empty
-    ET.SubElement(order, "Language").text = "de"
-    
-    prog = ET.SubElement(order, "Program")
-    
-    manufacturer_name = str(program_info.get("manufacturer_name", "") or "")
-    manufacturer_iln = str(program_info.get("manufacturer_iln", "") or "")
-    if manufacturer_name and not manufacturer_iln:
-        manufacturer_iln = str(_MANUFACTURER_ILN_MAP.get(manufacturer_name.strip().lower(), "") or "")
-
-    # Fallback for older/partial JSONs without program section: default to Staud for XXLUTZ/MÖMAX flows.
-    if not manufacturer_name and not manufacturer_iln:
-        store_name = _get_val(header, "store_name", "").strip().lower()
-        if any(token in store_name for token in ("xxxlutz", "mömax", "moemax", "bdsk")):
-            manufacturer_name = "Staud"
-            manufacturer_iln = str(_MANUFACTURER_ILN_MAP.get("staud", "4039262000004") or "")
-
-    # manufacturer and ILN from program; prog_id and progname empty
-    ET.SubElement(prog, "manufacturer_longname").text = manufacturer_name
-    ET.SubElement(prog, "iln_manufacturer").text = manufacturer_iln
-    ET.SubElement(prog, "prog_id")
-    ET.SubElement(prog, "progname")
-    
-    # Global remarks (furncloud id)
-    furncloud_id = program_info.get("furncloud_id", "")
-    if not furncloud_id:
-        # Fallback: scan items for furncloud_id
-        for item in items:
-            val = _get_val(item, "furncloud_id")
-            if val:
-                furncloud_id = val
-                break
-    
-    remarks = ET.SubElement(prog, "Remarks")
-    if furncloud_id:
-        ET.SubElement(remarks, "Remarkline").text = f"furncloud: [{furncloud_id}]"
-    
     if use_detailed:
-        # Use article-level payload when available.
-        _build_lines_from_articles(prog, articles)
+        _build_items_from_articles(items_elem, articles, program_name, program_furncloud)
     else:
-        # Fallback to basic items array
-        _build_lines_from_items(prog, items)
-    
+        _build_items_from_items(items_elem, items, program_name, program_furncloud)
+
     filename = f"OrderArticleInfo_{base_name}.xml"
     output_path = output_dir / filename
-    
-    # Prettify
     xml_str = _prettify_xml(root)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(xml_str)
-    
     return output_path
 
 
-def _build_lines_from_articles(prog: ET.Element, articles: List[Dict[str, Any]]) -> None:
-    """
-    Build Line elements from detailed articles array.
-    Only Article_ID and Quantity are populated; rest empty. Furncloud is only in Program Remarks.
-    """
-    for article in articles:
-        line = ET.SubElement(prog, "Line")
-        
-        ET.SubElement(line, "GUID")
-        ET.SubElement(line, "Article_ID").text = _fix_article_id_ocr(str(article.get("article_id", "")))
-        ET.SubElement(line, "ArticleDescription")
-        ET.SubElement(line, "Height")
-        ET.SubElement(line, "Width")
-        ET.SubElement(line, "Depth")
-        cad = ET.SubElement(line, "CadData")
-        for attr in ["px", "py", "pz", "dx", "dy", "dz", "rx", "ry", "rz"]:
-            cad.set(attr, "0.0000")
-        cad.set("IIx", "0")
+def _build_items_from_articles(items_elem, articles, program_name, program_furncloud):
+    for idx, article in enumerate(articles, start=1):
+        model_num, article_num = _split_article_id(article.get("article_id", ""))
         qty = article.get("quantity", 1)
         try:
-            qty_str = f"{float(qty):.2f}"
+            qty_str = f"{float(qty):.1f}"
         except (ValueError, TypeError):
-            qty_str = "1.00"
-        ET.SubElement(line, "Quantity").text = qty_str
-        ET.SubElement(line, "Quantity_unit")
-        ET.SubElement(line, "PriceGroup")
-        ET.SubElement(line, "VzParentGuid")
-        ET.SubElement(line, "PosParentGuid")
-        ET.SubElement(line, "PosNr")
-        ET.SubElement(line, "Remarks")
-        props = ET.SubElement(line, "InternalProperties")
-        for i in range(78):
-            ET.SubElement(props, f"Propertie_{i}")
-        sublines = ET.SubElement(line, "SubLines")
-        subobj = ET.SubElement(sublines, "SubObj")
-        ET.SubElement(subobj, "SubObjGuid")
+            qty_str = "1.0"
+        item = ET.SubElement(items_elem, "Item")
+        ET.SubElement(item, "Position").text = str(idx)
+        ET.SubElement(item, "ModelNumber").text = model_num
+        ET.SubElement(item, "ArticleNumber").text = article_num
+        ET.SubElement(item, "Model").text = program_name
+        ET.SubElement(item, "Quantity").text = qty_str
+        ET.SubElement(item, "FurncloudID").text = program_furncloud
+        ET.SubElement(item, "Description").text = str(article.get("description", "") or "")
 
 
-def _build_lines_from_items(prog: ET.Element, items: List[Dict[str, Any]]) -> None:
-    """
-    Fallback: Build Line elements from basic items array.
-    Only Article_ID (modellnummer-artikelnummer) and Quantity are populated; rest empty. Furncloud is only in Program Remarks.
-    """
-    for item in items:
-        line = ET.SubElement(prog, "Line")
-        modellnummer = _get_val(item, "modellnummer")
-        artikelnummer = _get_val(item, "artikelnummer")
-        if modellnummer and artikelnummer:
-            article_id_str = f"{modellnummer}-{artikelnummer}"
-        else:
-            article_id_str = modellnummer or artikelnummer
-        ET.SubElement(line, "GUID")
-        ET.SubElement(line, "Article_ID").text = _fix_article_id_ocr(article_id_str)
-        ET.SubElement(line, "ArticleDescription")
-        ET.SubElement(line, "Height")
-        ET.SubElement(line, "Width")
-        ET.SubElement(line, "Depth")
-        cad = ET.SubElement(line, "CadData")
-        for attr in ["px", "py", "pz", "dx", "dy", "dz", "rx", "ry", "rz"]:
-            cad.set(attr, "0.0000")
-        cad.set("IIx", "0")
-        qty_val = _get_val(item, "menge", "1")
+def _build_items_from_items(items_elem, items, program_name, program_furncloud):
+    for idx, it in enumerate(items, start=1):
+        modellnummer = _get_val(it, "modellnummer")
+        artikelnummer = _get_val(it, "artikelnummer")
+        furncloud = _get_val(it, "furncloud_id") or program_furncloud
+        qty_val = _get_val(it, "menge", "1")
         try:
-            qty_str = f"{float(qty_val):.2f}"
+            qty_str = f"{float(qty_val):.1f}"
         except (ValueError, TypeError):
-            qty_str = "1.00"
-        ET.SubElement(line, "Quantity").text = qty_str
-        ET.SubElement(line, "Quantity_unit")
-        ET.SubElement(line, "PriceGroup")
-        ET.SubElement(line, "VzParentGuid")
-        ET.SubElement(line, "PosParentGuid")
-        ET.SubElement(line, "PosNr")
-        ET.SubElement(line, "Remarks")
-        props = ET.SubElement(line, "InternalProperties")
-        for i in range(78):
-            ET.SubElement(props, f"Propertie_{i}")
-        sublines = ET.SubElement(line, "SubLines")
-        subobj = ET.SubElement(sublines, "SubObj")
-        ET.SubElement(subobj, "SubObjGuid")
+            qty_str = "1.0"
+        item = ET.SubElement(items_elem, "Item")
+        ET.SubElement(item, "Position").text = str(idx)
+        ET.SubElement(item, "ModelNumber").text = _fix_article_id_ocr(modellnummer)
+        ET.SubElement(item, "ArticleNumber").text = artikelnummer
+        ET.SubElement(item, "Model").text = program_name
+        ET.SubElement(item, "Quantity").text = qty_str
+        ET.SubElement(item, "FurncloudID").text = furncloud
+        ET.SubElement(item, "Description").text = ""
 
 def export_xmls(data: Dict[str, Any], base_name: str, config: Config, output_dir: Path) -> List[Path]:
     """Generates both XML files and returns their paths. Filename base = kom_nr else kom_name else 'unknown' (no message_id)."""
