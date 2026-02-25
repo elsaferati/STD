@@ -165,6 +165,27 @@ def test_routing_braun_branch_selected() -> None:
     print("SUCCESS: high-confidence braun branch routes without fallback.")
 
 
+def test_routing_segmuller_branch_selected() -> None:
+    extractor = MagicMock()
+    extractor.complete_text.return_value = json.dumps(
+        {"branch_id": "segmuller", "confidence": 0.99, "reason": "segmuller_hint"}
+    )
+    extractor.extract_with_prompts.return_value = _base_extraction_response()
+
+    result = pipeline.process_message(
+        _message(subject="Segmuller Bestellung", sender="orders@segmueller.example"),
+        _config(),
+        extractor,
+    )
+    warnings = result.data.get("warnings") or []
+
+    assert any(
+        "Routing: selected=segmuller" in str(w) and "fallback=false" in str(w)
+        for w in warnings
+    )
+    print("SUCCESS: high-confidence segmuller branch routes without fallback.")
+
+
 def test_porta_hint_from_pdf_layout_markers() -> None:
     message = IngestedEmail(
         message_id="routing_porta_hint_pdf",
@@ -222,6 +243,33 @@ def test_braun_hint_from_pdf_markers() -> None:
     print("SUCCESS: Braun PDF markers trigger braun_hint=true.")
 
 
+def test_segmuller_hint_from_pdf_markers() -> None:
+    message = IngestedEmail(
+        message_id="routing_segmuller_hint_pdf",
+        received_at="2026-02-23T10:00:00+00:00",
+        subject="Neue Bestellung",
+        sender="orders@example.com",
+        body_text="Siehe Anhang",
+        attachments=[
+            Attachment(
+                filename="segmuller_order.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4 fake",
+            )
+        ],
+    )
+
+    with patch(
+        "extraction_router._pdf_first_page_text",
+        return_value="SEGM\u00dcLLER Lieferschein",
+    ):
+        payload_text = extraction_router._build_router_user_text(message, _config(), {})
+
+    payload = json.loads(payload_text)
+    assert payload.get("segmuller_hint") is True
+    print("SUCCESS: Segmuller PDF markers trigger segmuller_hint=true.")
+
+
 def test_routing_porta_hard_match_from_sender_domain() -> None:
     extractor = MagicMock()
     extractor.complete_text.return_value = json.dumps(
@@ -254,6 +302,40 @@ def test_routing_porta_hard_match_from_sender_domain() -> None:
         for w in warnings
     )
     print("SUCCESS: sender @porta.de + PDF forces porta routing.")
+
+
+def test_routing_segmuller_hard_match_from_sender_domain() -> None:
+    extractor = MagicMock()
+    extractor.complete_text.return_value = json.dumps(
+        {"branch_id": "unknown", "confidence": 0.10, "reason": "unsure"}
+    )
+    extractor.extract_with_prompts.return_value = _base_extraction_response()
+    message = IngestedEmail(
+        message_id="routing_segmuller_hard_sender",
+        received_at="2026-02-23T10:00:00+00:00",
+        subject="Bestellung",
+        sender="service@segmueller.de",
+        body_text="Im Anhang senden wir unsere Bestellung als PDF-Datei.",
+        attachments=[
+            Attachment(
+                filename="segmuller_603800292.pdf",
+                content_type="application/pdf",
+                data=b"%PDF-1.4 fake",
+            )
+        ],
+    )
+
+    with patch("extraction_router._pdf_first_page_text", return_value=""):
+        result = pipeline.process_message(message, _config(), extractor)
+
+    warnings = result.data.get("warnings") or []
+    assert any(
+        "Routing: selected=segmuller" in str(w)
+        and "forced=true" in str(w)
+        and "fallback=false" in str(w)
+        for w in warnings
+    )
+    print("SUCCESS: sender @segmueller.de + PDF forces segmuller routing.")
 
 
 def test_routing_braun_hard_match_forces_branch() -> None:
@@ -382,9 +464,12 @@ if __name__ == "__main__":
     test_routing_malformed_json_forces_human_review()
     test_routing_porta_branch_selected()
     test_routing_braun_branch_selected()
+    test_routing_segmuller_branch_selected()
     test_porta_hint_from_pdf_layout_markers()
     test_braun_hint_from_pdf_markers()
+    test_segmuller_hint_from_pdf_markers()
     test_routing_porta_hard_match_from_sender_domain()
+    test_routing_segmuller_hard_match_from_sender_domain()
     test_routing_braun_hard_match_forces_branch()
     test_routing_momax_bg_hard_match_from_aiko_subject()
     test_routing_momax_bg_hard_match_from_recipient_hint_in_email()

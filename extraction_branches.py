@@ -9,6 +9,7 @@ import prompts
 import prompts_braun
 import prompts_momax_bg
 import prompts_porta
+import prompts_segmuller
 
 DEFAULT_BRANCH_ID = "xxxlutz_default"
 
@@ -76,6 +77,19 @@ BRANCHES: dict[str, ExtractionBranch] = {
         build_user_instructions=prompts_braun.build_user_instructions_braun,
         enable_detail_extraction=False,
         enable_item_code_verification=True,
+        is_momax_bg=False,
+    ),
+    "segmuller": ExtractionBranch(
+        id="segmuller",
+        label="Segmuller",
+        description=(
+            "Segmuller orders identified by sender domain @segmueller.de and PDF/order"
+            " content that mentions Segmueller/Segmuller."
+        ),
+        system_prompt=prompts_segmuller.SEGMULLER_SYSTEM_PROMPT,
+        build_user_instructions=prompts_segmuller.build_user_instructions_segmuller,
+        enable_detail_extraction=False,
+        enable_item_code_verification=False,
         is_momax_bg=False,
     ),
 }

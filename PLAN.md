@@ -1,118 +1,102 @@
-## Remove Detail Extraction + Make Second-Pass Verification Text-Only
+## Add new client branch: `segmuller`
 
 ### Summary
-Implement three coordinated changes:
-1. Remove Detailed extraction from the pipeline entirely.
-2. Enable Second pass item verification for `xxxlutz_default`.
-3. Change Second pass item verification to use only digital PDF text (no images), comparing text evidence against first-pass extracted item fields to detect/correct character mismatches.
+Add a new extraction “client branch” named **Segmuller** (parallel to `porta` and `braun`) with its own prompt module, routing hints, and a deterministic hard-match based on **sender domain `@segmueller.de` + PDF attachment**. Per your choice, **disable second-pass item-code verification** for this branch.
 
-Selected behavior for missing digital text: **skip second-pass verification and append a warning**.
+---
 
-### Scope and Intent
-- In scope:
-  - Backend extraction branch config and pipeline flow.
-  - Verifier prompt/input contract and extractor method signatures.
-  - Tests for new gating and text-only verification behavior.
-- Out of scope:
-  - Changing first-pass extraction behavior.
-  - Changing correction application thresholds or human-review forcing logic (unless required by failing tests).
+## Decisions locked in (from you)
+- **Branch id:** `segmuller`
+- **Routing mode:** add `segmuller_hint` + **hard-match on sender domain**
+- **Hard-match requires PDF:** yes (must have ≥1 PDF attachment)
+- **Second-pass item verification:** **disabled** for `segmuller`
 
-### Decision-Complete Implementation Plan
+---
 
-1. **Disable and remove Detailed extraction flow**
-- File: `extraction_branches.py`
-  - Set `xxxlutz_default.enable_detail_extraction=False`.
-- File: `pipeline.py`
-  - Remove second extraction block currently labeled `SECOND EXTRACTION CALL`.
-  - Remove helper `_merge_article_details(...)` and its callsite.
-  - Remove any now-unused imports/variables tied only to detail extraction.
-- File: `openai_extract.py`
-  - Remove `extract_article_details(...)` method.
-- File: `prompts_detail.py`
-  - Remove module and references if no longer used anywhere.
-- File: any docs/comments referencing detail extraction
-  - Update to reflect complete removal.
+## Code changes (decision-complete)
 
-2. **Enable second-pass item verification for `xxxlutz_default`**
-- File: `extraction_branches.py`
-  - Set `xxxlutz_default.enable_item_code_verification=True`.
-- Keep existing verification flags for `porta`, `braun`, `momax_bg` unless explicitly disabled later.
+### 1) New prompt module
+**Add file:** `prompts_segmuller.py`
+- Mirror `prompts_braun.py` structure:
+  - `SEGMULLER_SYSTEM_PROMPT` = “strict Segmuller purchase-order extraction engine… JSON only… German field names…”
+  - `build_user_instructions_segmuller(source_priority: list[str]) -> str`
+    - Same required header/item keys as Braun/Porta
+    - Same “FIELD OBJECT FORMAT” contract
+    - Generic PDF usage guidance (like Braun), no Porta-specific code-splitting rules
 
-3. **Convert second-pass verification to text-only**
-- File: `pipeline.py`
-  - Change verification gate from `branch.enable_item_code_verification and pdf_images` to:
-    - branch verification enabled
-    - non-empty `items_snapshot`
-    - at least one usable digital-text page exists in `pdf_text_by_image_name`
-  - Build a text-only payload object from `pdf_text_by_image_name` (ordered by page/index/name for determinism).
-  - If no usable digital text:
-    - skip verifier call
-    - append warning: `<branch label> item verification skipped: no digital PDF text available.`
-- File: `openai_extract.py`
-  - Replace/rename verifier entrypoint:
-    - from `verify_items_from_pdf(images, items_snapshot, page_text_by_image_name, verification_profile)`
-    - to text-only API, e.g. `verify_items_from_text(items_snapshot, page_text_by_image_name, verification_profile)`
-  - Build request content using:
-    - instructions text
-    - serialized `items_snapshot`
-    - per-page digital text blocks
-  - Do **not** append any `input_image`.
-- File: `prompts_verify_items.py`
-  - Update global and profile-specific prompt wording from “PDF pages (image + digital text)” to “digital PDF text only”.
-  - Add explicit rule: verify/correct only from provided text + existing snapshot; do not infer from image evidence.
-  - Keep profile-specific code rules (Porta/MOMAX/Braun) unchanged unless contradictory.
+### 2) Register branch
+**Update:** `extraction_branches.py`
+- Add `import prompts_segmuller`
+- Add `BRANCHES["segmuller"] = ExtractionBranch(...)` with:
+  - `id="segmuller"`, `label="Segmuller"`
+  - `description` mentioning identifying signals (sender `@segmueller.de`, PDF contains Segmüller/Segmueller text)
+  - `system_prompt=prompts_segmuller.SEGMULLER_SYSTEM_PROMPT`
+  - `build_user_instructions=prompts_segmuller.build_user_instructions_segmuller`
+  - `enable_item_code_verification=False`
+  - `is_momax_bg=False`
 
-4. **Keep correction application behavior stable**
-- File: `item_code_verification.py`
-  - No logic changes expected.
-  - Continue applying high-confidence corrections by `line_no`.
-  - Continue forcing `human_review_needed=true` when corrections are applied.
+### 3) Routing: hint + hard-match
+**Update:** `extraction_router.py`
+- Add regexes:
+  - `_SEGMUELLER_TOKEN_RE = re.compile(r"\\bsegm(?:ue|ü|u)ller\\b", re.IGNORECASE)`
+  - `_SEGMUELLER_DOMAIN_RE = re.compile(r"(?:@|\\b)(?:[a-z0-9-]+\\.)*segmueller\\.de\\b", re.IGNORECASE)`
+- Add:
+  - `_has_segmuller_hint(text: str) -> bool`:
+    - normalize whitespace
+    - return true if token or domain regex matches
+  - `_is_segmuller_hard_match(message: IngestedEmail, config: Config) -> bool`:
+    - require at least one PDF attachment
+    - require sender matches `_SEGMUELLER_DOMAIN_RE`
+- In `route_message(...)`, insert hard-match logic (priority):
+  1) existing `xxxlutz_default` mail-hint early return (keep)
+  2) existing momax_bg hard-matches/detectors (keep)
+  3) **if not forced** and `_is_segmuller_hard_match(...)`: force `segmuller`
+  4) existing braun/porta hard-matches (keep)
+- Extend router classifier guidance:
+  - In `_build_router_system_prompt()`, add a rule:
+    - “If `segmuller_hint` is true, prefer `branch_id="segmuller"` with high confidence unless a forced detector applies.”
+- Extend router input payload:
+  - In `_build_router_user_text(...)`, add `"segmuller_hint": ...` computed from joined email text OR any PDF first-page preview text (same pattern as `porta_hint`/`braun_hint`)
 
-5. **Cleanup/refactor for clarity**
-- Rename any misleading symbols/comments mentioning “from_pdf/images” where now text-only (minimally invasive but clear).
-- Ensure no dead code remains tied to detail extraction.
+### 4) Verification script coverage
+**Update:** `verify_routing.py`
+Add tests analogous to Porta/Braun:
+- `test_routing_segmuller_branch_selected()`
+  - classifier returns `{"branch_id":"segmuller","confidence":0.99,...}`
+  - assert warnings contain `Routing: selected=segmuller` and `fallback=false`
+- `test_segmuller_hint_from_pdf_markers()`
+  - patch `extraction_router._pdf_first_page_text` to return text containing “Segmüller” (or “Segmueller”)
+  - assert `_build_router_user_text(... )` JSON has `"segmuller_hint": true`
+- `test_routing_segmuller_hard_match_from_sender_domain()`
+  - message sender like `service@segmueller.de` with a PDF attachment
+  - classifier returns `unknown`
+  - assert routing warning shows `selected=segmuller`, `forced=true`, `fallback=false`
+- Add these to the `__main__` execution list at bottom.
 
-### Public APIs / Interfaces / Types Changes
-- Internal extractor interface change:
-  - Old: `verify_items_from_pdf(images, items_snapshot, page_text_by_image_name, verification_profile)`
-  - New: `verify_items_from_text(items_snapshot, page_text_by_image_name, verification_profile)` (or equivalent text-only signature).
-- Pipeline behavior contract:
-  - Verification no longer requires or sends images.
-  - Verification skipped when no digital PDF text exists (non-fatal warning).
+### 5) Sample-case folder scaffold
+**Add:** `CLIENT CASES/segmuller/README.md`
+- Same structure/guidelines as `CLIENT CASES/porta/README.md` and `CLIENT CASES/braun/README.md`
 
-### Test Plan
+---
 
-1. **Branch config tests**
-- `xxxlutz_default` has:
-  - `enable_detail_extraction == False`
-  - `enable_item_code_verification == True`
+## Public interfaces / behavior changes
+- New valid `branch_id`: `segmuller` (available to router classifier and pipeline).
+- Routing behavior:
+  - Any email **from `@segmueller.de` with ≥1 PDF** is **forced** to `segmuller` (bypasses low-confidence classifier outcomes).
+  - Emails/PDFs mentioning Segmüller/Segmueller/Segmuller set `segmuller_hint` to guide the classifier.
+- Item-code second-pass verification:
+  - **Not executed** for `segmuller` (`enable_item_code_verification=False`).
 
-2. **Pipeline verification gating**
-- Case A: digital text present + items present -> verifier called.
-- Case B: no digital text -> verifier not called, skip warning added.
-- Case C: empty items snapshot -> verifier not called.
+---
 
-3. **Verifier payload tests**
-- Assert no `input_image` parts are included for second-pass verification requests.
-- Assert per-page text is present and item snapshot included.
+## Test/verification plan
+Run locally:
+- `python verify_routing.py` (ensures new hint + forced routing works and doesn’t break existing tests)
+- Optional quick sanity: `python -m py_compile prompts_segmuller.py extraction_branches.py extraction_router.py`
 
-4. **Behavior regression tests**
-- High-confidence correction still updates fields and sets `human_review_needed=true`.
-- Low-confidence outputs remain no-op.
-- MOMAX special post-processing still runs after verification.
+---
 
-5. **Removal regression**
-- No code path invokes detail extraction.
-- `program/articles` from former detail pass are not added anymore.
-
-### Acceptance Criteria
-- No detailed extraction call exists in runtime pipeline.
-- `xxxlutz_default` runs second-pass verification when digital PDF text is available.
-- Second-pass verification sends only text (no page images).
-- Orders with scanned/no-text PDFs do not fail; verification is skipped with explicit warning.
-- Existing correction semantics (confidence threshold, warnings, human review forcing) remain intact.
-
-### Assumptions and Defaults
-- “Change Second pass item verification to only text” applies to all verification profiles (`xxxlutz_default`, `porta`, `braun`, `momax_bg`), not only `xxxlutz_default`.
-- Missing digital text handling is the chosen default: **skip + warning**.
-- No requirement to preserve former detail-extraction outputs (`program`, `articles`) in final normalized payload.
+## Assumptions
+- Segmuller orders arrive with **PDF attachments** (hard-match requires at least one PDF).
+- The authoritative sender domain to force routing is **`segmueller.de`**.
+- No special Segmuller-specific item code parsing rules are defined yet; extraction prompt stays generic, and item verification is disabled until real samples are reviewed.

@@ -17,6 +17,11 @@ _PORTA_DOMAIN_RE = re.compile(r"(?:@|\b)porta\.de\b", re.IGNORECASE)
 _PORTA_ORDER_RE = re.compile(r"bestellung\s*/\s*order", re.IGNORECASE)
 _BRAUN_TOKEN_RE = re.compile(r"\bbraun\b", re.IGNORECASE)
 _BRAUN_MOEBEL_RE = re.compile(r"m(?:oe|o|\u00f6)bel", re.IGNORECASE)
+_SEGMUELLER_TOKEN_RE = re.compile(r"\bsegm(?:ue|\u00fc|u)ller\b", re.IGNORECASE)
+_SEGMUELLER_DOMAIN_RE = re.compile(
+    r"(?:@|\b)(?:[a-z0-9-]+\.)*segmueller\.de\b",
+    re.IGNORECASE,
+)
 _BRAUN_MOEBELCENTER_RE = re.compile(
     r"m(?:oe|o|\u00f6)bel\s*[- ]?\s*center",
     re.IGNORECASE,
@@ -135,6 +140,16 @@ def _has_braun_hint(text: str) -> bool:
     return has_braun and has_moebel_context
 
 
+def _has_segmuller_hint(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    return bool(
+        _SEGMUELLER_TOKEN_RE.search(normalized)
+        or _SEGMUELLER_DOMAIN_RE.search(normalized)
+    )
+
+
 def _has_porta_layout_markers(text: str) -> bool:
     normalized = _normalize_whitespace(text or "")
     if not normalized:
@@ -239,6 +254,15 @@ def _is_braun_hard_match(message: IngestedEmail, config: Config) -> bool:
     return False
 
 
+def _is_segmuller_hard_match(message: IngestedEmail, config: Config) -> bool:
+    del config
+    pdf_attachments = [a for a in message.attachments if _is_pdf_attachment(a)]
+    if not pdf_attachments:
+        return False
+    sender_text = _normalize_whitespace(message.sender or "")
+    return bool(_SEGMUELLER_DOMAIN_RE.search(sender_text))
+
+
 def _build_router_system_prompt() -> str:
     branch_lines = [
         f"- {branch.id}: {branch.description}" for branch in BRANCHES.values()
@@ -258,7 +282,8 @@ def _build_router_system_prompt() -> str:
         "3. If momax_bg_detector is true in the input, return branch_id=\"momax_bg\" and confidence=1.0.\n"
         "4. If porta_hint is true, prefer branch_id=\"porta\" with high confidence unless a forced detector applies.\n"
         "5. If braun_hint is true, prefer branch_id=\"braun\" with high confidence unless a forced detector applies.\n"
-        "6. If uncertain, return branch_id=\"unknown\" with low confidence."
+        "6. If segmuller_hint is true, prefer branch_id=\"segmuller\" with high confidence unless a forced detector applies.\n"
+        "7. If uncertain, return branch_id=\"unknown\" with low confidence."
     )
 
 
@@ -318,6 +343,13 @@ def _build_router_user_text(
                 for preview in pdf_previews
             )
         ),
+        "segmuller_hint": bool(
+            _has_segmuller_hint(joined_email_text)
+            or any(
+                _has_segmuller_hint(preview.get("first_page_text", ""))
+                for preview in pdf_previews
+            )
+        ),
         "momax_bg_detector": bool(detector_results.get("momax_bg", False)),
         "hard_detectors": detector_results,
     }
@@ -369,6 +401,9 @@ def route_message(
     if not detector_results.get("momax_bg") and _is_momax_bg_hard_match(message):
         detector_results["momax_bg"] = True
     forced_branch_id = _forced_branch_id(detector_results)
+    if not forced_branch_id and _is_segmuller_hard_match(message, config):
+        forced_branch_id = "segmuller"
+        detector_results["segmuller"] = True
     if not forced_branch_id and _is_braun_hard_match(message, config):
         forced_branch_id = "braun"
         detector_results["braun"] = True
