@@ -775,6 +775,7 @@ def test_momax_bg_strict_code_ticket_regressions() -> None:
         ("CQ9191", "74405XB", "74405", "CQ9191XB"),
         ("XP", "CQ222206363", "06363", "CQ2222XP"),
         ("91", "60812XPCQSN", "60812", "CQSN91XP"),
+        ("", "BEAN41343665372", "65372", "BEAN413436"),
     ]
     for artikel_in, modell_in, artikel_out, modell_out in cases:
         normalized = normalize_output(
@@ -800,7 +801,7 @@ def test_momax_bg_strict_code_ticket_regressions() -> None:
             "momax_bg_strict_code_parser",
             "momax_bg_suffix_relocation",
         }
-    print("SUCCESS: momax_bg strict rules fix all five known ticket patterns.")
+    print("SUCCESS: momax_bg strict rules fix six known ticket patterns.")
 
 
 def test_momax_bg_strict_slash_reorder_policy() -> None:
@@ -845,6 +846,23 @@ def test_momax_bg_wrapped_article_merge_still_passes() -> None:
     assert item.get("artikelnummer", {}).get("value") == "18098"
     assert item.get("modellnummer", {}).get("value") == "SNSN71SP91"
     print("SUCCESS: momax_bg wrapped article merge still works with strict parser.")
+
+
+def test_momax_bg_slash_split_tail_digits_merge_to_strict_article() -> None:
+    normalized = normalize_output(
+        _momax_bg_item_data("", "BE/AN//41/34/36/653 72"),
+        message_id="strict_slash_tail_digits",
+        received_at="2026-02-13T12:00:00+00:00",
+        dayfirst=True,
+        warnings=[],
+        email_body="",
+        sender="bg@example.com",
+        is_momax_bg=True,
+    )
+    item = (normalized.get("items") or [{}])[0]
+    assert item.get("artikelnummer", {}).get("value") == "65372"
+    assert item.get("modellnummer", {}).get("value") == "BEAN413436"
+    print("SUCCESS: momax_bg slash token split tail digits are merged into strict article.")
 
 
 def test_momax_bg_pipeline_strict_after_verifier_conflict() -> None:
@@ -934,11 +952,12 @@ def test_momax_bg_pipeline_strict_after_verifier_conflict() -> None:
         )
 
         result = pipeline.process_message(message, config, extractor)
+        extractor.verify_items_from_text.assert_not_called()
         item = (result.data.get("items") or [{}])[0]
         assert item.get("artikelnummer", {}).get("value") == "60812"
         assert item.get("modellnummer", {}).get("value") == "CQSN91XP"
-        assert result.data.get("header", {}).get("human_review_needed", {}).get("value") is True
-        print("SUCCESS: momax_bg strict correction is re-applied after verifier conflicts.")
+        assert result.data.get("header", {}).get("human_review_needed", {}).get("value") is False
+        print("SUCCESS: momax_bg pipeline skips text-only verifier and keeps strict parsing result.")
     finally:
         pipeline._prepare_images = original_prepare_images
 
@@ -964,4 +983,5 @@ if __name__ == "__main__":
     test_momax_bg_strict_slash_reorder_policy()
     test_momax_bg_strict_leading_zero_preserved()
     test_momax_bg_wrapped_article_merge_still_passes()
+    test_momax_bg_slash_split_tail_digits_merge_to_strict_article()
     test_momax_bg_pipeline_strict_after_verifier_conflict()

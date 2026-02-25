@@ -107,7 +107,7 @@ class Config:
             smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
             smtp_ssl=_get_bool("SMTP_SSL", True),
 
-            reply_email_to=os.getenv("REPLY_EMAIL_TO", "00primex.eu@gmail.com").strip(),
+            reply_email_to=os.getenv("REPLY_EMAIL_TO", "140primex.eu@gmail.com").strip(),
             reply_email_body=os.getenv(
                 "REPLY_EMAIL_BODY",
                 "Please send the order with furnplan or make the order with 2 positions.",

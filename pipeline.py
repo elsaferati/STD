@@ -454,7 +454,7 @@ def process_message(
                         )
         apply_momax_bg_strict_item_code_corrections(normalized)
 
-    if branch.enable_item_code_verification:
+    if branch.enable_item_code_verification and not branch.is_momax_bg:
         items_snapshot = _build_items_snapshot(normalized.get("items"))
         if items_snapshot:
             verification_page_text_by_name = _ordered_verification_page_texts(
@@ -468,11 +468,6 @@ def process_message(
                     )
             else:
                 verification_profile = branch.id
-                fields_to_apply = (
-                    ("modellnummer", "artikelnummer")
-                    if branch.is_momax_bg
-                    else None
-                )
                 try:
                     verification_text = extractor.verify_items_from_text(
                         items_snapshot=items_snapshot,
@@ -484,10 +479,7 @@ def process_message(
                         normalized,
                         verification_data,
                         verification_profile=verification_profile,
-                        fields_to_apply=fields_to_apply,
                     )
-                    if branch.is_momax_bg:
-                        apply_momax_bg_strict_item_code_corrections(normalized)
                 except Exception as exc:
                     normalized_warnings = normalized.get("warnings")
                     if isinstance(normalized_warnings, list):

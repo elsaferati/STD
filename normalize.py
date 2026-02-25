@@ -463,6 +463,16 @@ def _clean_text(value: Any) -> str:
     return "\n".join(lines)
 
 
+def _to_line_no(value: Any) -> int | None:
+    try:
+        line_no = int(value)
+    except (TypeError, ValueError):
+        return None
+    if line_no <= 0:
+        return None
+    return line_no
+
+
 def _extract_reply_cases(email_body: str) -> list[str]:
     if not email_body:
         return []
@@ -611,6 +621,7 @@ _BG_LEADING_ARTIKEL_SUFFIX_MODEL_RE = re.compile(
     r"^(\d{5})(XB|XP)([A-Z0-9]+)$",
     re.IGNORECASE,
 )
+_BG_WARNING_LINE_RE = re.compile(r"\b(?:Position|Line)\s*(\d+)\b", re.IGNORECASE)
 
 
 def _split_momax_bg_code(raw: Any) -> tuple[str, str] | None:
@@ -709,19 +720,43 @@ def _build_momax_bg_codes_from_slash_tokens(
 
     article_idx = -1
     article_token = ""
+    consumed_article_indices: set[int] = set()
     for idx, token in enumerate(tokens):
         candidate = token.upper()
         if _BG_ARTIKEL_STRICT_RE.fullmatch(candidate):
             article_idx = idx
             article_token = candidate
+            consumed_article_indices = {idx}
             break
+    if article_idx < 0:
+        # Wrapped tail digits can appear split across numeric tokens (e.g. "653 72").
+        for start in range(len(tokens)):
+            if not tokens[start].isdigit():
+                continue
+            merged = ""
+            merged_indices: list[int] = []
+            for end in range(start, min(start + 3, len(tokens))):
+                part = tokens[end]
+                if not part.isdigit():
+                    break
+                merged += part
+                merged_indices.append(end)
+                if len(merged) > 5:
+                    break
+                if len(merged) == 5 and _BG_ARTIKEL_STRICT_RE.fullmatch(merged):
+                    article_idx = start
+                    article_token = merged
+                    consumed_article_indices = set(merged_indices)
+                    break
+            if article_idx >= 0:
+                break
     if article_idx < 0 or not article_token:
         return None
 
     suffix_token = ""
     model_tokens: list[str] = []
     for idx, token in enumerate(tokens):
-        if idx == article_idx:
+        if idx in consumed_article_indices:
             continue
         upper_token = token.upper()
         if not suffix_token and _BG_SUFFIX_ONLY_RE.fullmatch(upper_token):
@@ -810,6 +845,18 @@ def _apply_momax_bg_strict_item_code_correction(item: dict[str, Any]) -> bool:
             derived_from = "momax_bg_strict_code_parser"
             rule_applied = True
 
+    # Rule F: missing article, compact model carries trailing strict article token.
+    if not rule_applied:
+        compact_artikel = _normalize_momax_bg_artikelnummer(artikel).upper()
+        compact_model = _normalize_momax_bg_modellnummer(modell)
+        if not compact_artikel:
+            tail_match = re.fullmatch(r"(.+?)(\d{5}[A-Z]?)", compact_model, re.IGNORECASE)
+            if tail_match and re.search(r"[A-Za-z]", tail_match.group(1)):
+                artikel = tail_match.group(2).upper()
+                modell = tail_match.group(1)
+                derived_from = "momax_bg_strict_code_parser"
+                rule_applied = True
+
     if not derived_from:
         return False
 
@@ -869,6 +916,7 @@ def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
 
     if split_result:
         new_artikel, new_modell = split_result
+        new_artikel = _normalize_momax_bg_artikelnummer(new_artikel)
         new_modell = _normalize_momax_bg_modellnummer(new_modell)
 
         if new_artikel != artikel_value:
@@ -1554,6 +1602,43 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         for w in warnings
         if not (isinstance(w, str) and w.startswith(f"Reply needed: {MISSING_CRITICAL_ITEM_REPLY_PREFIX}"))
     ]
+    if is_momax_bg:
+        items_by_line: dict[int, dict[str, Any]] = {}
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            line_no = _to_line_no(item.get("line_no")) or idx
+            items_by_line[line_no] = item
+
+        filtered: list[str] = []
+        for warning in warnings:
+            text = str(warning or "")
+            lower = text.lower()
+            claims_missing_artikel = (
+                "artikelnummer" in lower
+                and (
+                    "keine artikelnummer" in lower
+                    or "keine eindeutige artikelnummer" in lower
+                    or "no artikelnummer found" in lower
+                    or "contains no artikelnummer" in lower
+                )
+            )
+            if claims_missing_artikel:
+                match = _BG_WARNING_LINE_RE.search(text)
+                if match:
+                    line_no = _to_line_no(match.group(1))
+                    if line_no and isinstance(items_by_line.get(line_no), dict):
+                        item = items_by_line[line_no]
+                        artikel_entry = item.get("artikelnummer")
+                        artikel_value = (
+                            _clean_text(artikel_entry.get("value"))
+                            if isinstance(artikel_entry, dict)
+                            else _clean_text(artikel_entry)
+                        ).upper()
+                        if _BG_ARTIKEL_STRICT_RE.fullmatch(artikel_value):
+                            continue
+            filtered.append(warning)
+        warnings = filtered
 
     if missing_header_no_ticket:
         warnings.append(f"Missing header fields: {', '.join(missing_header_no_ticket)}")
