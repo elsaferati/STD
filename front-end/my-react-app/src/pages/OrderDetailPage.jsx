@@ -42,6 +42,17 @@ function levelClass(level) {
   return "bg-blue-50 border-blue-200 text-blue-700";
 }
 
+const HIDDEN_HEADER_FIELDS = new Set([
+  "seller",
+  "iln",
+  "human_review_needed",
+  "iln_anl",
+  "iln_fil",
+  "post_case",
+  "reply_needed",
+  "adressnummer",
+]);
+
 export function OrderDetailPage() {
   const { token } = useAuth();
   const { orderId } = useParams();
@@ -103,16 +114,17 @@ export function OrderDetailPage() {
     const header = order?.header || {};
     const ordered = [];
     const seen = new Set();
+    const isVisibleField = (field) => !HIDDEN_HEADER_FIELDS.has(String(field || "").toLowerCase());
 
     (order?.editable_header_fields || []).forEach((field) => {
-      if (Object.prototype.hasOwnProperty.call(header, field)) {
+      if (Object.prototype.hasOwnProperty.call(header, field) && isVisibleField(field)) {
         ordered.push([field, header[field]]);
         seen.add(field);
       }
     });
 
     Object.keys(header)
-      .filter((field) => !seen.has(field))
+      .filter((field) => !seen.has(field) && isVisibleField(field))
       .sort()
       .forEach((field) => {
         ordered.push([field, header[field]]);
