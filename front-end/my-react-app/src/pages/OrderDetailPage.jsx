@@ -8,7 +8,6 @@ import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 import {
   entryConfidence,
-  entrySource,
   entryValue,
   fieldLabel,
   formatConfidence,
@@ -44,7 +43,7 @@ function levelClass(level) {
 }
 
 export function OrderDetailPage() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const { orderId } = useParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
@@ -266,6 +265,14 @@ export function OrderDetailPage() {
     );
   }
 
+  const displayOrderRef = [
+    entryValue(order?.header?.ticket_number),
+    entryValue(order?.header?.kom_nr),
+    order.order_id,
+  ]
+    .map((value) => String(value || "").trim())
+    .find((value) => value.length > 0) || order.order_id;
+
   return (
     <AppShell active="orders">
       <main className="flex-1 flex flex-col min-w-0">
@@ -282,9 +289,6 @@ export function OrderDetailPage() {
             </form>
             <div className="flex items-center gap-3 ml-4">
               <LanguageSwitcher compact className="hidden md:flex" />
-              <button onClick={logout} type="button" className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">
-                {t("common.logout")}
-              </button>
             </div>
           </header>
         </div>
@@ -298,10 +302,10 @@ export function OrderDetailPage() {
               <span className="material-icons text-base">chevron_right</span>
               <Link className="hover:text-primary transition-colors" to="/orders">{t("common.orderExtractions")}</Link>
               <span className="material-icons text-base">chevron_right</span>
-              <span className="text-primary font-medium">#{order.order_id}</span>
+              <span className="text-primary font-medium">#{displayOrderRef}</span>
             </nav>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: order.order_id })}</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: displayOrderRef })}</h1>
               {order.is_editable ? (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning/20 text-warning border border-warning/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
@@ -340,14 +344,12 @@ export function OrderDetailPage() {
                     <col className="w-64" />
                     <col className="w-[42%]" />
                     <col className="w-28" />
-                    <col className="w-28" />
                   </colgroup>
                   <thead className="text-xs text-slate-500 uppercase">
                     <tr>
                       <th className="px-6 py-3 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
                       <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.field")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.value")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.source")}</th>
                       <th className="px-6 py-3 font-medium tracking-wider text-right bg-slate-50">{t("common.confidence")}</th>
                     </tr>
                   </thead>
@@ -359,7 +361,6 @@ export function OrderDetailPage() {
                     <col className="w-16" />
                     <col className="w-64" />
                     <col className="w-[42%]" />
-                    <col className="w-28" />
                     <col className="w-28" />
                   </colgroup>
                   <tbody className="divide-y divide-slate-200">
@@ -385,7 +386,6 @@ export function OrderDetailPage() {
                               <span className="text-slate-700">{entryValue(entry) || "-"}</span>
                             )}
                           </td>
-                          <td className="px-6 py-4 text-slate-500">{entrySource(entry)}</td>
                           <td className="px-6 py-4 text-right">
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${lowConfidence ? "bg-warning/20 text-warning" : "bg-primary/10 text-primary-dark"}`}>
                               {formatConfidence(confidence)}

@@ -78,7 +78,7 @@ function getBucketTotals(bucket) {
 }
 
 export function OverviewPage() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
   const [overview, setOverview] = useState(null);
@@ -169,13 +169,6 @@ export function OverviewPage() {
                   />
                 </form>
                 <LanguageSwitcher compact className="hidden md:flex" />
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700 transition-colors lg:hidden"
-                >
-                  {t("common.logout")}
-                </button>
               </div>
             </div>
           </header>

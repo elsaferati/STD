@@ -1218,6 +1218,7 @@ def api_overview():
     now = datetime.now().astimezone()
     today = now.date()
     last_24h_start = now - timedelta(hours=24)
+    queue_velocity_hours = 72
 
     today_orders: list[dict[str, Any]] = []
     last_24h_orders: list[dict[str, Any]] = []
@@ -1242,7 +1243,9 @@ def api_overview():
         }
 
     current_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly_keys: list[datetime] = [current_hour - timedelta(hours=offset) for offset in range(23, -1, -1)]
+    hourly_keys: list[datetime] = [
+        current_hour - timedelta(hours=offset) for offset in range(queue_velocity_hours - 1, -1, -1)
+    ]
     hourly_counts: dict[datetime, int] = {key: 0 for key in hourly_keys}
 
     for order in orders:

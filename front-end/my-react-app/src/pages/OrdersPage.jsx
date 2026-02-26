@@ -34,7 +34,7 @@ function flagLabel(order, t) {
 }
 
 export function OrdersPage() {
-  const { token, logout } = useAuth();
+  const { token } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, lang } = useI18n();
@@ -439,9 +439,6 @@ export function OrdersPage() {
             </form>
             <div className="flex items-center gap-3 ml-4">
               <LanguageSwitcher compact className="hidden md:flex" />
-              <button onClick={logout} type="button" className="text-sm px-3 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-700">
-                {t("common.logout")}
-              </button>
             </div>
           </header>
 
@@ -523,6 +520,7 @@ export function OrdersPage() {
                   <tr>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-44 max-w-44">{t("common.kommissionNumber")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-64 max-w-64">{t("common.customer")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
@@ -543,9 +541,10 @@ export function OrdersPage() {
                           onClick={() => navigate(`/orders/${order.id}`)}
                           className="font-medium text-primary hover:underline block w-full text-left truncate"
                         >
-                          {order.ticket_number || order.kom_nr || order.id}
+                          {order.ticket_number || order.id}
                         </button>
                       </td>
+                      <td className="px-4 py-3 w-44 max-w-44 text-slate-700 truncate">{order.kom_nr || "-"}</td>
                       <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at, lang)}</td>
                       <td className="px-4 py-3 w-64 max-w-64">
                         <div className="font-medium text-slate-900 truncate">{order.kom_name || "-"}</div>
@@ -589,7 +588,7 @@ export function OrdersPage() {
                   ))}
                   {!loading && orders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>{t("orders.noMatchingOrders")}</td>
+                      <td className="px-4 py-8 text-center text-slate-500" colSpan={9}>{t("orders.noMatchingOrders")}</td>
                     </tr>
                   ) : null}
                 </tbody>
