@@ -192,6 +192,12 @@ _STREET_KEYWORD_START_RE = re.compile(
 )
 
 
+_SEGMULLER_MODEL_ARTIKEL_RE = re.compile(
+    r"^([A-Za-z0-9/]+)\s*-\s*(\d{5}[A-Za-z]?)$"
+)
+_SEGMULLER_ARTIKEL_RE = re.compile(r"^\d{5}[A-Za-z]?$")
+
+
 def _format_german_address_lines(value: str) -> str:
     """
     Enforce a 2-line German address format:
@@ -932,6 +938,39 @@ def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
         modell_entry["value"] = compact_model
 
 
+def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_model_artikel_split"
+
+
+def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
+    artikel_entry = _ensure_field(item, "artikelnummer")
+    modell_entry = _ensure_field(item, "modellnummer")
+
+    artikel_value = _clean_text(artikel_entry.get("value"))
+    modell_value = _clean_text(modell_entry.get("value"))
+    if not modell_value:
+        return
+
+    match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(modell_value.strip())
+    if not match:
+        return
+
+    parsed_model = match.group(1).strip()
+    parsed_artikel = match.group(2).strip().upper()
+    current_artikel = artikel_value.strip().upper()
+
+    if parsed_model != modell_value:
+        modell_entry["value"] = parsed_model
+        _mark_segmuller_code_derived(modell_entry)
+
+    # For Segmuller composite codes, always trust the strict trailing article token.
+    if current_artikel != parsed_artikel or not _SEGMULLER_ARTIKEL_RE.fullmatch(current_artikel):
+        artikel_entry["value"] = parsed_artikel
+        _mark_segmuller_code_derived(artikel_entry)
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -969,6 +1008,7 @@ def _normalize_items(
     dayfirst: bool,
     warnings: list[str],
     is_momax_bg: bool = False,
+    branch_id: str = "",
 ) -> None:
     for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
@@ -991,6 +1031,8 @@ def _normalize_items(
 
         if is_momax_bg:
             _normalize_momax_bg_item_codes(item)
+        elif (branch_id or "").strip() == "segmuller":
+            _normalize_segmuller_item_codes(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
@@ -1455,7 +1497,13 @@ def normalize_output(
     if not isinstance(items, list):
         items = []
     data["items"] = items
-    _normalize_items(items, dayfirst, warnings, is_momax_bg=is_momax_bg)
+    _normalize_items(
+        items,
+        dayfirst,
+        warnings,
+        is_momax_bg=is_momax_bg,
+        branch_id=branch_id,
+    )
     if is_momax_bg:
         apply_momax_bg_strict_item_code_corrections(data)
     _propagate_furncloud_id(items, warnings)
@@ -1664,3 +1712,4 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
             warnings.append(f"Missing item fields: {'; '.join(parts)}")
 
     data["warnings"] = warnings
+
