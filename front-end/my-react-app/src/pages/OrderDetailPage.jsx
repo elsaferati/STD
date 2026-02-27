@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
-import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
@@ -54,7 +53,6 @@ const HIDDEN_HEADER_FIELDS = new Set([
 ]);
 
 export function OrderDetailPage() {
-  const { token } = useAuth();
   const { orderId } = useParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
@@ -76,7 +74,7 @@ export function OrderDetailPage() {
       return;
     }
     try {
-      const payload = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`, { token });
+      const payload = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`);
       setOrder(payload);
       setError("");
       if (!isEditing) {
@@ -88,7 +86,7 @@ export function OrderDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [isEditing, orderId, t, token]);
+  }, [isEditing, orderId, t]);
 
   useEffect(() => {
     if (isEditing) {
@@ -159,7 +157,6 @@ export function OrderDetailPage() {
     try {
       const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, {
         method: "POST",
-        token,
       });
       setOrder((current) => (
         current
@@ -181,7 +178,7 @@ export function OrderDetailPage() {
     setBusyAction(`download:${filename}`);
     setError("");
     try {
-      const blob = await fetchBlob(`/api/files/${encodeURIComponent(filename)}`, { token });
+      const blob = await fetchBlob(`/api/files/${encodeURIComponent(filename)}`);
       downloadBlob(blob, filename);
     } catch (requestError) {
       setError(requestError.message || t("orderDetail.fileDownloadFailed"));
@@ -230,7 +227,6 @@ export function OrderDetailPage() {
     try {
       const updated = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`, {
         method: "PATCH",
-        token,
         body: {
           header: headerPatch,
           items: itemPatch,

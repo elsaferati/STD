@@ -22,8 +22,10 @@ export function AppShell({
   children,
   sidebarContent = null,
 }) {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const { t } = useI18n();
+
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="bg-background-light text-slate-800 font-display min-h-screen">
@@ -51,6 +53,9 @@ export function AppShell({
                 <NavLink to="/" active={active === "overview"} icon="space_dashboard" label={t("common.overview")} />
                 <NavLink to="/orders" active={active === "orders"} icon="receipt_long" label={t("common.orders")} />
                 <NavLink to="/clients" active={active === "clients"} icon="groups" label={t("common.clients")} />
+                {isAdmin ? (
+                  <NavLink to="/users" active={active === "users"} icon="manage_accounts" label={t("common.users")} />
+                ) : null}
               </div>
             </div>
 
@@ -73,7 +78,7 @@ export function AppShell({
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col h-screen overflow-y-auto lg:pl-6">
+        <div className="flex-1 flex flex-col h-screen overflow-y-auto lg:px-6">
           {children}
         </div>
       </div>

@@ -38,20 +38,90 @@ _BESTEHEND_AUS_JE_RE = re.compile(r"bestehend\s+aus\s+je\s*:", re.IGNORECASE)
 _PORTA_PARENT_ARTIKEL_NR_RE = re.compile(r"\b\d{6,8}\s*/\s*\d{2}\b")
 _PORTA_COMPONENT_PAIR_RE = re.compile(r"\b([A-Z0-9]{3,14})\s+(\d{4,6}[A-Z]?)\b")
 _PORTA_QTY_STK_RE = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*STK\b")
+_PORTA_PARENT_ROW_RE = re.compile(
+    r"\b\d+(?:[.,]\d+)?\s*STK\b.*\b\d{6,8}\s*/\s*\d{2}\b"
+)
 _PORTA_COMPONENT_BLOCK_END_RE = re.compile(
     r"\b(?:ANLIEFERUNG|RECHNUNGSADRESSE|VERKAUFSHAUS|SERVICE-CENTER|"
     r"BESUCHEN\s+SIE\s+UNS|FRAGEN\s+AN|MENGE|ARTIKEL-NR|"
     r"AMTSGERICHT|GESCH[AÄ]FTSF[ÜU]HRER|GESCHAEFTSFUEHRER|"
     r"UST-ID|UST\s*ID|ST\.-?NR|IBAN|BIC|COMMERZBANK|COBADEFF|"
-    r"HRA\s+\d{3,8}|HRB\s+\d{3,8})\b"
+    r"HRA\s+\d{3,8}|HRB\s+\d{3,8}|H\s*R\s*[AB8]\s+\d{3,8})\b"
 )
 _PORTA_LEGAL_LINE_RE = re.compile(
     r"\b(?:AMTSGERICHT|GESCH[AÄ]FTSF[ÜU]HRER|GESCHAEFTSFUEHRER|"
     r"UST-ID|USt-IdNr|ST\.-?NR|IBAN|BIC|COMMERZBANK|COBADEFF|"
-    r"HRA\s+\d{3,8}|HRB\s+\d{3,8})\b",
+    r"HRA\s+\d{3,8}|HRB\s+\d{3,8}|H\s*R\s*[AB8]\s+\d{3,8})\b",
     re.IGNORECASE,
 )
 _PORTA_INVALID_COMPONENT_MODELS = {"HRB", "HRA"}
+_PORTA_KOM_NAME_LABEL_RE = re.compile(
+    r"\b(?:kommissionsname|kommissions-?name|commissionname)\b",
+    re.IGNORECASE,
+)
+_PORTA_KOM_LINE_RE = re.compile(
+    r"\b(?:kommission|komm)\b", re.IGNORECASE
+)
+_PORTA_KOM_NUMBER_RE = re.compile(r"\d{4,}(?:/\d+)?")
+_PORTA_KOM_NAME_REJECT_RE = re.compile(
+    r"\b(?:bestelldatum|datum|kundennr|kunden-?nr|debitor|konto|iln|gln|"
+    r"liefertermin|wunschtermin|lieferadresse|lieferanschrift|"
+    r"verk[aä]ufer|verkaeufer|verkausfhaus|service-center|"
+    r"anlieferung|rechnungsadresse)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_porta_kom_name(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    if text.isdigit():
+        return ""
+    if _PORTA_KOM_NAME_REJECT_RE.search(text):
+        return ""
+    return text
+
+
+def _extract_porta_kom_name_from_pdf_texts(
+    page_text_by_image_name: dict[str, str],
+) -> str:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return ""
+
+    for _image_name, page_text in ordered_pages.items():
+        lines = [
+            str(line).strip()
+            for line in str(page_text or "").splitlines()
+            if str(line).strip()
+        ]
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if _PORTA_KOM_NAME_LABEL_RE.search(line):
+                parts = re.split(r"[:\-]", line, maxsplit=1)
+                candidate = parts[1] if len(parts) > 1 else ""
+                candidate = _clean_porta_kom_name(candidate)
+                if candidate:
+                    return candidate
+            if _PORTA_KOM_LINE_RE.search(line):
+                after = line
+                parts = re.split(r"[:\-]", line, maxsplit=1)
+                if len(parts) > 1:
+                    after = parts[1]
+                number_match = _PORTA_KOM_NUMBER_RE.search(after)
+                if number_match:
+                    candidate = after[number_match.end():].strip(" :,-")
+                    candidate = _clean_porta_kom_name(candidate)
+                    if candidate:
+                        return candidate
+                if number_match and index + 1 < len(lines):
+                    next_line = _clean_porta_kom_name(lines[index + 1])
+                    if next_line:
+                        return next_line
+            index += 1
+    return ""
 
 
 @dataclass
@@ -156,6 +226,17 @@ def _extract_page_number_from_image_name(image_name: str) -> int | None:
         return int(match.group(1))
     except ValueError:
         return None
+
+
+def _is_invalid_porta_component_model(model: str) -> bool:
+    token = re.sub(r"[^A-Z0-9]", "", str(model or "").upper())
+    if not token:
+        return True
+    normalized = token.replace("8", "B")
+    if normalized in _PORTA_INVALID_COMPONENT_MODELS:
+        return True
+    # OCR variants of legal register tokens should never become item models.
+    return normalized.startswith("HRB") or normalized.startswith("HRA")
 
 
 def _extract_pdf_page_texts(
@@ -309,6 +390,178 @@ def _entry_value(entry: Any) -> Any:
     return entry
 
 
+def _ensure_item_field(item: dict[str, Any], field: str) -> dict[str, Any]:
+    entry = item.get(field)
+    if not isinstance(entry, dict):
+        entry = {"value": entry if entry is not None else "", "source": "derived", "confidence": 0.0}
+        item[field] = entry
+    entry.setdefault("value", "")
+    entry.setdefault("source", "derived")
+    entry.setdefault("confidence", 0.0)
+    return entry
+
+
+def _extract_porta_quantity_candidates(
+    page_text_by_image_name: dict[str, str],
+) -> dict[tuple[str, str], set[int | float]]:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return {}
+
+    qty_map: dict[tuple[str, str], set[int | float]] = {}
+    for _image_name, page_text in ordered_pages.items():
+        lines = [
+            str(line).strip()
+            for line in str(page_text or "").splitlines()
+            if str(line).strip()
+        ]
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            upper = line.upper()
+            qty_match = _PORTA_QTY_STK_RE.search(upper)
+            if not qty_match:
+                index += 1
+                continue
+            qty = _parse_qty_token(qty_match.group(1))
+            pairs = _PORTA_COMPONENT_PAIR_RE.findall(upper)
+            if not pairs and index + 1 < len(lines):
+                next_upper = lines[index + 1].upper()
+                pairs = _PORTA_COMPONENT_PAIR_RE.findall(next_upper)
+            for model, article in pairs:
+                if not any(ch.isalpha() for ch in model):
+                    continue
+                if _is_invalid_porta_component_model(model):
+                    continue
+                key = (model, article)
+                qty_map.setdefault(key, set()).add(qty)
+            index += 1
+    return qty_map
+
+
+def _apply_porta_quantity_corrections(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return
+    qty_map = _extract_porta_quantity_candidates(page_text_by_image_name)
+    if not qty_map:
+        return
+    warnings = normalized.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+        normalized["warnings"] = warnings
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not model or not article:
+            continue
+        key = (model, article)
+        qty_set = qty_map.get(key)
+        if not qty_set or len(qty_set) != 1:
+            continue
+        qty = next(iter(qty_set))
+        entry = _ensure_item_field(item, "menge")
+        current = _parse_qty_token(entry.get("value"))
+        if _qty_key(current) == _qty_key(qty):
+            continue
+        entry["value"] = qty
+        entry["source"] = "derived"
+        entry["confidence"] = 0.95
+        entry["derived_from"] = "porta_pdf_quantity"
+        line_no = item.get("line_no", "")
+        warnings.append(
+            f"Porta quantity corrected from PDF text for item line {line_no}: {current} -> {qty}."
+        )
+
+
+def _trim_porta_component_excess_items(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return
+    expected_occurrences = _extract_porta_component_occurrences_from_page_texts(
+        page_text_by_image_name
+    )
+    if not expected_occurrences:
+        return
+
+    expected_counts: Counter[tuple[str, str, str]] = Counter()
+    for occurrence in expected_occurrences:
+        key = (
+            str(occurrence.get("modellnummer") or "").strip().upper(),
+            str(occurrence.get("artikelnummer") or "").strip().upper(),
+            _qty_key(occurrence.get("menge")),
+        )
+        if not key[0] or not key[1]:
+            continue
+        expected_counts[key] += 1
+
+    if not expected_counts:
+        return
+
+    items_by_key: dict[tuple[str, str, str], list[tuple[int, dict[str, Any]]]] = {}
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not model or not article:
+            continue
+        qty = _qty_key(_entry_value(item.get("menge")))
+        key = (model, article, qty)
+        items_by_key.setdefault(key, []).append((idx, item))
+
+    to_remove: set[int] = set()
+    for key, group in items_by_key.items():
+        expected = expected_counts.get(key, 0)
+        if expected <= 0:
+            continue
+        if len(group) <= expected:
+            continue
+        # Prefer keeping non-derived items; remove derived reconciliation entries first.
+        def _priority(entry: dict[str, Any]) -> tuple[int, int]:
+            derived_from = ""
+            model_entry = entry.get("modellnummer", {})
+            if isinstance(model_entry, dict):
+                derived_from = str(model_entry.get("derived_from") or "")
+            # Lower is better (kept)
+            is_reconciliation = 1 if "porta_component_occurrence_reconciliation" in derived_from else 0
+            is_derived = 1 if (isinstance(model_entry, dict) and model_entry.get("source") == "derived") else 0
+            return (is_reconciliation, is_derived)
+
+        sorted_group = sorted(group, key=lambda pair: _priority(pair[1]))
+        # Keep first expected, remove the rest
+        for idx, _item in sorted_group[expected:]:
+            to_remove.add(idx)
+
+    if not to_remove:
+        return
+
+    warnings = normalized.get("warnings")
+    if not isinstance(warnings, list):
+        warnings = []
+        normalized["warnings"] = warnings
+
+    trimmed = [item for i, item in enumerate(items) if i not in to_remove]
+    removed_count = len(items) - len(trimmed)
+    if removed_count > 0:
+        normalized["items"] = trimmed
+        for line_no, item in enumerate(trimmed, start=1):
+            if isinstance(item, dict):
+                item["line_no"] = line_no
+        warnings.append(
+            f"Porta: removed {removed_count} duplicate component item(s) based on PDF text."
+        )
+
+
 def _build_items_snapshot(items: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
@@ -388,6 +641,8 @@ def _is_porta_component_block_end(line: str) -> bool:
     upper = str(line or "").upper()
     if _PORTA_PARENT_ARTIKEL_NR_RE.search(upper):
         return True
+    if _PORTA_PARENT_ROW_RE.search(upper):
+        return True
     if _PORTA_LEGAL_LINE_RE.search(upper):
         return True
     return bool(_PORTA_COMPONENT_BLOCK_END_RE.search(upper))
@@ -414,7 +669,7 @@ def _extract_porta_parent_signature(line: str) -> tuple[str, str, str] | None:
     for model, article in _PORTA_COMPONENT_PAIR_RE.findall(upper):
         if not any(ch.isalpha() for ch in model):
             continue
-        if model in _PORTA_INVALID_COMPONENT_MODELS:
+        if _is_invalid_porta_component_model(model):
             continue
         pair_model = model
         pair_article = article
@@ -445,7 +700,7 @@ def _extract_porta_component_pair_from_group(
     model, article = pairs[-1]
     if not any(ch.isalpha() for ch in model):
         return None
-    if model in _PORTA_INVALID_COMPONENT_MODELS:
+    if _is_invalid_porta_component_model(model):
         return None
     return (model, article)
 
@@ -454,8 +709,11 @@ def _append_component_to_block(
     component_block: dict[str, Any] | None,
     group_lines: list[str],
     quantity: int | float,
+    has_explicit_qty: bool,
 ) -> None:
     if not component_block:
+        return
+    if not has_explicit_qty:
         return
 
     pair = _extract_porta_component_pair_from_group(group_lines)
@@ -472,6 +730,7 @@ def _append_component_to_block(
             "modellnummer": model,
             "artikelnummer": article,
             "menge": quantity,
+            "explicit": True,
         }
     )
 
@@ -505,6 +764,7 @@ def _extract_porta_component_blocks_from_page_texts(
         in_component_block = False
         current_group_lines: list[str] = []
         current_group_qty: int | float = 1
+        current_group_has_explicit_qty = False
         current_block: dict[str, Any] | None = None
         last_parent_signature: tuple[str, str, str] | None = None
         index = 0
@@ -518,9 +778,11 @@ def _extract_porta_component_blocks_from_page_texts(
                     component_block=current_block,
                     group_lines=current_group_lines,
                     quantity=current_group_qty,
+                    has_explicit_qty=current_group_has_explicit_qty,
                 )
                 current_group_lines = []
                 current_group_qty = 1
+                current_group_has_explicit_qty = False
                 _finalize_porta_component_block(blocks, current_block)
                 current_block = None
                 in_component_block = False
@@ -532,11 +794,13 @@ def _extract_porta_component_blocks_from_page_texts(
                         component_block=current_block,
                         group_lines=current_group_lines,
                         quantity=current_group_qty,
+                        has_explicit_qty=current_group_has_explicit_qty,
                     )
                     _finalize_porta_component_block(blocks, current_block)
                 in_component_block = True
                 current_group_lines = []
                 current_group_qty = 1
+                current_group_has_explicit_qty = False
                 current_block = {
                     "page": image_name,
                     "parent_signature": last_parent_signature,
@@ -552,15 +816,14 @@ def _extract_porta_component_blocks_from_page_texts(
                         component_block=current_block,
                         group_lines=current_group_lines,
                         quantity=current_group_qty,
+                        has_explicit_qty=current_group_has_explicit_qty,
                     )
                     current_group_qty = _parse_qty_token(qty_match.group(1))
                     current_group_lines = [line]
+                    current_group_has_explicit_qty = True
                 else:
                     if current_group_lines:
                         current_group_lines.append(line)
-                    elif _PORTA_COMPONENT_PAIR_RE.search(upper):
-                        current_group_qty = 1
-                        current_group_lines = [line]
                 index += 1
                 continue
 
@@ -574,6 +837,7 @@ def _extract_porta_component_blocks_from_page_texts(
                 component_block=current_block,
                 group_lines=current_group_lines,
                 quantity=current_group_qty,
+                has_explicit_qty=current_group_has_explicit_qty,
             )
             _finalize_porta_component_block(blocks, current_block)
 
@@ -604,6 +868,7 @@ def _extract_porta_component_occurrences_from_blocks(
                     "menge": component.get("menge", 1),
                     "page": block.get("page", ""),
                     "parent_signature": block.get("parent_signature"),
+                    "explicit": bool(component.get("explicit", False)),
                 }
             )
     return occurrences
@@ -637,6 +902,7 @@ def _extract_porta_expected_occurrences_with_backfill(
                     "modellnummer": model,
                     "artikelnummer": article,
                     "menge": component.get("menge", 1),
+                    "explicit": bool(component.get("explicit", False)),
                 }
             )
 
@@ -649,7 +915,9 @@ def _extract_porta_expected_occurrences_with_backfill(
             canonical = canonical_components_by_parent.get(parent_signature)
             if canonical and len(components) < len(canonical):
                 for missing_component in canonical[len(components) :]:
-                    components.append(dict(missing_component))
+                    backfilled = dict(missing_component)
+                    backfilled["explicit"] = False
+                    components.append(backfilled)
                     backfilled_component_count += 1
             if parent_signature not in canonical_components_by_parent or len(components) > len(
                 canonical_components_by_parent[parent_signature]
@@ -666,6 +934,7 @@ def _extract_porta_expected_occurrences_with_backfill(
                     "menge": component.get("menge", 1),
                     "page": block.get("page", ""),
                     "parent_signature": parent_signature,
+                    "explicit": bool(component.get("explicit", False)),
                 }
             )
 
@@ -692,6 +961,31 @@ def _count_item_occurrences(items: Any) -> dict[tuple[str, str, str], int]:
             continue
         qty = _qty_key(_entry_value(item.get("menge")))
         counts[(model, article, qty)] += 1
+    return dict(counts)
+
+
+def _count_non_derived_item_pairs(items: Any) -> dict[tuple[str, str], int]:
+    counts: Counter[tuple[str, str]] = Counter()
+    if not isinstance(items, list):
+        return {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not model or not article:
+            continue
+        model_source = "derived"
+        article_source = "derived"
+        model_entry = item.get("modellnummer")
+        article_entry = item.get("artikelnummer")
+        if isinstance(model_entry, dict):
+            model_source = str(model_entry.get("source") or "derived").lower()
+        if isinstance(article_entry, dict):
+            article_source = str(article_entry.get("source") or "derived").lower()
+        if model_source == "derived" and article_source == "derived":
+            continue
+        counts[(model, article)] += 1
     return dict(counts)
 
 
@@ -743,8 +1037,20 @@ def _reconcile_porta_component_occurrences(
         normalized["items"] = items
 
     existing_counts = _count_item_occurrences(items)
+    non_derived_pair_counts = _count_non_derived_item_pairs(items)
+    explicit_expected_pair_counts: Counter[tuple[str, str]] = Counter()
+    for occurrence in expected_occurrences:
+        if not bool(occurrence.get("explicit", False)):
+            continue
+        model = str(occurrence.get("modellnummer") or "").strip().upper()
+        article = str(occurrence.get("artikelnummer") or "").strip().upper()
+        if not model or not article:
+            continue
+        explicit_expected_pair_counts[(model, article)] += 1
+
     seen_expected: Counter[tuple[str, str, str]] = Counter()
     missing_occurrences: list[dict[str, Any]] = []
+    skipped_due_guard = 0
 
     for occurrence in expected_occurrences:
         key = (
@@ -756,6 +1062,12 @@ def _reconcile_porta_component_occurrences(
             continue
         seen_expected[key] += 1
         if seen_expected[key] > existing_counts.get(key, 0):
+            pair_key = (key[0], key[1])
+            has_non_derived_item = non_derived_pair_counts.get(pair_key, 0) > 0
+            has_second_explicit_occurrence = explicit_expected_pair_counts.get(pair_key, 0) > 1
+            if has_non_derived_item and not has_second_explicit_occurrence:
+                skipped_due_guard += 1
+                continue
             missing_occurrences.append(occurrence)
 
     warnings = _ensure_warning_list(normalized)
@@ -763,6 +1075,13 @@ def _reconcile_porta_component_occurrences(
         warnings.append(
             "Porta reconciliation backfilled missing component(s) in repeated "
             "'bestehend aus je:' block based on earlier matching block."
+        )
+    if skipped_due_guard > 0:
+        warnings.append(
+            "Porta reconciliation skipped "
+            f"{skipped_due_guard} inferred component occurrence(s) because a non-derived "
+            "item already exists for the same model/article and no second explicit "
+            "'bestehend aus je:' occurrence was found."
         )
 
     if not missing_occurrences:
@@ -919,6 +1238,72 @@ def process_message(
 
     if branch.id == "porta":
         _reconcile_porta_component_occurrences(normalized, pdf_text_by_image_name)
+        header = normalized.get("header")
+        if not isinstance(header, dict):
+            header = {}
+            normalized["header"] = header
+        kom_nr_entry = header.get("kom_nr", {})
+        kom_nr_val = ""
+        if isinstance(kom_nr_entry, dict):
+            kom_nr_val = str(kom_nr_entry.get("value", "") or "").strip()
+        else:
+            kom_nr_val = str(kom_nr_entry or "").strip()
+        if kom_nr_val:
+            kom_nr_trimmed = re.sub(r"/\d+\b", "", kom_nr_val).strip()
+            if kom_nr_trimmed != kom_nr_val:
+                if not isinstance(kom_nr_entry, dict):
+                    kom_nr_entry = {"value": kom_nr_val, "source": "derived", "confidence": 0.0}
+                kom_nr_entry["value"] = kom_nr_trimmed
+                kom_nr_entry["derived_from"] = "porta_kom_nr_suffix_trim"
+                header["kom_nr"] = kom_nr_entry
+        kom_entry = header.get("kom_name", {})
+        kom_val = ""
+        if isinstance(kom_entry, dict):
+            kom_val = str(kom_entry.get("value", "") or "").strip()
+        else:
+            kom_val = str(kom_entry or "").strip()
+        if not kom_val:
+            kom_from_pdf = _extract_porta_kom_name_from_pdf_texts(
+                pdf_text_by_image_name
+            )
+            if kom_from_pdf:
+                header["kom_name"] = {
+                    "value": kom_from_pdf,
+                    "source": "pdf",
+                    "confidence": 0.95,
+                    "derived_from": "porta_pdf_kom_name",
+                }
+                normalized_warnings = normalized.get("warnings")
+                if isinstance(normalized_warnings, list):
+                    normalized_warnings.append(
+                        "Porta: kom_name filled from PDF kommission line."
+                    )
+            else:
+                store_entry = header.get("store_name", {})
+                store_val = ""
+                store_source = "derived"
+                store_conf = 0.0
+                if isinstance(store_entry, dict):
+                    store_val = str(store_entry.get("value", "") or "").strip()
+                    store_source = str(store_entry.get("source", "") or "derived")
+                    try:
+                        store_conf = float(store_entry.get("confidence", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        store_conf = 0.0
+                else:
+                    store_val = str(store_entry or "").strip()
+                if store_val and re.search(r"\bporta\b", store_val, re.IGNORECASE):
+                    header["kom_name"] = {
+                        "value": store_val,
+                        "source": store_source or "derived",
+                        "confidence": store_conf if store_conf > 0.0 else 0.9,
+                        "derived_from": "porta_store_name_fallback",
+                    }
+                    normalized_warnings = normalized.get("warnings")
+                    if isinstance(normalized_warnings, list):
+                        normalized_warnings.append(
+                            "Porta: kom_name filled from store_name fallback."
+                        )
 
     if branch.is_momax_bg:
         wrapped_article_map = momax_bg.extract_momax_bg_wrapped_article_map(message.attachments)
@@ -993,6 +1378,10 @@ def process_message(
         normalized["warnings"] = _zb_warnings
     if zb_lookup.apply_zb_modellnummer_lookup(normalized, _zb_warnings):
         refresh_missing_warnings(normalized)
+
+    if branch.id == "porta":
+        _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
+        _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)
 
     if route.used_fallback:
         header = normalized.get("header")

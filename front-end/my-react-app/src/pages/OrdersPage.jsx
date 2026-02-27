@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
-import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
@@ -34,7 +33,6 @@ function flagLabel(order, t) {
 }
 
 export function OrdersPage() {
-  const { token } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, lang } = useI18n();
@@ -103,7 +101,7 @@ export function OrdersPage() {
 
   const loadOrders = useCallback(async () => {
     try {
-      const result = await fetchJson(`/api/orders${queryString ? `?${queryString}` : ""}`, { token });
+      const result = await fetchJson(`/api/orders${queryString ? `?${queryString}` : ""}`);
       setPayload(result);
       setError("");
     } catch (requestError) {
@@ -111,7 +109,7 @@ export function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [queryString, t, token]);
+  }, [queryString, t]);
 
   useEffect(() => {
     loadOrders();
@@ -169,7 +167,7 @@ export function OrdersPage() {
       if (initials) exportParams.set("initials", initials);
       if (exportTitle) exportParams.set("title", exportTitle);
       const exportQuery = exportParams.toString();
-      const blob = await fetchBlob(`/api/orders.xlsx${exportQuery ? `?${exportQuery}` : ""}`, { token });
+      const blob = await fetchBlob(`/api/orders.xlsx${exportQuery ? `?${exportQuery}` : ""}`);
       downloadBlob(blob, buildExportFilename(exportTitle, initials));
     } catch (requestError) {
       setActionError(requestError.message || t("orders.excelExportFailed"));
@@ -182,7 +180,7 @@ export function OrdersPage() {
     setActionBusy(`export:${orderId}`);
     setActionError("");
     try {
-      const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST", token });
+      const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST" });
       const xmlFiles = Array.isArray(result?.xml_files) ? result.xml_files : [];
       if (!xmlFiles.length) {
         throw new Error(t("orders.noXmlAvailable"));
@@ -196,7 +194,7 @@ export function OrdersPage() {
       if (!xmlFile?.filename) {
         throw new Error(t("orders.noXmlAvailable"));
       }
-      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`, { token });
+      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`);
       downloadBlob(blob, xmlFile.filename);
       await loadOrders();
     } catch (requestError) {
@@ -210,12 +208,12 @@ export function OrdersPage() {
     setActionBusy(`download:${orderId}`);
     setActionError("");
     try {
-      const detail = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`, { token });
+      const detail = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`);
       const xmlFile = detail?.xml_files?.[0];
       if (!xmlFile) {
         throw new Error(t("orders.noXmlAvailable"));
       }
-      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`, { token });
+      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`);
       downloadBlob(blob, xmlFile.filename);
     } catch (requestError) {
       setActionError(requestError.message || t("orders.xmlDownloadFailed"));
@@ -231,7 +229,7 @@ export function OrdersPage() {
     setActionBusy(`delete:${order.id}`);
     setActionError("");
     try {
-      await fetchJson(`/api/orders/${encodeURIComponent(order.id)}`, { method: "DELETE", token });
+      await fetchJson(`/api/orders/${encodeURIComponent(order.id)}`, { method: "DELETE" });
       await loadOrders();
     } catch (requestError) {
       setActionError(requestError.message || t("orders.deleteFailed"));

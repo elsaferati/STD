@@ -1522,6 +1522,28 @@ def normalize_output(
             if formatted != value:
                 entry["value"] = formatted
 
+    if (branch_id or "").strip() == "porta":
+        store_entry = header.get("store_address", {})
+        delivery_entry = header.get("lieferanschrift", {})
+        store_val = ""
+        delivery_val = ""
+        if isinstance(store_entry, dict):
+            store_val = str(store_entry.get("value", "") or "").strip()
+        else:
+            store_val = str(store_entry or "").strip()
+        if isinstance(delivery_entry, dict):
+            delivery_val = str(delivery_entry.get("value", "") or "").strip()
+        else:
+            delivery_val = str(delivery_entry or "").strip()
+        if store_val and delivery_val and store_val == delivery_val:
+            if not isinstance(store_entry, dict):
+                store_entry = {"value": store_val, "source": "derived", "confidence": 0.0}
+            store_entry["value"] = ""
+            store_entry["source"] = "derived"
+            store_entry["confidence"] = 0.0
+            store_entry["derived_from"] = "porta_store_address_matches_delivery"
+            header["store_address"] = store_entry
+
     # When agent used ILN fallback or AI-assisted match, require human review (header-only edit)
     kdnr_entry = header.get("kundennummer", {})
     if isinstance(kdnr_entry, dict):

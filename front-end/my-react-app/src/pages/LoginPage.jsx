@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
@@ -12,15 +11,16 @@ export function LoginPage() {
   const from = location.state?.from || "/";
   const { t } = useI18n();
 
-  const [tokenInput, setTokenInput] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    const token = tokenInput.trim();
-    if (!token) {
-      setError(t("login.tokenRequired"));
+    const normalizedUsername = username.trim();
+    if (!normalizedUsername || !password) {
+      setError(t("login.credentialsRequired"));
       return;
     }
 
@@ -28,8 +28,7 @@ export function LoginPage() {
     setError("");
 
     try {
-      await fetchJson("/api/auth/check", { token });
-      login(token);
+      await login(normalizedUsername, password);
       navigate(from, { replace: true });
     } catch (requestError) {
       setError(requestError.message || t("login.authFailed"));
@@ -55,7 +54,7 @@ export function LoginPage() {
               <span className="material-icons text-4xl">inventory_2</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900 mb-2">
-              <span className="text-red-600 font-black">XX</span>LUTZ <span className="text-slate-500 font-medium">Order Agent</span>
+              <span className="text-primary font-black">STD</span> <span className="text-slate-500 font-medium">Order Agent</span>
             </h1>
             <p className="text-sm text-slate-500">{t("login.secureAccess")}</p>
           </div>
@@ -63,20 +62,40 @@ export function LoginPage() {
           <div className="px-8 pb-10">
             <form className="space-y-5" onSubmit={handleSubmit}>
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500" htmlFor="token">
-                  {t("login.bearerToken")}
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500" htmlFor="username">
+                  {t("login.username")}
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <span className="material-icons text-slate-400 text-lg">vpn_key</span>
+                    <span className="material-icons text-slate-400 text-lg">person</span>
                   </div>
                   <input
-                    id="token"
-                    value={tokenInput}
-                    onChange={(event) => setTokenInput(event.target.value)}
+                    id="username"
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
                     className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-                    placeholder={t("login.tokenPlaceholder")}
-                    autoComplete="off"
+                    placeholder={t("login.usernamePlaceholder")}
+                    autoComplete="username"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500" htmlFor="password">
+                  {t("login.password")}
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <span className="material-icons text-slate-400 text-lg">lock</span>
+                  </div>
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className="block w-full pl-10 pr-3 py-3 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                    placeholder={t("login.passwordPlaceholder")}
+                    autoComplete="current-password"
                   />
                 </div>
               </div>
@@ -100,7 +119,7 @@ export function LoginPage() {
             <span>{t("login.dashboardLogin")}</span>
             <span className="flex items-center gap-1">
               <span className="material-icons text-[14px]">shield</span>
-              {t("login.bearerAuth")}
+              {t("login.sessionAuth")}
             </span>
           </div>
         </div>
