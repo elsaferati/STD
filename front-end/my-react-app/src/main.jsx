@@ -11,6 +11,7 @@ import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { UsersPage } from "./pages/UsersPage";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
@@ -25,6 +26,7 @@ createRoot(document.getElementById("root")).render(
               <Route path="/orders/:orderId" element={<OrderDetailPage />} />
               <Route path="/clients" element={<ClientsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/users" element={<UsersPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

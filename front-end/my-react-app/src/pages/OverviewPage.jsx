@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { fetchJson } from "../api/http";
-import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
@@ -78,7 +77,6 @@ function getBucketTotals(bucket) {
 }
 
 export function OverviewPage() {
-  const { token } = useAuth();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
   const [overview, setOverview] = useState(null);
@@ -89,7 +87,7 @@ export function OverviewPage() {
 
   const loadOverview = useCallback(async () => {
     try {
-      const payload = await fetchJson("/api/overview", { token });
+      const payload = await fetchJson("/api/overview");
       setOverview(payload);
       setError("");
     } catch (requestError) {
@@ -97,7 +95,7 @@ export function OverviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [token, t]);
+  }, [t]);
 
   useEffect(() => {
     loadOverview();

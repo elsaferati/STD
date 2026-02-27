@@ -39,16 +39,12 @@ async function parsePayload(response) {
 export async function fetchJson(path, options = {}) {
   const {
     method = "GET",
-    token,
     body,
     headers = {},
     signal,
   } = options;
 
   const requestHeaders = new Headers(headers);
-  if (token) {
-    requestHeaders.set("Authorization", `Bearer ${token}`);
-  }
   if (body !== undefined) {
     requestHeaders.set("Content-Type", "application/json");
   }
@@ -56,6 +52,7 @@ export async function fetchJson(path, options = {}) {
   const response = await fetch(buildUrl(path), {
     method,
     headers: requestHeaders,
+    credentials: "include",
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
@@ -74,19 +71,16 @@ export async function fetchJson(path, options = {}) {
 export async function fetchBlob(path, options = {}) {
   const {
     method = "GET",
-    token,
     headers = {},
     signal,
   } = options;
 
   const requestHeaders = new Headers(headers);
-  if (token) {
-    requestHeaders.set("Authorization", `Bearer ${token}`);
-  }
 
   const response = await fetch(buildUrl(path), {
     method,
     headers: requestHeaders,
+    credentials: "include",
     signal,
   });
 

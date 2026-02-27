@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 from datetime import date, datetime, timedelta
-import hmac
 import io
 import json
 import os
@@ -13,12 +12,14 @@ from threading import Lock
 import time
 from typing import Any
 from urllib.parse import quote
+import uuid
 
 from dotenv import load_dotenv
 from flask import (
     Flask,
     Response,
     abort,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -35,6 +36,17 @@ from werkzeug.exceptions import HTTPException
 from config import Config
 from normalize import refresh_missing_warnings
 import xml_exporter
+from auth import (
+    authenticate_user,
+    create_session,
+    get_session_user,
+    hash_password,
+    revoke_session,
+    seed_admin_user,
+    session_cookie_name,
+    session_cookie_options,
+)
+from db import execute, fetch_all, fetch_one, init_db
 
 load_dotenv()
 config = Config.from_env()
@@ -49,7 +61,6 @@ REPLY_EMAIL_BODY = (
     or "Please send the order with furnplan or make the order with 2 positions."
 )
 
-DASHBOARD_TOKEN = (os.getenv("DASHBOARD_TOKEN") or "").strip()
 _RAW_ALLOWED_ORIGINS = os.getenv("DASHBOARD_ALLOWED_ORIGINS", "")
 DASHBOARD_ALLOWED_ORIGINS = {
     origin.strip() for origin in _RAW_ALLOWED_ORIGINS.split(",") if origin.strip()
@@ -89,6 +100,10 @@ _ORDER_INDEX_CACHE: dict[str, Any] = {
     "orders": [],
 }
 _ORDER_INDEX_LOCK = Lock()
+
+init_db()
+if seed_admin_user():
+    print("Admin user created from environment configuration.")
 
 
 def _safe_id(value: str) -> str | None:
@@ -409,20 +424,24 @@ def _api_error(status_code: int, code: str, message: str):
     return jsonify({"error": {"code": code, "message": message}}), status_code
 
 
+def _require_admin() -> Any:
+    user = getattr(g, "user", None) or {}
+    if user.get("role") != "admin":
+        return _api_error(403, "forbidden", "Admin access required")
+    return None
+
+
 def require_auth(req) -> Any:
     if req.method == "OPTIONS":
         return None
 
-    if not DASHBOARD_TOKEN:
-        return _api_error(500, "config_error", "DASHBOARD_TOKEN is not configured")
+    session_id = req.cookies.get(session_cookie_name(), "")
+    user = get_session_user(session_id)
+    if not user:
+        return _api_error(401, "unauthorized", "Authentication required")
 
-    authorization = (req.headers.get("Authorization") or "").strip()
-    if not authorization.lower().startswith("bearer "):
-        return _api_error(401, "unauthorized", "Missing or invalid Authorization header")
-
-    token = authorization[7:].strip()
-    if not token or not hmac.compare_digest(token, DASHBOARD_TOKEN):
-        return _api_error(401, "unauthorized", "Invalid dashboard token")
+    g.user = user
+    g.session_id = session_id
     return None
 
 
@@ -1158,6 +1177,13 @@ def _as_csv_text(orders: list[dict[str, Any]]) -> str:
 def _api_auth_guard():
     if not request.path.startswith("/api/"):
         return None
+    if request.path in {
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/me",
+        "/api/auth/check",
+    }:
+        return None
     return require_auth(request)
 
 
@@ -1168,9 +1194,12 @@ def _api_cors_headers(response: Response):
 
     origin = request.headers.get("Origin")
     if _is_origin_allowed(origin):
-        response.headers["Access-Control-Allow-Origin"] = "*" if ALLOW_ANY_ORIGIN else str(origin)
-        if not ALLOW_ANY_ORIGIN:
+        if origin:
+            response.headers["Access-Control-Allow-Origin"] = str(origin)
+            response.headers["Access-Control-Allow-Credentials"] = "true"
             response.headers["Vary"] = _append_vary(response.headers.get("Vary"), "Origin")
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
 
     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, DELETE, OPTIONS"
@@ -1209,7 +1238,214 @@ def api_options(any_path: str | None = None):  # noqa: ARG001
 
 @app.route("/api/auth/check")
 def api_auth_check():
+    session_id = request.cookies.get(session_cookie_name(), "")
+    user = get_session_user(session_id)
+    if not user:
+        return _api_error(401, "unauthorized", "Authentication required")
     return ("", 204)
+
+
+@app.route("/api/auth/me")
+def api_auth_me():
+    session_id = request.cookies.get(session_cookie_name(), "")
+    user = get_session_user(session_id)
+    if not user:
+        return _api_error(401, "unauthorized", "Authentication required")
+    return jsonify({"user": {"id": user["id"], "username": user["username"], "role": user["role"]}})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    payload = request.get_json(silent=True) or {}
+    username = _clean_form_value(payload.get("username"))
+    password = _clean_form_value(payload.get("password"))
+    if not username or not password:
+        return _api_error(400, "bad_request", "Username and password are required")
+
+    user = authenticate_user(username, password)
+    if not user:
+        return _api_error(401, "unauthorized", "Invalid username or password")
+
+    session_id = create_session(
+        user["id"],
+        request.remote_addr,
+        request.headers.get("User-Agent"),
+    )
+    response = jsonify({"user": user})
+    response.set_cookie(session_cookie_name(), session_id, **session_cookie_options())
+    return response
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    session_id = request.cookies.get(session_cookie_name(), "")
+    if session_id:
+        revoke_session(session_id)
+    response = ("", 204)
+    flask_response = app.make_response(response)
+    flask_response.set_cookie(session_cookie_name(), "", max_age=0, path="/")
+    return flask_response
+
+
+@app.route("/api/users", methods=["GET", "POST"])
+def api_users():
+    admin_error = _require_admin()
+    if admin_error:
+        return admin_error
+
+    if request.method == "GET":
+        users = fetch_all(
+            """
+            SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
+            FROM users
+            ORDER BY created_at DESC
+            """
+        )
+        return jsonify({"users": users})
+
+    payload = request.get_json(silent=True) or {}
+    username = _clean_form_value(payload.get("username"))
+    password = _clean_form_value(payload.get("password"))
+    email = _clean_form_value(payload.get("email")) or None
+    role = _clean_form_value(payload.get("role")) or "user"
+    is_active = payload.get("is_active")
+    is_active = True if is_active is None else bool(is_active)
+
+    if not username or not password:
+        return _api_error(400, "bad_request", "Username and password are required")
+    if role not in {"user", "admin"}:
+        return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
+
+    existing = fetch_one(
+        "SELECT id FROM users WHERE lower(username) = lower(%s)",
+        (username,),
+    )
+    if existing:
+        return _api_error(400, "conflict", "Username already exists")
+
+    if email:
+        existing_email = fetch_one(
+            "SELECT id FROM users WHERE lower(email) = lower(%s)",
+            (email,),
+        )
+        if existing_email:
+            return _api_error(400, "conflict", "Email already exists")
+
+    now = datetime.now().astimezone()
+    new_id = str(uuid.uuid4())
+    execute(
+        """
+        INSERT INTO users (id, username, password_hash, email, role, is_active, created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            new_id,
+            username,
+            hash_password(password),
+            email,
+            role,
+            is_active,
+            now,
+            now,
+        ),
+    )
+    return (
+        jsonify(
+            {
+                "user": {
+                    "id": new_id,
+                    "username": username,
+                    "email": email,
+                    "role": role,
+                    "is_active": is_active,
+                    "created_at": now.isoformat(),
+                }
+            }
+        ),
+        201,
+    )
+
+
+@app.route("/api/users/<user_id>", methods=["PATCH"])
+def api_user_update(user_id: str):
+    admin_error = _require_admin()
+    if admin_error:
+        return admin_error
+
+    payload = request.get_json(silent=True) or {}
+    username = _clean_form_value(payload.get("username")) or None
+    password = _clean_form_value(payload.get("password")) or None
+    email = _clean_form_value(payload.get("email")) or None
+    role = _clean_form_value(payload.get("role")) or None
+    is_active = payload.get("is_active")
+    is_active = None if is_active is None else bool(is_active)
+
+    existing = fetch_one("SELECT id, username, role FROM users WHERE id = %s", (user_id,))
+    if not existing:
+        return _api_error(404, "not_found", "User not found")
+
+    current_user = getattr(g, "user", {}) or {}
+    if current_user.get("id") == user_id:
+        if is_active is False:
+            return _api_error(400, "bad_request", "You cannot deactivate your own account")
+        if role and role != "admin":
+            return _api_error(400, "bad_request", "You cannot remove your own admin role")
+
+    if role and role not in {"user", "admin"}:
+        return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
+
+    if username:
+        conflict = fetch_one(
+            "SELECT id FROM users WHERE lower(username) = lower(%s) AND id <> %s",
+            (username, user_id),
+        )
+        if conflict:
+            return _api_error(400, "conflict", "Username already exists")
+
+    if email:
+        conflict = fetch_one(
+            "SELECT id FROM users WHERE lower(email) = lower(%s) AND id <> %s",
+            (email, user_id),
+        )
+        if conflict:
+            return _api_error(400, "conflict", "Email already exists")
+
+    fields = []
+    values: list[Any] = []
+    if username is not None:
+        fields.append("username = %s")
+        values.append(username)
+    if email is not None:
+        fields.append("email = %s")
+        values.append(email)
+    if role is not None:
+        fields.append("role = %s")
+        values.append(role)
+    if is_active is not None:
+        fields.append("is_active = %s")
+        values.append(is_active)
+    if password:
+        fields.append("password_hash = %s")
+        values.append(hash_password(password))
+
+    if not fields:
+        return _api_error(400, "bad_request", "No changes provided")
+
+    now = datetime.now().astimezone()
+    fields.append("updated_at = %s")
+    values.append(now)
+    values.append(user_id)
+
+    execute(f"UPDATE users SET {', '.join(fields)} WHERE id = %s", values)
+    updated = fetch_one(
+        """
+        SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
+        FROM users
+        WHERE id = %s
+        """,
+        (user_id,),
+    )
+    return jsonify({"user": updated})
 
 
 @app.route("/api/overview")
