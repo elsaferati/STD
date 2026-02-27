@@ -327,9 +327,11 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
             req_w, req_y = req
             requested_year = req_y
             debug_info["requested_week"] = req_w
-            debug_info["earliest_allowed_by_request"] = req_w - 5
-            # No -6: earliest we may send is requested_week - 5. +1 allowed: latest we may send is requested_week + 1.
-            min_allowed = max(earliest_possible, req_w - 5)
+            is_braun = isinstance(client_name, str) and "braun" in client_name.lower()
+            early_offset = 2 if is_braun else 5
+            debug_info["earliest_allowed_by_request"] = req_w - early_offset
+            # Per-client early offset: Braun uses -2, all others use -5.
+            min_allowed = max(earliest_possible, req_w - early_offset)
             max_allowed = req_w + 1
     else:
         debug_info["requested_week"] = None

@@ -1461,7 +1461,7 @@ def normalize_output(
         if isinstance(entry, dict):
             value = entry.get("value", "")
             if field == "lieferanschrift":
-                if (branch_id or "").strip() == "porta":
+                if (branch_id or "").strip() in ("porta", "braun"):
                     formatted = _strip_company_from_lieferanschrift_for_porta(value)
                 else:
                     formatted = _format_lieferanschrift_lines(value)

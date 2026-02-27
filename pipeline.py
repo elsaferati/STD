@@ -606,6 +606,20 @@ def _ordered_verification_page_texts(
     return {image_name: text for image_name, text, _, _ in ordered_pages}
 
 
+_BRAUN_KUNDEN_NR_RE = re.compile(r"Kunden-Nr\.?\s+(\d+)", re.IGNORECASE)
+
+
+def _extract_braun_kundennummer_from_pdf_text(
+    page_text_by_image_name: dict[str, str],
+) -> str:
+    """Scan all PDF page texts for 'Kunden-Nr. NNNNN' and return the number."""
+    for page_text in page_text_by_image_name.values():
+        m = _BRAUN_KUNDEN_NR_RE.search(str(page_text or ""))
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
 def _parse_qty_token(token: str) -> int | float:
     text = str(token or "").strip().replace(" ", "")
     if not text:
@@ -1383,6 +1397,67 @@ def process_message(
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
         _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)
 
+    # --- Braun: reply email for missing modellnummer (after ZB lookup) or artikelnummer ---
+    if branch.id == "braun":
+        _braun_warnings = normalized.get("warnings")
+        if not isinstance(_braun_warnings, list):
+            _braun_warnings = []
+            normalized["warnings"] = _braun_warnings
+        braun_header = normalized.get("header")
+        if not isinstance(braun_header, dict):
+            braun_header = {}
+            normalized["header"] = braun_header
+        # --- Braun: fill kundennummer from PDF text if AI missed it ---
+        kd_entry = braun_header.get("kundennummer")
+        kd_val = ""
+        if isinstance(kd_entry, dict):
+            kd_val = str(kd_entry.get("value", "") or "").strip()
+        else:
+            kd_val = str(kd_entry or "").strip()
+        # PDF is always the authoritative source for Braun kundennummer — always overwrite
+        kd_from_pdf = _extract_braun_kundennummer_from_pdf_text(pdf_text_by_image_name)
+        if kd_from_pdf:
+            braun_header["kundennummer"] = {
+                "value": kd_from_pdf,
+                "source": "pdf",
+                "confidence": 0.95,
+                "derived_from": "braun_pdf_kunden_nr",
+            }
+            if not kd_val:
+                _braun_warnings.append(
+                    f"Braun: kundennummer '{kd_from_pdf}' filled from PDF text (AI missed it)."
+                )
+
+        braun_items = normalized.get("items")
+        braun_reply_needed = False
+        if isinstance(braun_items, list):
+            for item in braun_items:
+                if not isinstance(item, dict):
+                    continue
+                line = item.get("line_no", "?")
+                artnr = _entry_value(item.get("artikelnummer")) or ""
+                modelnr = _entry_value(item.get("modellnummer")) or ""
+                if not str(artnr).strip():
+                    _braun_warnings.append(
+                        f"Reply needed: item line {line} is missing artikelnummer — please provide the article number."
+                    )
+                    braun_reply_needed = True
+                if not str(modelnr).strip():
+                    _braun_warnings.append(
+                        f"Reply needed: item line {line} is missing modellnummer (artikelnummer: {artnr or 'unknown'}) — please provide the model number."
+                    )
+                    braun_reply_needed = True
+        if braun_reply_needed:
+            reply_entry = braun_header.get("reply_needed")
+            already_true = isinstance(reply_entry, dict) and reply_entry.get("value") is True
+            if not already_true:
+                braun_header["reply_needed"] = {
+                    "value": True,
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "braun_missing_item_code",
+                }
+
     if route.used_fallback:
         header = normalized.get("header")
         if not isinstance(header, dict):
@@ -1457,7 +1532,7 @@ def process_message(
         "confidence": 1.0 if ticket_number else 0.0,
     }
 
-    if (not branch.is_momax_bg) and ai_customer_match.should_try_ai_customer_match(
+    if (not branch.is_momax_bg) and branch.id != "braun" and ai_customer_match.should_try_ai_customer_match(
         normalized.get("header") or {},
         normalized.get("warnings") or [],
     ):
@@ -1503,7 +1578,7 @@ def process_message(
         if bestelldatum_val and tour_val:
             dw = delivery_logic.calculate_delivery_week(
                 bestelldatum_val, tour_val, requested_kw_str,
-                client_name=store_name_val or None,
+                client_name=branch.id,
             )
             if dw:
                 header["delivery_week"] = {
