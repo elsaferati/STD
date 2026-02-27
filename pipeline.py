@@ -29,6 +29,7 @@ import ai_customer_match
 import delivery_logic
 import lookup
 import momax_bg
+import zb_lookup
 
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
@@ -1369,6 +1370,14 @@ def process_message(
                         normalized_warnings.append(
                             f"{branch.label} item verification failed (non-critical): {exc}"
                         )
+
+    # --- ZB Zubehör modellnummer lookup (all clients) ---
+    _zb_warnings = normalized.get("warnings")
+    if not isinstance(_zb_warnings, list):
+        _zb_warnings = []
+        normalized["warnings"] = _zb_warnings
+    if zb_lookup.apply_zb_modellnummer_lookup(normalized, _zb_warnings):
+        refresh_missing_warnings(normalized)
 
     if branch.id == "porta":
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)

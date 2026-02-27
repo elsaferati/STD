@@ -71,6 +71,7 @@ class Config:
     max_images: int
     date_dayfirst: bool
     router_enabled: bool
+    router_use_llm: bool
     router_min_confidence: float
     router_max_body_chars: int
     router_max_pdf_preview_chars: int
@@ -121,6 +122,7 @@ class Config:
             max_images=_get_int("MAX_IMAGES", 20),
             date_dayfirst=_get_bool("DATE_DAYFIRST", True),
             router_enabled=_get_bool("ROUTER_ENABLED", True),
+            router_use_llm=_get_bool("ROUTER_USE_LLM", False),
             router_min_confidence=_get_float("ROUTER_MIN_CONFIDENCE", 0.75),
             router_max_body_chars=_get_int("ROUTER_MAX_BODY_CHARS", 4000),
             router_max_pdf_preview_chars=_get_int("ROUTER_MAX_PDF_PREVIEW_CHARS", 2000),

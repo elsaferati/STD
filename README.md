@@ -155,6 +155,7 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 | `REPLY_EMAIL_TO` | `00primex.eu@gmail.com` | Recipient for reply-needed notifications |
 | `REPLY_EMAIL_BODY` | - | First line of the reply-needed email body |
 | `ROUTER_ENABLED` | `true` | Enable branch routing classifier before extraction |
+| `ROUTER_USE_LLM` | `false` | Use LLM for routing (`false` = deterministic hard/hint routing only) |
 | `ROUTER_MIN_CONFIDENCE` | `0.75` | Minimum confidence to trust classifier-selected branch |
 | `ROUTER_MAX_BODY_CHARS` | `4000` | Max email body chars used for routing |
 | `ROUTER_MAX_PDF_PREVIEW_CHARS` | `2000` | Max first-page PDF chars used per routing preview |

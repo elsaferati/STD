@@ -38,7 +38,7 @@ BRANCHES: dict[str, ExtractionBranch] = {
         system_prompt=prompts.SYSTEM_PROMPT,
         build_user_instructions=prompts.build_user_instructions,
         enable_detail_extraction=False,
-        enable_item_code_verification=True,
+        enable_item_code_verification=False,
         is_momax_bg=False,
     ),
     "momax_bg": ExtractionBranch(
@@ -59,24 +59,24 @@ BRANCHES: dict[str, ExtractionBranch] = {
         id="porta",
         label="Porta",
         description=(
-            "Porta orders (email + PDF) with second-pass item-code verification."
+            "Porta orders (email + PDF) extraction profile."
         ),
         system_prompt=prompts_porta.PORTA_SYSTEM_PROMPT,
         build_user_instructions=prompts_porta.build_user_instructions_porta,
         enable_detail_extraction=False,
-        enable_item_code_verification=True,
+        enable_item_code_verification=False,
         is_momax_bg=False,
     ),
     "braun": ExtractionBranch(
         id="braun",
         label="Braun",
         description=(
-            "BRAUN Moebel-Center orders (email + PDF) with second-pass item-code verification."
+            "BRAUN Moebel-Center orders (email + PDF) extraction profile."
         ),
         system_prompt=prompts_braun.BRAUN_SYSTEM_PROMPT,
         build_user_instructions=prompts_braun.build_user_instructions_braun,
         enable_detail_extraction=False,
-        enable_item_code_verification=True,
+        enable_item_code_verification=False,
         is_momax_bg=False,
     ),
     "segmuller": ExtractionBranch(

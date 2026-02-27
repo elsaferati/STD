@@ -356,6 +356,75 @@ def _build_router_user_text(
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
+def _collect_router_hints(message: IngestedEmail, config: Config) -> dict[str, bool]:
+    body_preview = _truncate(message.body_text or "", config.router_max_body_chars)
+    joined_email_text = "\n".join([message.sender or "", message.subject or "", body_preview])
+    pdf_previews: list[str] = []
+
+    for attachment in message.attachments:
+        if not _is_pdf_attachment(attachment):
+            continue
+        try:
+            preview_text = _pdf_first_page_text(attachment.data)
+        except Exception:
+            continue
+        preview_text = _truncate(
+            _normalize_whitespace(preview_text),
+            config.router_max_pdf_preview_chars,
+        )
+        if preview_text:
+            pdf_previews.append(preview_text)
+
+    return {
+        "porta": bool(
+            _has_porta_hint(joined_email_text)
+            or any(_has_porta_hint(preview) for preview in pdf_previews)
+        ),
+        "braun": bool(
+            _has_braun_hint(joined_email_text)
+            or any(_has_braun_hint(preview) for preview in pdf_previews)
+        ),
+        "segmuller": bool(
+            _has_segmuller_hint(joined_email_text)
+            or any(_has_segmuller_hint(preview) for preview in pdf_previews)
+        ),
+    }
+
+
+def _route_by_deterministic_hints(message: IngestedEmail, config: Config) -> RouteDecision:
+    hints = _collect_router_hints(message, config)
+    matched = [branch_id for branch_id, flag in hints.items() if flag]
+    if len(matched) == 1:
+        branch_id = matched[0]
+        return RouteDecision(
+            selected_branch_id=branch_id,
+            classifier_branch_id=branch_id,
+            confidence=0.9,
+            reason=f"rule_hint:{branch_id}",
+            forced_by_detector=False,
+            used_fallback=False,
+        )
+
+    if len(matched) > 1:
+        return RouteDecision(
+            selected_branch_id=DEFAULT_BRANCH_ID,
+            classifier_branch_id="unknown",
+            confidence=0.0,
+            reason=f"rule_conflict:{','.join(sorted(matched))}",
+            forced_by_detector=False,
+            used_fallback=True,
+        )
+
+    return RouteDecision(
+        selected_branch_id=DEFAULT_BRANCH_ID,
+        classifier_branch_id="unknown",
+        confidence=0.0,
+        reason="rule_unknown",
+        forced_by_detector=False,
+        used_fallback=True,
+    )
+
+
 def _parse_classifier_response(response_text: str) -> tuple[str, float, str]:
     parsed = parse_json_response(response_text)
     branch_id_raw = parsed.get("branch_id")
@@ -411,15 +480,28 @@ def route_message(
         forced_branch_id = "porta"
         detector_results["porta"] = True
 
+    if forced_branch_id:
+        return RouteDecision(
+            selected_branch_id=forced_branch_id,
+            classifier_branch_id=forced_branch_id,
+            confidence=1.0,
+            reason="forced_detector",
+            forced_by_detector=True,
+            used_fallback=False,
+        )
+
     if not config.router_enabled:
         return RouteDecision(
-            selected_branch_id=forced_branch_id or DEFAULT_BRANCH_ID,
+            selected_branch_id=DEFAULT_BRANCH_ID,
             classifier_branch_id="unknown",
-            confidence=1.0 if forced_branch_id else 0.0,
+            confidence=0.0,
             reason="router_disabled",
-            forced_by_detector=bool(forced_branch_id),
+            forced_by_detector=False,
             used_fallback=True,
         )
+
+    if not config.router_use_llm:
+        return _route_by_deterministic_hints(message, config)
 
     classifier_branch_id = "unknown"
     confidence = 0.0
@@ -432,16 +514,6 @@ def route_message(
         classifier_branch_id, confidence, reason = _parse_classifier_response(response_text)
     except Exception as exc:
         reason = f"classifier_error: {exc}"
-
-    if forced_branch_id:
-        return RouteDecision(
-            selected_branch_id=forced_branch_id,
-            classifier_branch_id=classifier_branch_id,
-            confidence=confidence,
-            reason=reason,
-            forced_by_detector=True,
-            used_fallback=False,
-        )
 
     if classifier_branch_id in BRANCHES and confidence >= config.router_min_confidence:
         return RouteDecision(

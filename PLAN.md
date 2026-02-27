@@ -1,102 +1,97 @@
-## Add new client branch: `segmuller`
+## Segmuller Prompt Upgrade for Item + Address Accuracy
 
 ### Summary
-Add a new extraction “client branch” named **Segmuller** (parallel to `porta` and `braun`) with its own prompt module, routing hints, and a deterministic hard-match based on **sender domain `@segmueller.de` + PDF attachment**. Per your choice, **disable second-pass item-code verification** for this branch.
+Use this sample as the canonical Segmuller pattern and update the Segmuller prompt to:
+1. Prioritize scanned furnplan (`Skizze/Aufstellung`) item-table codes over coarse order-table codes.
+2. Extract delivery/store addresses in strict `street + PLZ/city` format.
+3. Split ILNs by block (`delivery` vs `store/billing`) so `iln_anl/iln` and `iln_fil` are filled correctly.
 
----
+No skill is applied here because the available skills are only for skill creation/installation, not prompt tuning.
 
-## Decisions locked in (from you)
-- **Branch id:** `segmuller`
-- **Routing mode:** add `segmuller_hint` + **hard-match on sender domain**
-- **Hard-match requires PDF:** yes (must have ≥1 PDF attachment)
-- **Second-pass item verification:** **disabled** for `segmuller`
+### Files to change
+- [prompts_segmuller.py](c:/Users/Admin/Documents/GitHub/STD/prompts_segmuller.py)
+- Add prompt contract test: [verify_segmuller_prompt_contract.py](c:/Users/Admin/Documents/GitHub/STD/verify_segmuller_prompt_contract.py)
 
----
+### Implementation plan
 
-## Code changes (decision-complete)
+1. Update Segmuller prompt sections in `build_user_instructions_segmuller(...)` with explicit multi-document logic.
+- Add a `=== DOCUMENT ROLE DETECTION ===` section:
+  - Identify primary order pages by `BESTELLUNG` + table headers like `Pos/Upo/Seg-Nr./Ihre Art.-Nr.`.
+  - Identify furnplan/scanned pages by `SKIZZE / AUFSTELLUNG`, `furnplan`, rotated drawings, and scanned layouts.
+  - State that furnplan pages are valid item-code sources even when digital text is empty.
+- Add rule: scan all pages/all attachments; do not rely only on first PDF.
 
-### 1) New prompt module
-**Add file:** `prompts_segmuller.py`
-- Mirror `prompts_braun.py` structure:
-  - `SEGMULLER_SYSTEM_PROMPT` = “strict Segmuller purchase-order extraction engine… JSON only… German field names…”
-  - `build_user_instructions_segmuller(source_priority: list[str]) -> str`
-    - Same required header/item keys as Braun/Porta
-    - Same “FIELD OBJECT FORMAT” contract
-    - Generic PDF usage guidance (like Braun), no Porta-specific code-splitting rules
+2. Add strict item extraction priority for Segmuller.
+- New `=== SEGMULLER ITEM PRIORITY (STRICT) ===` section:
+  - Priority 1: furnplan item table rows (`Pos | ArtNr | Beschreibung | ... | Menge`).
+  - Priority 2: order table only as fallback when furnplan codes are unclear.
+- Mapping rules:
+  - From furnplan row: `modellnummer <- ArtNr` token (e.g. `S1111XA`), `artikelnummer <- code-like token in/next to Beschreibung` (e.g. `18801`), `menge <- Menge`.
+  - From order fallback row: we will fix later
+- Dedup/merge rule:
+  - One output item per real occurrence.
+  - If order table and furnplan describe the same line (same Seg-Nr / same item context), keep one merged item, preferring furnplan code fields.
+- Keep existing `line_no` sequential behavior.
 
-### 2) Register branch
-**Update:** `extraction_branches.py`
-- Add `import prompts_segmuller`
-- Add `BRANCHES["segmuller"] = ExtractionBranch(...)` with:
-  - `id="segmuller"`, `label="Segmuller"`
-  - `description` mentioning identifying signals (sender `@segmueller.de`, PDF contains Segmüller/Segmueller text)
-  - `system_prompt=prompts_segmuller.SEGMULLER_SYSTEM_PROMPT`
-  - `build_user_instructions=prompts_segmuller.build_user_instructions_segmuller`
-  - `enable_item_code_verification=False`
-  - `is_momax_bg=False`
+3. Add strict address/store extraction rules.
+- New `=== SEGMULLER ADDRESS RULES ===` section:
+  - `lieferanschrift`: from `Lieferung an` / `Lieferanschrift` block, output only:
+    - Line 1: street + house number
+    - Line 2: PLZ + city
+  - Explicitly drop recipient/company line from `lieferanschrift` (per your choice).
+  - Exclude ILN lines from address fields.
+  - `store_name`: company entity from `Auftragsbestätigungsanschrift` / `Rechnungsanschrift`.
+  - `store_address`: only street + PLZ/city from those store/billing blocks.
+- Add examples directly in prompt:
+  - `lieferanschrift`: `Am Rotböll 7\n64331 Weiterstadt`
+  - `store_address`: `Münchner Str. 35\n86316 Friedberg`
 
-### 3) Routing: hint + hard-match
-**Update:** `extraction_router.py`
-- Add regexes:
-  - `_SEGMUELLER_TOKEN_RE = re.compile(r"\\bsegm(?:ue|ü|u)ller\\b", re.IGNORECASE)`
-  - `_SEGMUELLER_DOMAIN_RE = re.compile(r"(?:@|\\b)(?:[a-z0-9-]+\\.)*segmueller\\.de\\b", re.IGNORECASE)`
-- Add:
-  - `_has_segmuller_hint(text: str) -> bool`:
-    - normalize whitespace
-    - return true if token or domain regex matches
-  - `_is_segmuller_hard_match(message: IngestedEmail, config: Config) -> bool`:
-    - require at least one PDF attachment
-    - require sender matches `_SEGMUELLER_DOMAIN_RE`
-- In `route_message(...)`, insert hard-match logic (priority):
-  1) existing `xxxlutz_default` mail-hint early return (keep)
-  2) existing momax_bg hard-matches/detectors (keep)
-  3) **if not forced** and `_is_segmuller_hard_match(...)`: force `segmuller`
-  4) existing braun/porta hard-matches (keep)
-- Extend router classifier guidance:
-  - In `_build_router_system_prompt()`, add a rule:
-    - “If `segmuller_hint` is true, prefer `branch_id="segmuller"` with high confidence unless a forced detector applies.”
-- Extend router input payload:
-  - In `_build_router_user_text(...)`, add `"segmuller_hint": ...` computed from joined email text OR any PDF first-page preview text (same pattern as `porta_hint`/`braun_hint`)
+4. Add strict ILN block mapping instructions.
+- New `=== SEGMULLER ILN MAPPING ===` section:
+  - Delivery block ILN -> `iln_anl` and `iln`.
+  - Store/billing ILN (`Auftragsbestätigungsanschrift`/`Rechnungsanschrift`) -> `iln_fil`.
+  - Do not swap these.
+  - Do not embed ILN text into address fields.
 
-### 4) Verification script coverage
-**Update:** `verify_routing.py`
-Add tests analogous to Porta/Braun:
-- `test_routing_segmuller_branch_selected()`
-  - classifier returns `{"branch_id":"segmuller","confidence":0.99,...}`
-  - assert warnings contain `Routing: selected=segmuller` and `fallback=false`
-- `test_segmuller_hint_from_pdf_markers()`
-  - patch `extraction_router._pdf_first_page_text` to return text containing “Segmüller” (or “Segmueller”)
-  - assert `_build_router_user_text(... )` JSON has `"segmuller_hint": true`
-- `test_routing_segmuller_hard_match_from_sender_domain()`
-  - message sender like `service@segmueller.de` with a PDF attachment
-  - classifier returns `unknown`
-  - assert routing warning shows `selected=segmuller`, `forced=true`, `fallback=false`
-- Add these to the `__main__` execution list at bottom.
+5. Keep output contract unchanged.
+- Retain same required schema/keys/object format.
+- Keep status enum unchanged (`ok|partial|failed`).
 
-### 5) Sample-case folder scaffold
-**Add:** `CLIENT CASES/segmuller/README.md`
-- Same structure/guidelines as `CLIENT CASES/porta/README.md` and `CLIENT CASES/braun/README.md`
+### Important interfaces/APIs/types
+- No Python API/type changes.
+- No branch/routing changes.
+- Only prompt behavior for existing Segmuller branch is changed.
 
----
+### Test cases and scenarios
 
-## Public interfaces / behavior changes
-- New valid `branch_id`: `segmuller` (available to router classifier and pipeline).
-- Routing behavior:
-  - Any email **from `@segmueller.de` with ≥1 PDF** is **forced** to `segmuller` (bypasses low-confidence classifier outcomes).
-  - Emails/PDFs mentioning Segmüller/Segmueller/Segmuller set `segmuller_hint` to guide the classifier.
-- Item-code second-pass verification:
-  - **Not executed** for `segmuller` (`enable_item_code_verification=False`).
+1. Prompt contract test (`verify_segmuller_prompt_contract.py`):
+- Assert prompt text contains explicit furnplan-first item priority.
+- Assert prompt text contains `street+PLZ only` for `lieferanschrift`.
+- Assert prompt text contains `store_name` + `store_address` sourcing from store/billing blocks.
+- Assert prompt text contains ILN split rule (`delivery -> iln_anl+iln`, `store/billing -> iln_fil`).
 
----
+2. Sample-case acceptance scenario (manual/LLM run with provided files):
+- Inputs:
+  - `CLIENT CASES/segmuller/ORDER 1/Bestellung_850625542001_______.pdf`
+  - `CLIENT CASES/segmuller/ORDER 1/E19RGE07.PDF`
+  - `CLIENT CASES/segmuller/ORDER 1/Email Body.txt`
+- Expected extraction targets:
+  - `kom_nr = 850625542001`
+  - `lieferanschrift = "Am Rotböll 7\n64331 Weiterstadt"`
+  - `store_address = "Münchner Str. 35\n86316 Friedberg"`
+  - `store_name` from store/billing block company
+  - `iln_anl = iln = 4042861001501`
+  - `iln_fil = 4042861000009`
+  - Items prefer furnplan-coded row (`S1111XA` + `18801`) over weak `14` token from order row.
+- Regression guard:
+  - `artikelnummer` must not be `14` when furnplan provides better code.
 
-## Test/verification plan
-Run locally:
-- `python verify_routing.py` (ensures new hint + forced routing works and doesn’t break existing tests)
-- Optional quick sanity: `python -m py_compile prompts_segmuller.py extraction_branches.py extraction_router.py`
+3. Quick verification command set after implementation:
+- `python -m py_compile prompts_segmuller.py verify_segmuller_prompt_contract.py`
+- `python verify_segmuller_prompt_contract.py`
 
----
-
-## Assumptions
-- Segmuller orders arrive with **PDF attachments** (hard-match requires at least one PDF).
-- The authoritative sender domain to force routing is **`segmueller.de`**.
-- No special Segmuller-specific item code parsing rules are defined yet; extraction prompt stays generic, and item verification is disabled until real samples are reviewed.
+### Assumptions and defaults
+- Default chosen: scanned furnplan pages are authoritative for item codes when available.
+- Default chosen: `lieferanschrift` is `street+PLZ/city` only (no company line).
+- Default chosen: ILNs are split by semantic block (delivery vs store/billing).
+- If furnplan item row is unreadable, fallback to order table without inventing short weak article codes.
