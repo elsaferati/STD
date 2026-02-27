@@ -11,10 +11,18 @@ def test_segmuller_prompt_contract() -> None:
     assert "=== SEGMULLER ITEM PRIORITY (STRICT) ===" in prompt
     assert "Priority 1: Furnplan/scanned item rows" in prompt
     assert "Priority 2: Order-table rows only if Furnplan codes are missing or unreadable." in prompt
-    assert "If ArtNr is composite MODEL-ARTICLE (example: SI9191XP-02541), split strictly" in prompt
+    assert "HARD RULE (apply first): if ArtNr ends with artikel token" in prompt
+    assert "modellnummer is the remaining ArtNr prefix before that token" in prompt
+    assert "IN446144SP36-42187, ZB00-46518, ZB9191/64151, SI9191XP04695" in prompt
     assert "artikelnummer MUST be 5 digits, optionally plus one trailing letter" in prompt
     assert "Never keep a composite MODEL-ARTICLE value in artikelnummer." in prompt
+    assert "Only leave artikelnummer empty when no ArtNr trailing token can be read at all." in prompt
+    assert "Do NOT write warnings claiming 'no 5-digit artikelnummer' when ArtNr clearly ends with such a token." in prompt
     assert "Do not invent short weak article codes if Furnplan provides a clearer code." in prompt
+
+    assert "=== SEGMULLER FURNCLOUD_ID ===" in prompt
+    assert "Find furncloud_id anywhere in email or PDF (all pages, including scanned/drawing pages)." in prompt
+    assert "If a valid furncloud_id is found once, apply the same furncloud_id to all items." in prompt
 
     assert "=== SEGMULLER ADDRESS RULES ===" in prompt
     assert "line 1 = street + house number" in prompt

@@ -196,6 +196,7 @@ _SEGMULLER_MODEL_ARTIKEL_RE = re.compile(
     r"^([A-Za-z0-9/]+)\s*-\s*(\d{5}[A-Za-z]?)$"
 )
 _SEGMULLER_ARTIKEL_RE = re.compile(r"^\d{5}[A-Za-z]?$")
+_SEGMULLER_TRAILING_ARTIKEL_RE = re.compile(r"^(?P<model>.*?)(?P<artikel>\d{5}[A-Za-z]?)$")
 _SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
 
 
@@ -949,12 +950,29 @@ def _split_segmuller_model_artikel(value: str) -> tuple[str, str] | None:
     text = _clean_text(value).strip()
     if not text:
         return None
+
+    # Prefer strict canonical form first (MODEL-ARTICLE).
     match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(text)
+    if match:
+        parsed_model = match.group(1).strip().upper()
+        parsed_artikel = match.group(2).strip().upper()
+        if parsed_model and _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel):
+            return parsed_model, parsed_artikel
+
+    # OCR-tolerant fallback:
+    # Accept ArtNr forms where the same trailing article token exists but separators are noisy
+    # or missing (e.g., ZB00/46518, SI9191XP04695, "ZB 00 - 46518").
+    match = _SEGMULLER_TRAILING_ARTIKEL_RE.fullmatch(text)
     if not match:
         return None
-    parsed_model = match.group(1).strip()
-    parsed_artikel = match.group(2).strip().upper()
-    if not parsed_model or not _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel):
+    parsed_model = match.group("model").strip(" -/\t")
+    parsed_model = re.sub(r"\s+", "", parsed_model).upper()
+    parsed_artikel = match.group("artikel").strip().upper()
+    if (
+        not parsed_model
+        or not re.search(r"[A-Za-z]", parsed_model)
+        or not _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel)
+    ):
         return None
     return parsed_model, parsed_artikel
 

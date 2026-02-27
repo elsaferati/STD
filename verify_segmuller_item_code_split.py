@@ -38,6 +38,8 @@ def test_segmuller_model_article_split_examples() -> None:
         ("ZB00-38337", "-", "38337", "ZB00"),
         ("SI9191XP-04695", "", "04695", "SI9191XP"),
         ("ZB99-14412", "", "14412", "ZB99"),
+        ("ZB00/46518", "", "46518", "ZB00"),
+        ("SI9191XP04695", "", "04695", "SI9191XP"),
     ]
     for model_in, article_in, article_out, model_out in cases:
         item = _run_case(model_in, article_in, branch_id="segmuller")
@@ -55,6 +57,10 @@ def test_segmuller_split_overrides_wrong_existing_article() -> None:
 
 def test_segmuller_split_when_composite_lands_in_artikelnummer() -> None:
     item = _run_case("", "ZB99-56848", branch_id="segmuller")
+    assert item.get("artikelnummer", {}).get("value") == "56848"
+    assert item.get("modellnummer", {}).get("value") == "ZB99"
+
+    item = _run_case("", "ZB99/56848", branch_id="segmuller")
     assert item.get("artikelnummer", {}).get("value") == "56848"
     assert item.get("modellnummer", {}).get("value") == "ZB99"
 
