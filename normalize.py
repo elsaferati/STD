@@ -944,24 +944,37 @@ def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
     entry["derived_from"] = "segmuller_model_artikel_split"
 
 
+def _split_segmuller_model_artikel(value: str) -> tuple[str, str] | None:
+    text = _clean_text(value).strip()
+    if not text:
+        return None
+    match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(text)
+    if not match:
+        return None
+    parsed_model = match.group(1).strip()
+    parsed_artikel = match.group(2).strip().upper()
+    if not parsed_model or not _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel):
+        return None
+    return parsed_model, parsed_artikel
+
+
 def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
     artikel_entry = _ensure_field(item, "artikelnummer")
     modell_entry = _ensure_field(item, "modellnummer")
 
     artikel_value = _clean_text(artikel_entry.get("value"))
     modell_value = _clean_text(modell_entry.get("value"))
-    if not modell_value:
+    split_result = _split_segmuller_model_artikel(modell_value)
+    if not split_result:
+        split_result = _split_segmuller_model_artikel(artikel_value)
+    if not split_result:
         return
 
-    match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(modell_value.strip())
-    if not match:
-        return
-
-    parsed_model = match.group(1).strip()
-    parsed_artikel = match.group(2).strip().upper()
+    parsed_model, parsed_artikel = split_result
+    current_model = modell_value.strip()
     current_artikel = artikel_value.strip().upper()
 
-    if parsed_model != modell_value:
+    if current_model != parsed_model:
         modell_entry["value"] = parsed_model
         _mark_segmuller_code_derived(modell_entry)
 

@@ -11,8 +11,9 @@ def test_segmuller_prompt_contract() -> None:
     assert "=== SEGMULLER ITEM PRIORITY (STRICT) ===" in prompt
     assert "Priority 1: Furnplan/scanned item rows" in prompt
     assert "Priority 2: Order-table rows only if Furnplan codes are missing or unreadable." in prompt
-    assert "modellnummer <- ArtNr token (example: S1111XA)" in prompt
-    assert "artikelnummer <- code-like token in/next to Beschreibung (example: 18801)" in prompt
+    assert "If ArtNr is composite MODEL-ARTICLE (example: SI9191XP-02541), split strictly" in prompt
+    assert "artikelnummer MUST be 5 digits, optionally plus one trailing letter" in prompt
+    assert "Never keep a composite MODEL-ARTICLE value in artikelnummer." in prompt
     assert "Do not invent short weak article codes if Furnplan provides a clearer code." in prompt
 
     assert "=== SEGMULLER ADDRESS RULES ===" in prompt

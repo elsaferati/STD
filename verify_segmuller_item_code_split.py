@@ -53,6 +53,17 @@ def test_segmuller_split_overrides_wrong_existing_article() -> None:
     print("SUCCESS: Segmuller split rule overrides mismatched existing artikelnummer.")
 
 
+def test_segmuller_split_when_composite_lands_in_artikelnummer() -> None:
+    item = _run_case("", "ZB99-56848", branch_id="segmuller")
+    assert item.get("artikelnummer", {}).get("value") == "56848"
+    assert item.get("modellnummer", {}).get("value") == "ZB99"
+
+    item = _run_case("", "SIEG9199-44182G", branch_id="segmuller")
+    assert item.get("artikelnummer", {}).get("value") == "44182G"
+    assert item.get("modellnummer", {}).get("value") == "SIEG9199"
+    print("SUCCESS: Segmuller split rule also applies when composite code is placed in artikelnummer.")
+
+
 def test_non_segmuller_keeps_original_model_value() -> None:
     item = _run_case("ZB00-38337", "", branch_id="xxxlutz_default")
     assert item.get("artikelnummer", {}).get("value") == ""
@@ -63,4 +74,5 @@ def test_non_segmuller_keeps_original_model_value() -> None:
 if __name__ == "__main__":
     test_segmuller_model_article_split_examples()
     test_segmuller_split_overrides_wrong_existing_article()
+    test_segmuller_split_when_composite_lands_in_artikelnummer()
     test_non_segmuller_keeps_original_model_value()
