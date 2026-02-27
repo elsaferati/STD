@@ -130,6 +130,24 @@ def _component_block_text(parent_artikel_nr: str = "4611217 / 83") -> str:
     )
 
 
+def _component_block_text_qty_split_lines(parent_artikel_nr: str = "4611217 / 83") -> str:
+    return (
+        f"1 {parent_artikel_nr} Liefermodell: Sinfonie Plus CQEG5899 76953G\n"
+        "Nachtkonsole\n"
+        "bestehend aus je:\n"
+        "Liefermodell: Sinfonie Plus CQEG5899 76953G\n"
+        "CQEG5899 76953G Nachtkonsole\n"
+        "ca. 58x50x40 cm\n"
+        "1\n"
+        "Stk\n"
+        "Liefermodell: Sinfonie Plus CQEG5899 76953G\n"
+        "CQEG00 09387 Glasplatte\n"
+        "ca. 58x3x40cm\n"
+        "1\n"
+        "Stk\n"
+    )
+
+
 def _component_block_text_with_legal_footer(parent_artikel_nr: str = "4611217 / 83") -> str:
     return (
         _component_block_text(parent_artikel_nr)
@@ -232,6 +250,64 @@ def test_identical_artikel_nr_and_parent_still_count_as_new_occurrence() -> None
     assert keys.count(("CQEG5899", "76953G", "1")) == 2
     assert keys.count(("CQEG00", "09387", "1")) == 2
     print("SUCCESS: identical parent/Artikel-Nr. still yields new component occurrences.")
+
+
+def test_qty_marker_split_across_lines_is_extracted() -> None:
+    page_texts = {
+        "order-1.png": _component_block_text_qty_split_lines("4611217 / 83"),
+    }
+    extracted = pipeline._extract_porta_component_occurrences_from_page_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+    assert len(extracted) == 2
+    keys = [
+        (
+            item.get("modellnummer"),
+            item.get("artikelnummer"),
+            str(item.get("menge")),
+        )
+        for item in extracted
+    ]
+    assert keys.count(("CQEG5899", "76953G", "1")) == 1
+    assert keys.count(("CQEG00", "09387", "1")) == 1
+    print("SUCCESS: split-line qty marker ('1' + 'Stk') is extracted as explicit component rows.")
+
+
+def test_cross_page_repeated_split_qty_block_is_counted_again() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQSD58", "77171"),
+            _item(2, "CQEG5899", "76808G"),
+            _item(3, "CQEG00", "71811"),
+            _item(4, "CQEG5899", "76953G"),
+            _item(5, "CQEG00", "09387"),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": _component_block_text_qty_split_lines("4611217 / 83"),
+        "order-2.png": _component_block_text_qty_split_lines("4611217 / 83"),
+    }
+
+    added = pipeline._reconcile_porta_component_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+    assert added == 2
+    items = normalized.get("items") or []
+    assert len(items) == 7
+    keys = [
+        (
+            (item.get("modellnummer") or {}).get("value"),
+            (item.get("artikelnummer") or {}).get("value"),
+        )
+        for item in items
+        if isinstance(item, dict)
+    ]
+    assert keys.count(("CQEG5899", "76953G")) == 2
+    assert keys.count(("CQEG00", "09387")) == 2
+    print("SUCCESS: repeated split-line qty blocks across pages are counted as new occurrences.")
 
 
 def test_repeated_block_with_partial_second_page_is_backfilled() -> None:
@@ -411,6 +487,23 @@ def test_non_porta_branch_no_reconciliation() -> None:
     print("SUCCESS: reconciliation is scoped to Porta branch only.")
 
 
+def test_extract_porta_store_name_prefers_full_legal_line() -> None:
+    page_texts = {
+        "order-1.png": (
+            "Verkaufshaus:\n"
+            "Porta Moebel Frechen\n"
+            "Porta Moebel Handels GmbH & Co. KG Frechen\n"
+            "Europaallee 1\n"
+            "50226 Frechen\n"
+        )
+    }
+    got = pipeline._extract_porta_store_name_from_pdf_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+    assert got == "Porta Moebel Handels GmbH & Co. KG Frechen"
+    print("SUCCESS: Porta store_name extraction prefers full legal Verkaufshaus line.")
+
+
 def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     porta_prompt = prompts_porta.build_user_instructions_porta(["pdf", "email", "image"])
     verify_prompt = prompts_verify_items.build_verify_items_instructions("porta")
@@ -418,18 +511,52 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "Do NOT deduplicate identical component pairs across different pages." in porta_prompt
     assert "A repeated occurrence on another page is a NEW item occurrence and must be output again." in porta_prompt
     assert "Repeated PDF table 'Artikel-Nr.' values do not suppress item creation." in porta_prompt
+    assert "Use the FULL legal company/branch string exactly as shown" in porta_prompt
+    assert "Do NOT shorten to city-only branch labels" in porta_prompt
     assert "Repeated identical component rows across pages are valid and must stay repeated." in verify_prompt
     assert "Do not semantically collapse rows just because modellnummer/artikelnummer are identical." in verify_prompt
+    assert "OJ00 31681 -> modellnummer='OJ00', artikelnummer='31681'" in porta_prompt
+    assert "OJ00 31681 -> modellnummer='OJ00', artikelnummer='31681'" in verify_prompt
     print("SUCCESS: prompt contract explicitly enforces cross-page no-dedupe behavior.")
+
+
+def test_porta_oj_accessory_article_backfill_from_space_separated_pair() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQEG4112G5", "85951K"),
+            _item(2, "OJ00", ""),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 Stk CQEG4112G5 85951K Startelement 42/240\n"
+            "1 Stk OJ00 31681 LED Schrankbeleuchtung\n"
+        )
+    }
+
+    pipeline._apply_porta_oj_accessory_article_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    items = normalized.get("items") or []
+    assert (items[1].get("artikelnummer") or {}).get("value") == "31681"
+    assert (items[1].get("artikelnummer") or {}).get("derived_from") == "porta_oj_accessory_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is True
+    print("SUCCESS: OJ/0J accessory article number is backfilled from space-separated PDF pair.")
 
 
 if __name__ == "__main__":
     test_cross_page_repeated_block_is_counted_again()
     test_identical_artikel_nr_and_parent_still_count_as_new_occurrence()
+    test_qty_marker_split_across_lines_is_extracted()
+    test_cross_page_repeated_split_qty_block_is_counted_again()
     test_repeated_block_with_partial_second_page_is_backfilled()
     test_legal_footer_pair_is_not_extracted()
     test_no_overinsert_when_occurrences_already_complete()
     test_reconciliation_does_not_insert_legal_footer_row()
     test_no_backfill_without_parent_signature_match()
     test_non_porta_branch_no_reconciliation()
+    test_extract_porta_store_name_prefers_full_legal_line()
     test_prompt_contract_mentions_cross_page_no_dedupe()
+    test_porta_oj_accessory_article_backfill_from_space_separated_pair()

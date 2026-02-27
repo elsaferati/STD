@@ -37,7 +37,10 @@ _TICKET_SUBJECT_RE = re.compile(r"ticket\s*number\b[^0-9]*(\d+)", re.IGNORECASE)
 _BESTEHEND_AUS_JE_RE = re.compile(r"bestehend\s+aus\s+je\s*:", re.IGNORECASE)
 _PORTA_PARENT_ARTIKEL_NR_RE = re.compile(r"\b\d{6,8}\s*/\s*\d{2}\b")
 _PORTA_COMPONENT_PAIR_RE = re.compile(r"\b([A-Z0-9]{3,14})\s+(\d{4,6}[A-Z]?)\b")
+_PORTA_OJ_ACCESSORY_PAIR_RE = re.compile(r"\b([O0]J\d{2})\s*(?:-| )\s*(\d{4,6}[A-Z]?)\b")
 _PORTA_QTY_STK_RE = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*STK\b")
+_PORTA_QTY_ONLY_LINE_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$")
+_PORTA_STK_ONLY_LINE_RE = re.compile(r"^\s*STK\.?\s*$", re.IGNORECASE)
 _PORTA_PARENT_ROW_RE = re.compile(
     r"\b\d+(?:[.,]\d+)?\s*STK\b.*\b\d{6,8}\s*/\s*\d{2}\b"
 )
@@ -68,6 +71,20 @@ _PORTA_KOM_NAME_REJECT_RE = re.compile(
     r"liefertermin|wunschtermin|lieferadresse|lieferanschrift|"
     r"verk[aä]ufer|verkaeufer|verkausfhaus|service-center|"
     r"anlieferung|rechnungsadresse)\b",
+    re.IGNORECASE,
+)
+_PORTA_STORE_NAME_LEGAL_TOKEN_RE = re.compile(
+    r"\b(?:gmbh|mbh|co\.?\s*&?\s*kg|kg|ag|handels(?:gesellschaft)?)\b",
+    re.IGNORECASE,
+)
+_PORTA_STORE_NAME_REJECT_RE = re.compile(
+    r"\b(?:anlieferung|rechnungsadresse|lieferanschrift|service-?center|"
+    r"telefon|fax|mail|e-?mail|www\.|http|besuchen\s+sie\s+uns|"
+    r"amtsgericht|geschaeftsfuehrer|geschäftsführer|ust-?id|iban|bic)\b",
+    re.IGNORECASE,
+)
+_PORTA_STORE_NAME_PREFIX_RE = re.compile(
+    r"^\s*(?:verkaufshaus|filiale)\s*[:\-]?\s*",
     re.IGNORECASE,
 )
 
@@ -122,6 +139,64 @@ def _extract_porta_kom_name_from_pdf_texts(
                         return next_line
             index += 1
     return ""
+
+
+def _clean_porta_store_name(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" :,-")
+    if not text:
+        return ""
+    text = _PORTA_STORE_NAME_PREFIX_RE.sub("", text).strip(" :,-")
+    if not text:
+        return ""
+    lower = text.lower()
+    if "porta" not in lower:
+        return ""
+    if _PORTA_STORE_NAME_REJECT_RE.search(text):
+        return ""
+    if re.search(r"\b\d{5}\b", text):
+        # Store name must not include address lines.
+        return ""
+    if re.search(r"\b(?:str\.?|strasse|straße|allee|weg|platz|gasse)\b", text, re.IGNORECASE):
+        return ""
+    return text
+
+
+def _extract_porta_store_name_from_pdf_texts(
+    page_text_by_image_name: dict[str, str],
+) -> str:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return ""
+
+    best = ""
+    best_score = -1
+
+    for _image_name, page_text in ordered_pages.items():
+        lines = [
+            str(line).strip()
+            for line in str(page_text or "").splitlines()
+            if str(line).strip()
+        ]
+        for index, line in enumerate(lines):
+            candidate = _clean_porta_store_name(line)
+            if not candidate:
+                continue
+
+            score = 0
+            if _PORTA_STORE_NAME_LEGAL_TOKEN_RE.search(candidate):
+                score += 4
+            if "porta moebel" in candidate.lower() or "porta mÃ¶bel" in candidate.lower():
+                score += 1
+            if index > 0 and re.search(r"\bverkaufshaus\b", lines[index - 1], re.IGNORECASE):
+                score += 2
+            if re.search(r"\bverkaufshaus\b", line, re.IGNORECASE):
+                score += 2
+
+            if score > best_score or (score == best_score and len(candidate) > len(best)):
+                best = candidate
+                best_score = score
+
+    return best
 
 
 @dataclass
@@ -401,6 +476,29 @@ def _ensure_item_field(item: dict[str, Any], field: str) -> dict[str, Any]:
     return entry
 
 
+def _extract_porta_qty_marker(
+    lines: list[str],
+    index: int,
+) -> tuple[int | float, int] | None:
+    line = str(lines[index] or "").strip()
+    if not line:
+        return None
+
+    inline_match = _PORTA_QTY_STK_RE.search(line.upper())
+    if inline_match:
+        return _parse_qty_token(inline_match.group(1)), 1
+
+    qty_only_match = _PORTA_QTY_ONLY_LINE_RE.match(line)
+    if (
+        qty_only_match
+        and index + 1 < len(lines)
+        and _PORTA_STK_ONLY_LINE_RE.match(str(lines[index + 1] or "").strip())
+    ):
+        return _parse_qty_token(qty_only_match.group(1)), 2
+
+    return None
+
+
 def _extract_porta_quantity_candidates(
     page_text_by_image_name: dict[str, str],
 ) -> dict[tuple[str, str], set[int | float]]:
@@ -418,16 +516,20 @@ def _extract_porta_quantity_candidates(
         index = 0
         while index < len(lines):
             line = lines[index]
-            upper = line.upper()
-            qty_match = _PORTA_QTY_STK_RE.search(upper)
-            if not qty_match:
+            qty_marker = _extract_porta_qty_marker(lines, index)
+            if not qty_marker:
                 index += 1
                 continue
-            qty = _parse_qty_token(qty_match.group(1))
-            pairs = _PORTA_COMPONENT_PAIR_RE.findall(upper)
-            if not pairs and index + 1 < len(lines):
-                next_upper = lines[index + 1].upper()
-                pairs = _PORTA_COMPONENT_PAIR_RE.findall(next_upper)
+            qty, consumed = qty_marker
+            pairs: list[tuple[str, str]] = []
+            candidate_indexes = [index, index - 1, index + consumed, index + consumed + 1]
+            for candidate_index in candidate_indexes:
+                if candidate_index < 0 or candidate_index >= len(lines):
+                    continue
+                candidate_upper = lines[candidate_index].upper()
+                pairs = _PORTA_COMPONENT_PAIR_RE.findall(candidate_upper)
+                if pairs:
+                    break
             for model, article in pairs:
                 if not any(ch.isalpha() for ch in model):
                     continue
@@ -435,7 +537,7 @@ def _extract_porta_quantity_candidates(
                     continue
                 key = (model, article)
                 qty_map.setdefault(key, set()).add(qty)
-            index += 1
+            index += consumed
     return qty_map
 
 
@@ -560,6 +662,94 @@ def _trim_porta_component_excess_items(
         warnings.append(
             f"Porta: removed {removed_count} duplicate component item(s) based on PDF text."
         )
+
+
+def _apply_porta_oj_accessory_article_backfill(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return
+
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return
+
+    expected_counts: Counter[tuple[str, str]] = Counter()
+    for _image_name, page_text in ordered_pages.items():
+        text_upper = str(page_text or "").upper()
+        for model, article in _PORTA_OJ_ACCESSORY_PAIR_RE.findall(text_upper):
+            expected_counts[(model, article)] += 1
+    if not expected_counts:
+        return
+
+    existing_counts: Counter[tuple[str, str]] = Counter()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not model or not article:
+            continue
+        existing_counts[(model, article)] += 1
+
+    remaining_by_model: dict[str, Counter[str]] = {}
+    for (model, article), expected in expected_counts.items():
+        remaining = expected - existing_counts.get((model, article), 0)
+        if remaining <= 0:
+            continue
+        remaining_by_model.setdefault(model, Counter())[article] = remaining
+    if not remaining_by_model:
+        return
+
+    warnings = _ensure_warning_list(normalized)
+    corrections = 0
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not model or not model.startswith(("OJ", "0J")) or article:
+            continue
+        model_remaining = remaining_by_model.get(model)
+        if not model_remaining:
+            continue
+        candidates = [art for art, count in model_remaining.items() if count > 0]
+        if len(candidates) != 1:
+            continue
+
+        chosen_article = candidates[0]
+        article_entry = _ensure_item_field(item, "artikelnummer")
+        article_entry["value"] = chosen_article
+        article_entry["source"] = "derived"
+        article_entry["confidence"] = 1.0
+        article_entry["derived_from"] = "porta_oj_accessory_backfill"
+
+        model_remaining[chosen_article] -= 1
+        if model_remaining[chosen_article] <= 0:
+            del model_remaining[chosen_article]
+
+        line_no = item.get("line_no", index)
+        warnings.append(
+            f"Porta: filled missing artikelnummer for item line {line_no} "
+            f"from PDF accessory pair {model} {chosen_article}."
+        )
+        corrections += 1
+
+    if corrections > 0:
+        header = normalized.get("header")
+        if not isinstance(header, dict):
+            header = {}
+            normalized["header"] = header
+        review_entry = header.get("human_review_needed")
+        if not isinstance(review_entry, dict):
+            review_entry = {"value": False, "source": "derived", "confidence": 1.0}
+            header["human_review_needed"] = review_entry
+        review_entry["value"] = True
+        review_entry["source"] = "derived"
+        review_entry["confidence"] = 1.0
+        review_entry["derived_from"] = "porta_oj_accessory_backfill"
 
 
 def _build_items_snapshot(items: Any) -> list[dict[str, Any]]:
@@ -810,21 +1000,35 @@ def _extract_porta_component_blocks_from_page_texts(
                 continue
 
             if in_component_block:
-                qty_match = _PORTA_QTY_STK_RE.search(upper)
-                if qty_match:
-                    _append_component_to_block(
-                        component_block=current_block,
-                        group_lines=current_group_lines,
-                        quantity=current_group_qty,
-                        has_explicit_qty=current_group_has_explicit_qty,
-                    )
-                    current_group_qty = _parse_qty_token(qty_match.group(1))
-                    current_group_lines = [line]
-                    current_group_has_explicit_qty = True
+                qty_marker = _extract_porta_qty_marker(lines, index)
+                if qty_marker:
+                    qty_value, consumed = qty_marker
+                    if current_group_lines and not current_group_has_explicit_qty:
+                        # Layout variant where qty marker comes after the component description.
+                        _append_component_to_block(
+                            component_block=current_block,
+                            group_lines=current_group_lines,
+                            quantity=qty_value,
+                            has_explicit_qty=True,
+                        )
+                        current_group_lines = []
+                        current_group_qty = 1
+                        current_group_has_explicit_qty = False
+                    else:
+                        # Default layout where qty marker starts a component group.
+                        _append_component_to_block(
+                            component_block=current_block,
+                            group_lines=current_group_lines,
+                            quantity=current_group_qty,
+                            has_explicit_qty=current_group_has_explicit_qty,
+                        )
+                        current_group_lines = [line]
+                        current_group_qty = qty_value
+                        current_group_has_explicit_qty = True
+                    index += consumed
                 else:
-                    if current_group_lines:
-                        current_group_lines.append(line)
-                index += 1
+                    current_group_lines.append(line)
+                    index += 1
                 continue
 
             parent_signature = _extract_porta_parent_signature(line)
@@ -914,11 +1118,40 @@ def _extract_porta_expected_occurrences_with_backfill(
         ):
             canonical = canonical_components_by_parent.get(parent_signature)
             if canonical and len(components) < len(canonical):
-                for missing_component in canonical[len(components) :]:
-                    backfilled = dict(missing_component)
-                    backfilled["explicit"] = False
-                    components.append(backfilled)
-                    backfilled_component_count += 1
+                canonical_counts: Counter[tuple[str, str, str]] = Counter()
+                observed_counts: Counter[tuple[str, str, str]] = Counter()
+                for canonical_component in canonical:
+                    canonical_counts[
+                        (
+                            str(canonical_component.get("modellnummer") or "").strip().upper(),
+                            str(canonical_component.get("artikelnummer") or "").strip().upper(),
+                            _qty_key(canonical_component.get("menge")),
+                        )
+                    ] += 1
+                for observed_component in components:
+                    observed_counts[
+                        (
+                            str(observed_component.get("modellnummer") or "").strip().upper(),
+                            str(observed_component.get("artikelnummer") or "").strip().upper(),
+                            _qty_key(observed_component.get("menge")),
+                        )
+                    ] += 1
+
+                missing_counts = canonical_counts - observed_counts
+                if missing_counts:
+                    for canonical_component in canonical:
+                        key = (
+                            str(canonical_component.get("modellnummer") or "").strip().upper(),
+                            str(canonical_component.get("artikelnummer") or "").strip().upper(),
+                            _qty_key(canonical_component.get("menge")),
+                        )
+                        if missing_counts.get(key, 0) <= 0:
+                            continue
+                        backfilled = dict(canonical_component)
+                        backfilled["explicit"] = False
+                        components.append(backfilled)
+                        missing_counts[key] -= 1
+                        backfilled_component_count += 1
             if parent_signature not in canonical_components_by_parent or len(components) > len(
                 canonical_components_by_parent[parent_signature]
             ):
@@ -1065,7 +1298,19 @@ def _reconcile_porta_component_occurrences(
             pair_key = (key[0], key[1])
             has_non_derived_item = non_derived_pair_counts.get(pair_key, 0) > 0
             has_second_explicit_occurrence = explicit_expected_pair_counts.get(pair_key, 0) > 1
-            if has_non_derived_item and not has_second_explicit_occurrence:
+            parent_signature = occurrence.get("parent_signature")
+            has_parent_signature = (
+                isinstance(parent_signature, tuple)
+                and len(parent_signature) == 3
+                and any(parent_signature)
+            )
+            is_inferred_occurrence = not bool(occurrence.get("explicit", False))
+            if (
+                has_non_derived_item
+                and not has_second_explicit_occurrence
+                and is_inferred_occurrence
+                and not has_parent_signature
+            ):
                 skipped_due_guard += 1
                 continue
             missing_occurrences.append(occurrence)
@@ -1242,6 +1487,36 @@ def process_message(
         if not isinstance(header, dict):
             header = {}
             normalized["header"] = header
+        store_from_pdf = _extract_porta_store_name_from_pdf_texts(pdf_text_by_image_name)
+        if store_from_pdf:
+            store_entry = header.get("store_name")
+            existing_store = _entry_value(store_entry).strip()
+            should_override = False
+            if not existing_store:
+                should_override = True
+            else:
+                existing_has_legal = bool(_PORTA_STORE_NAME_LEGAL_TOKEN_RE.search(existing_store))
+                pdf_has_legal = bool(_PORTA_STORE_NAME_LEGAL_TOKEN_RE.search(store_from_pdf))
+                if pdf_has_legal and (not existing_has_legal or len(store_from_pdf) > len(existing_store)):
+                    should_override = True
+            if should_override:
+                prev_value = existing_store
+                header["store_name"] = {
+                    "value": store_from_pdf,
+                    "source": "pdf",
+                    "confidence": 0.98,
+                    "derived_from": "porta_pdf_verkaufshaus_store_name",
+                }
+                normalized_warnings = normalized.get("warnings")
+                if isinstance(normalized_warnings, list):
+                    if prev_value and prev_value != store_from_pdf:
+                        normalized_warnings.append(
+                            "Porta: store_name replaced by full legal Verkaufshaus name from PDF."
+                        )
+                    elif not prev_value:
+                        normalized_warnings.append(
+                            "Porta: store_name filled from PDF Verkaufshaus legal name."
+                        )
         kom_nr_entry = header.get("kom_nr", {})
         kom_nr_val = ""
         if isinstance(kom_nr_entry, dict):
@@ -1380,6 +1655,7 @@ def process_message(
         refresh_missing_warnings(normalized)
 
     if branch.id == "porta":
+        _apply_porta_oj_accessory_article_backfill(normalized, pdf_text_by_image_name)
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
         _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)
 
