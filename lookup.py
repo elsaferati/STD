@@ -498,9 +498,14 @@ def find_customer_by_address(
             == kdnr_clean
         )
         kdn_subset = df[mask]
-        kdn_subset = _filter_by_verband(kdn_subset)
-        if kdn_subset is None or kdn_subset.empty:
-            return None
+        filtered = _filter_by_verband(kdn_subset)
+        if filtered is None or filtered.empty:
+            # Exact kundennummer match: fall back to unfiltered subset so Verband gaps don't silently break delivery_week
+            if kdn_subset.empty:
+                return None
+            # kdn_subset stays unfiltered (fall through)
+        else:
+            kdn_subset = filtered
 
         # Prefer main customer row (Adressnummer == 0) for Tour; fallback to any row if none.
         if "Adressnummer" in kdn_subset.columns:
