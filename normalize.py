@@ -192,11 +192,6 @@ _STREET_KEYWORD_START_RE = re.compile(
 )
 
 
-_SEGMULLER_MODEL_ARTIKEL_RE = re.compile(
-    r"^([A-Za-z0-9/]+)\s*-\s*(\d{5}[A-Za-z]?)$"
-)
-_SEGMULLER_ARTIKEL_RE = re.compile(r"^\d{5}[A-Za-z]?$")
-_SEGMULLER_TRAILING_ARTIKEL_RE = re.compile(r"^(?P<model>.*?)(?P<artikel>\d{5}[A-Za-z]?)$")
 _SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
 
 
@@ -940,69 +935,6 @@ def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
         modell_entry["value"] = compact_model
 
 
-def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
-    entry["source"] = "derived"
-    entry["confidence"] = 1.0
-    entry["derived_from"] = "segmuller_model_artikel_split"
-
-
-def _split_segmuller_model_artikel(value: str) -> tuple[str, str] | None:
-    text = _clean_text(value).strip()
-    if not text:
-        return None
-
-    # Prefer strict canonical form first (MODEL-ARTICLE).
-    match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(text)
-    if match:
-        parsed_model = match.group(1).strip().upper()
-        parsed_artikel = match.group(2).strip().upper()
-        if parsed_model and _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel):
-            return parsed_model, parsed_artikel
-
-    # OCR-tolerant fallback:
-    # Accept ArtNr forms where the same trailing article token exists but separators are noisy
-    # or missing (e.g., ZB00/46518, SI9191XP04695, "ZB 00 - 46518").
-    match = _SEGMULLER_TRAILING_ARTIKEL_RE.fullmatch(text)
-    if not match:
-        return None
-    parsed_model = match.group("model").strip(" -/\t")
-    parsed_model = re.sub(r"\s+", "", parsed_model).upper()
-    parsed_artikel = match.group("artikel").strip().upper()
-    if (
-        not parsed_model
-        or not re.search(r"[A-Za-z]", parsed_model)
-        or not _SEGMULLER_ARTIKEL_RE.fullmatch(parsed_artikel)
-    ):
-        return None
-    return parsed_model, parsed_artikel
-
-
-def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
-    artikel_entry = _ensure_field(item, "artikelnummer")
-    modell_entry = _ensure_field(item, "modellnummer")
-
-    artikel_value = _clean_text(artikel_entry.get("value"))
-    modell_value = _clean_text(modell_entry.get("value"))
-    split_result = _split_segmuller_model_artikel(modell_value)
-    if not split_result:
-        split_result = _split_segmuller_model_artikel(artikel_value)
-    if not split_result:
-        return
-
-    parsed_model, parsed_artikel = split_result
-    current_model = modell_value.strip()
-    current_artikel = artikel_value.strip().upper()
-
-    if current_model != parsed_model:
-        modell_entry["value"] = parsed_model
-        _mark_segmuller_code_derived(modell_entry)
-
-    # For Segmuller composite codes, always trust the strict trailing article token.
-    if current_artikel != parsed_artikel or not _SEGMULLER_ARTIKEL_RE.fullmatch(current_artikel):
-        artikel_entry["value"] = parsed_artikel
-        _mark_segmuller_code_derived(artikel_entry)
-
-
 def _normalize_segmuller_kom_name(header: dict[str, Any]) -> None:
     entry = _ensure_field(header, "kom_name")
     kom_name = _clean_text(entry.get("value"))
@@ -1084,8 +1016,6 @@ def _normalize_items(
 
         if is_momax_bg:
             _normalize_momax_bg_item_codes(item)
-        elif (branch_id or "").strip() == "segmuller":
-            _normalize_segmuller_item_codes(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
