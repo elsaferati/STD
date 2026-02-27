@@ -90,6 +90,7 @@ def build_user_instructions_segmuller(source_priority: list[str]) -> str:
         "=== HEADER EXTRACTION HINTS ===\n"
         "kundennummer: Kundennr/Kunden-Nr/Debitor/Konto\n"
         "kom_nr: Auftragsnr/Bestellnr/Order/Kommission\n"
+        "kom_name: only the name part (example: '22300 NUESSLER' -> 'NUESSLER').\n"
         "bestelldatum: Bestelldatum/Datum\n"
         "liefertermin or wunschtermin: Liefertermin/Wunschliefertermin\n"
         "lieferanschrift: Lieferadresse/Lieferanschrift/Empfaenger block\n"

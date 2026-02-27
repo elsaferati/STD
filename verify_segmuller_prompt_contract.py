@@ -27,6 +27,7 @@ def test_segmuller_prompt_contract() -> None:
     assert "Delivery block ILN/GLN -> iln_anl and iln." in prompt
     assert "Store/billing ILN from Auftragsbestaetigungsanschrift or Rechnungsanschrift -> iln_fil." in prompt
     assert "Do not swap delivery/store ILN mappings." in prompt
+    assert "kom_name: only the name part (example: '22300 NUESSLER' -> 'NUESSLER')." in prompt
 
     assert "status must be one of: ok, partial, failed." in prompt
     print("SUCCESS: Segmuller prompt contract includes furnplan priority, strict address rules, and ILN block mapping.")

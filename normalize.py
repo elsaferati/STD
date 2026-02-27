@@ -196,6 +196,7 @@ _SEGMULLER_MODEL_ARTIKEL_RE = re.compile(
     r"^([A-Za-z0-9/]+)\s*-\s*(\d{5}[A-Za-z]?)$"
 )
 _SEGMULLER_ARTIKEL_RE = re.compile(r"^\d{5}[A-Za-z]?$")
+_SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
 
 
 def _format_german_address_lines(value: str) -> str:
@@ -984,6 +985,27 @@ def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
         _mark_segmuller_code_derived(artikel_entry)
 
 
+def _normalize_segmuller_kom_name(header: dict[str, Any]) -> None:
+    entry = _ensure_field(header, "kom_name")
+    kom_name = _clean_text(entry.get("value"))
+    if not kom_name:
+        return
+    match = _SEGMULLER_KOM_NAME_PREFIX_RE.fullmatch(kom_name)
+    if not match:
+        return
+    cleaned_name = match.group(1).strip()
+    if not cleaned_name:
+        return
+    if not re.search(r"[A-Za-zÄÖÜäöüß]", cleaned_name):
+        return
+    if cleaned_name == kom_name:
+        return
+    entry["value"] = cleaned_name
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_kom_name_cleanup"
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -1469,6 +1491,8 @@ def normalize_output(
         del header["kom_name_pdf"]
 
     _normalize_header(header, dayfirst, warnings)
+    if (branch_id or "").strip() == "segmuller":
+        _normalize_segmuller_kom_name(header)
     reply_needed_entry = header.get("reply_needed", {})
     reply_needed_flag = False
     if isinstance(reply_needed_entry, dict):
