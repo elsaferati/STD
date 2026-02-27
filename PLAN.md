@@ -1,97 +1,85 @@
-## Segmuller Prompt Upgrade for Item + Address Accuracy
+Segmuller orders come with furnplan PDFs — the same format as xxxlutz_default. Currently Segmuller has 
+  its own custom splitting rules (trailing 5-digit token = artikelnummer, rest = modellnummer) both in  
+ the prompt and in post-processing normalization code. The goal is to replace these with the same       
+ article code patterns used by xxxlutz_default for furnplan PDFs:
+ - Standard hyphenated split: MODEL-ARTICLE (e.g., CQ9606XA-60951)
+ - Reversed pattern: NUMERIC-ALPHA (e.g., 56847-ZB99 → artikel=56847, modell=ZB99)
+ - Same PDF text usage rules (confirm/correct codes only, menge from image)
 
-### Summary
-Use this sample as the canonical Segmuller pattern and update the Segmuller prompt to:
-1. Prioritize scanned furnplan (`Skizze/Aufstellung`) item-table codes over coarse order-table codes.
-2. Extract delivery/store addresses in strict `street + PLZ/city` format.
-3. Split ILNs by block (`delivery` vs `store/billing`) so `iln_anl/iln` and `iln_fil` are filled correctly.
+ Changes
 
-No skill is applied here because the available skills are only for skill creation/installation, not prompt tuning.
+ 1. prompts_segmuller.py — Replace item code section (lines 53–68)
 
-### Files to change
-- [prompts_segmuller.py](c:/Users/Admin/Documents/GitHub/STD/prompts_segmuller.py)
-- Add prompt contract test: [verify_segmuller_prompt_contract.py](c:/Users/Admin/Documents/GitHub/STD/verify_segmuller_prompt_contract.py)
+ Remove the entire === SEGMULLER ITEM PRIORITY (STRICT) === block (the hard rule about trailing 5-digit 
+  token, Beschreibung fallback, order-table fallback merging, etc.)
 
-### Implementation plan
+ Replace with the xxxlutz_default article code patterns:
 
-1. Update Segmuller prompt sections in `build_user_instructions_segmuller(...)` with explicit multi-document logic.
-- Add a `=== DOCUMENT ROLE DETECTION ===` section:
-  - Identify primary order pages by `BESTELLUNG` + table headers like `Pos/Upo/Seg-Nr./Ihre Art.-Nr.`.
-  - Identify furnplan/scanned pages by `SKIZZE / AUFSTELLUNG`, `furnplan`, rotated drawings, and scanned layouts.
-  - State that furnplan pages are valid item-code sources even when digital text is empty.
-- Add rule: scan all pages/all attachments; do not rely only on first PDF.
+ === ARTICLE CODE PATTERNS ===
+ - Standard hyphenated codes like 'CQ9606XA-60951' → SPLIT on hyphen:
+     → modellnummer = part BEFORE hyphen (e.g., 'CQ9606XA')
+     → artikelnummer = part AFTER hyphen (e.g., '60951')
+ - REVERSED hyphen pattern (CRITICAL - accessory codes):
+   - If code matches <NUMERIC>-<ALPHA> format (e.g., '56847-ZB99', '12345-AB12'):
+     → artikelnummer = NUMERIC part (e.g., '56847')
+     → modellnummer = ALPHA part (e.g., 'ZB99')
+   - This is the REVERSE of the standard MODEL-ARTICLE pattern!
+ - Examples:
+   - 'OJ99-61469' → artikelnummer='61469', modellnummer='OJ99' (standard)
+   - 'CQ1111XP-67538' → artikelnummer='67538', modellnummer='CQ1111XP' (standard)
+   - '56847-ZB99' → artikelnummer='56847', modellnummer='ZB99' (REVERSED)
+   - '12345-AB12' → artikelnummer='12345', modellnummer='AB12' (REVERSED)
 
-2. Add strict item extraction priority for Segmuller.
-- New `=== SEGMULLER ITEM PRIORITY (STRICT) ===` section:
-  - Priority 1: furnplan item table rows (`Pos | ArtNr | Beschreibung | ... | Menge`).
-  - Priority 2: order table only as fallback when furnplan codes are unclear.
-- Mapping rules:
-  - From furnplan row: `modellnummer <- ArtNr` token (e.g. `S1111XA`), `artikelnummer <- code-like token in/next to Beschreibung` (e.g. `18801`), `menge <- Menge`.
-  - From order fallback row: we will fix later
-- Dedup/merge rule:
-  - One output item per real occurrence.
-  - If order table and furnplan describe the same line (same Seg-Nr / same item context), keep one merged item, preferring furnplan code fields.
-- Keep existing `line_no` sequential behavior.
+ === SEGMULLER ITEM SOURCES ===
+ Priority 1: Furnplan/scanned item rows (e.g. Pos | ArtNr | Beschreibung | ... | Menge).
+ Priority 2: Order-table rows only if Furnplan codes are missing or unreadable.
+ - Article codes from Furnplan rows → same split rules as above
+ - menge ← Menge column
+ - Use Beschreibung token fallback only when ArtNr is missing/unreadable.
+ From order-table fallback rows: use only as fallback; prefer richer code fields from Furnplan.
+ If order table and Furnplan describe the same real item (same Seg-Nr or same item context), output one 
+  merged line and keep Furnplan code fields.
 
-3. Add strict address/store extraction rules.
-- New `=== SEGMULLER ADDRESS RULES ===` section:
-  - `lieferanschrift`: from `Lieferung an` / `Lieferanschrift` block, output only:
-    - Line 1: street + house number
-    - Line 2: PLZ + city
-  - Explicitly drop recipient/company line from `lieferanschrift` (per your choice).
-  - Exclude ILN lines from address fields.
-  - `store_name`: company entity from `Auftragsbestätigungsanschrift` / `Rechnungsanschrift`.
-  - `store_address`: only street + PLZ/city from those store/billing blocks.
-- Add examples directly in prompt:
-  - `lieferanschrift`: `Am Rotböll 7\n64331 Weiterstadt`
-  - `store_address`: `Münchner Str. 35\n86316 Friedberg`
+ Also add the PDF furnplan section from xxxlutz_default:
+ ### PDF/TIF Attachment (furnplan style):
+ - Article codes → same split rules as above
+ - 'Menge' or quantity column → menge
+ - '[xxxx xxxx]' bracket codes (may be sideways/rotated) → furncloud_id
+ - Extract ALL items from ALL pages - don't stop after first table!
 
-4. Add strict ILN block mapping instructions.
-- New `=== SEGMULLER ILN MAPPING ===` section:
-  - Delivery block ILN -> `iln_anl` and `iln`.
-  - Store/billing ILN (`Auftragsbestätigungsanschrift`/`Rechnungsanschrift`) -> `iln_fil`.
-  - Do not swap these.
-  - Do not embed ILN text into address fields.
+ 2. normalize.py — Remove Segmuller-specific item code splitting
 
-5. Keep output contract unchanged.
-- Retain same required schema/keys/object format.
-- Keep status enum unchanged (`ok|partial|failed`).
+ Remove these components:
+ - _SEGMULLER_MODEL_ARTIKEL_RE regex (line 195–197)
+ - _SEGMULLER_ARTIKEL_RE regex (line 198)
+ - _SEGMULLER_TRAILING_ARTIKEL_RE regex (line 199)
+ - _mark_segmuller_code_derived() function (lines 943–946)
+ - _split_segmuller_model_artikel() function (lines 949–977)
+ - _normalize_segmuller_item_codes() function (lines 980–1003)
+ - The call at line 1087–1088: elif (branch_id or "").strip() == "segmuller":
+ _normalize_segmuller_item_codes(item)
 
-### Important interfaces/APIs/types
-- No Python API/type changes.
-- No branch/routing changes.
-- Only prompt behavior for existing Segmuller branch is changed.
+ Keep _SEGMULLER_KOM_NAME_PREFIX_RE and _normalize_segmuller_kom_name() — those are unrelated to        
+ article codes.
 
-### Test cases and scenarios
+ 3. verify_segmuller_item_code_split.py — Update tests
 
-1. Prompt contract test (`verify_segmuller_prompt_contract.py`):
-- Assert prompt text contains explicit furnplan-first item priority.
-- Assert prompt text contains `street+PLZ only` for `lieferanschrift`.
-- Assert prompt text contains `store_name` + `store_address` sourcing from store/billing blocks.
-- Assert prompt text contains ILN split rule (`delivery -> iln_anl+iln`, `store/billing -> iln_fil`).
+ The existing tests validate the old Segmuller-specific splitting. Either:
+ - Remove the file entirely (since there's no normalize-level split logic anymore), or
+ - Update the test expectations to reflect that normalize no longer modifies these fields for Segmuller 
+  (the prompt handles it now, same as xxxlutz_default)
 
-2. Sample-case acceptance scenario (manual/LLM run with provided files):
-- Inputs:
-  - `CLIENT CASES/segmuller/ORDER 1/Bestellung_850625542001_______.pdf`
-  - `CLIENT CASES/segmuller/ORDER 1/E19RGE07.PDF`
-  - `CLIENT CASES/segmuller/ORDER 1/Email Body.txt`
-- Expected extraction targets:
-  - `kom_nr = 850625542001`
-  - `lieferanschrift = "Am Rotböll 7\n64331 Weiterstadt"`
-  - `store_address = "Münchner Str. 35\n86316 Friedberg"`
-  - `store_name` from store/billing block company
-  - `iln_anl = iln = 4042861001501`
-  - `iln_fil = 4042861000009`
-  - Items prefer furnplan-coded row (`S1111XA` + `18801`) over weak `14` token from order row.
-- Regression guard:
-  - `artikelnummer` must not be `14` when furnplan provides better code.
+ Best approach: update tests so they confirm normalize does not alter the values — proving the prompt   
+ is trusted to do the splitting (matching xxxlutz_default behavior).
 
-3. Quick verification command set after implementation:
-- `python -m py_compile prompts_segmuller.py verify_segmuller_prompt_contract.py`
-- `python verify_segmuller_prompt_contract.py`
+ Files to modify
 
-### Assumptions and defaults
-- Default chosen: scanned furnplan pages are authoritative for item codes when available.
-- Default chosen: `lieferanschrift` is `street+PLZ/city` only (no company line).
-- Default chosen: ILNs are split by semantic block (delivery vs store/billing).
-- If furnplan item row is unreadable, fallback to order table without inventing short weak article codes.
+ 1. prompts_segmuller.py — prompt text changes
+ 2. normalize.py — remove Segmuller item code split logic
+ 3. verify_segmuller_item_code_split.py — update/simplify tests
+
+ Verification
+
+ - Run python verify_segmuller_item_code_split.py after updating tests
+ - Run python verify_segmuller_prompt_contract.py to confirm prompt structure is valid
+ - Run any other verify scripts to check for regressions

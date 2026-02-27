@@ -32,35 +32,34 @@ def _run_case(modellnummer: str, artikelnummer: str, branch_id: str = "segmuller
     return (normalized.get("items") or [{}])[0]
 
 
-def test_segmuller_model_article_split_examples() -> None:
+def test_segmuller_does_not_modify_item_codes() -> None:
     cases = [
-        ("SINUNU0658XB-89320C", "-", "89320C", "SINUNU0658XB"),
-        ("ZB00-38337", "-", "38337", "ZB00"),
-        ("SI9191XP-04695", "", "04695", "SI9191XP"),
-        ("ZB99-14412", "", "14412", "ZB99"),
+        ("SINUNU0658XB-89320C", "-"),
+        ("ZB00-38337", "46518"),
+        ("", "ZB99-56848"),
+        ("", "ZB99/56848"),
+        ("", "SIEG9199-44182G"),
+        ("56847-ZB99", ""),
+        ("12345-AB12", ""),
     ]
-    for model_in, article_in, article_out, model_out in cases:
+    for model_in, article_in in cases:
         item = _run_case(model_in, article_in, branch_id="segmuller")
-        assert item.get("artikelnummer", {}).get("value") == article_out
-        assert item.get("modellnummer", {}).get("value") == model_out
-    print("SUCCESS: Segmuller MODEL-ARTICLE values are split into strict artikelnummer/modellnummer.")
+        artikel = item.get("artikelnummer", {})
+        modell = item.get("modellnummer", {})
+        assert artikel.get("value") == article_in
+        assert modell.get("value") == model_in
+        assert artikel.get("source") == "image"
+        assert modell.get("source") == "image"
+    print("SUCCESS: Segmuller item codes remain unchanged in normalize; splitting is prompt-driven.")
 
 
-def test_segmuller_split_overrides_wrong_existing_article() -> None:
-    item = _run_case("ZB00-38337", "46518", branch_id="segmuller")
-    assert item.get("artikelnummer", {}).get("value") == "38337"
-    assert item.get("modellnummer", {}).get("value") == "ZB00"
-    print("SUCCESS: Segmuller split rule overrides mismatched existing artikelnummer.")
-
-
-def test_non_segmuller_keeps_original_model_value() -> None:
+def test_non_segmuller_also_keeps_original_values() -> None:
     item = _run_case("ZB00-38337", "", branch_id="xxxlutz_default")
     assert item.get("artikelnummer", {}).get("value") == ""
     assert item.get("modellnummer", {}).get("value") == "ZB00-38337"
-    print("SUCCESS: Non-Segmuller branches are unchanged by Segmuller split rule.")
+    print("SUCCESS: Non-Segmuller branch behavior remains unchanged.")
 
 
 if __name__ == "__main__":
-    test_segmuller_model_article_split_examples()
-    test_segmuller_split_overrides_wrong_existing_article()
-    test_non_segmuller_keeps_original_model_value()
+    test_segmuller_does_not_modify_item_codes()
+    test_non_segmuller_also_keeps_original_values()

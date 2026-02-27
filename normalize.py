@@ -192,10 +192,7 @@ _STREET_KEYWORD_START_RE = re.compile(
 )
 
 
-_SEGMULLER_MODEL_ARTIKEL_RE = re.compile(
-    r"^([A-Za-z0-9/]+)\s*-\s*(\d{5}[A-Za-z]?)$"
-)
-_SEGMULLER_ARTIKEL_RE = re.compile(r"^\d{5}[A-Za-z]?$")
+_SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
 
 
 def _format_german_address_lines(value: str) -> str:
@@ -938,37 +935,25 @@ def _normalize_momax_bg_item_codes(item: dict[str, Any]) -> None:
         modell_entry["value"] = compact_model
 
 
-def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
-    entry["source"] = "derived"
-    entry["confidence"] = 1.0
-    entry["derived_from"] = "segmuller_model_artikel_split"
-
-
-def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
-    artikel_entry = _ensure_field(item, "artikelnummer")
-    modell_entry = _ensure_field(item, "modellnummer")
-
-    artikel_value = _clean_text(artikel_entry.get("value"))
-    modell_value = _clean_text(modell_entry.get("value"))
-    if not modell_value:
+def _normalize_segmuller_kom_name(header: dict[str, Any]) -> None:
+    entry = _ensure_field(header, "kom_name")
+    kom_name = _clean_text(entry.get("value"))
+    if not kom_name:
         return
-
-    match = _SEGMULLER_MODEL_ARTIKEL_RE.fullmatch(modell_value.strip())
+    match = _SEGMULLER_KOM_NAME_PREFIX_RE.fullmatch(kom_name)
     if not match:
         return
-
-    parsed_model = match.group(1).strip()
-    parsed_artikel = match.group(2).strip().upper()
-    current_artikel = artikel_value.strip().upper()
-
-    if parsed_model != modell_value:
-        modell_entry["value"] = parsed_model
-        _mark_segmuller_code_derived(modell_entry)
-
-    # For Segmuller composite codes, always trust the strict trailing article token.
-    if current_artikel != parsed_artikel or not _SEGMULLER_ARTIKEL_RE.fullmatch(current_artikel):
-        artikel_entry["value"] = parsed_artikel
-        _mark_segmuller_code_derived(artikel_entry)
+    cleaned_name = match.group(1).strip()
+    if not cleaned_name:
+        return
+    if not re.search(r"[A-Za-zÄÖÜäöüß]", cleaned_name):
+        return
+    if cleaned_name == kom_name:
+        return
+    entry["value"] = cleaned_name
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_kom_name_cleanup"
 
 
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
@@ -1031,8 +1016,6 @@ def _normalize_items(
 
         if is_momax_bg:
             _normalize_momax_bg_item_codes(item)
-        elif (branch_id or "").strip() == "segmuller":
-            _normalize_segmuller_item_codes(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
@@ -1456,6 +1439,8 @@ def normalize_output(
         del header["kom_name_pdf"]
 
     _normalize_header(header, dayfirst, warnings)
+    if (branch_id or "").strip() == "segmuller":
+        _normalize_segmuller_kom_name(header)
     reply_needed_entry = header.get("reply_needed", {})
     reply_needed_flag = False
     if isinstance(reply_needed_entry, dict):
@@ -1476,7 +1461,7 @@ def normalize_output(
         if isinstance(entry, dict):
             value = entry.get("value", "")
             if field == "lieferanschrift":
-                if (branch_id or "").strip() == "porta":
+                if (branch_id or "").strip() in ("porta", "braun"):
                     formatted = _strip_company_from_lieferanschrift_for_porta(value)
                 else:
                     formatted = _format_lieferanschrift_lines(value)
