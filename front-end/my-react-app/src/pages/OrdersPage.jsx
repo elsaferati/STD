@@ -32,6 +32,20 @@ function flagLabel(order, t) {
   return labels.length ? labels.join(" | ") : "-";
 }
 
+function FlagPill({ label, color }) {
+  const colors = {
+    orange: "bg-orange-50 text-orange-700 border-orange-200",
+    red: "bg-red-50 text-red-700 border-red-200",
+    slate: "bg-slate-100 text-slate-600 border-slate-200",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colors[color]}`}>
+      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+      {label}
+    </span>
+  );
+}
+
 export function OrdersPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -552,7 +566,16 @@ export function OrdersPage() {
                         <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                      <td className="px-4 py-3 text-xs text-slate-600">{flagLabel(order, t)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-1">
+                          {order.human_review_needed && <FlagPill label={t("flags.review")} color="orange" />}
+                          {order.reply_needed && <FlagPill label={t("flags.reply")} color="red" />}
+                          {order.post_case && <FlagPill label={t("flags.post")} color="slate" />}
+                          {!order.human_review_needed && !order.reply_needed && !order.post_case && (
+                            <span className="text-slate-400 text-xs">-</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
