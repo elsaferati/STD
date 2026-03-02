@@ -63,6 +63,7 @@ _PORTA_AMBIGUOUS_IGNORE_WARNING_RE = re.compile(
     re.IGNORECASE,
 )
 _PORTA_INVALID_COMPONENT_MODELS = {"HRB", "HRA"}
+_AB_NR_RE = re.compile(r"\bAB\.?\s*Nr\.?\b", re.IGNORECASE)
 _PORTA_KOM_NAME_LABEL_RE = re.compile(
     r"\b(?:kommissionsname|kommissions-?name|commissionname)\b",
     re.IGNORECASE,
@@ -1869,6 +1870,35 @@ def _reconcile_porta_component_occurrences(
     return len(missing_occurrences)
 
 
+def _flag_ab_nr_human_review(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+    email_body: str,
+) -> None:
+    """Set human_review_needed if AB Nr pattern is found in PDF text or email body."""
+    combined = " ".join(page_text_by_image_name.values()) + " " + (email_body or "")
+    if not _AB_NR_RE.search(combined):
+        return
+    header = normalized.get("header")
+    if not isinstance(header, dict):
+        header = {}
+        normalized["header"] = header
+    entry = header.get("human_review_needed")
+    if not isinstance(entry, dict):
+        entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["human_review_needed"] = entry
+    # Only set if not already true (preserve existing reason if already flagged)
+    if entry.get("value") is not True:
+        entry["value"] = True
+        entry["source"] = "derived"
+        entry["confidence"] = 1.0
+        entry["derived_from"] = "ab_nr_detected"
+    warnings = _ensure_warning_list(normalized)
+    warnings.append(
+        "AB Nr. detected in order text: forced human_review_needed=true"
+    )
+
+
 def _set_porta_inline_pair_reconciliation_human_review(normalized: dict[str, Any]) -> None:
     header = normalized.get("header")
     if not isinstance(header, dict):
@@ -2072,6 +2102,9 @@ def process_message(
         is_momax_bg=branch.is_momax_bg,
         branch_id=branch.id,
     )
+
+    # Universal: flag AB Nr. orders for human review across all clients
+    _flag_ab_nr_human_review(normalized, pdf_text_by_image_name, body_text)
 
     if branch.id == "porta":
         _apply_porta_code_consistency_corrections(normalized, pdf_text_by_image_name)
