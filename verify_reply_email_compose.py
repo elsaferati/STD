@@ -80,7 +80,7 @@ def _assert_combined_equal() -> None:
     assert msg["Subject"] == "Reply needed - multiple issues - 1000001"
     body = msg.get_content()
     assert "Please send the order with furnplan or make the order with 2 positions." not in body
-    assert "Detected two reply-needed conditions:" in body
+    assert "Detected multiple reply-needed conditions:" in body
     assert "Substitution details" in body
     assert "1. STATT TYP ABC BITTE TYP DEF" in body
     assert "Missing mandatory fields" in body
@@ -98,12 +98,41 @@ def _assert_missing_critical_item_only() -> None:
     assert "Missing critical item fields: artikelnummer (line 1), modellnummer (line 2)" in body
 
 
+def _assert_clarification_only() -> None:
+    normalized = _base_normalized(_base_message())
+    normalized["warnings"] = [
+        "Reply needed: Porta ambiguous standalone code token(s) removed; please confirm valid item codes. Removed: line 2: ? / 66015."
+    ]
+    msg = _compose(normalized)
+    assert msg["Subject"] == "Reply needed - clarification required - 1000001"
+    body = msg.get_content()
+    assert "Automatic order processing requires clarification before continuing." in body
+    assert "Clarification details" in body
+    assert "Porta ambiguous standalone code token(s) removed" in body
+
+
+def _assert_combined_substitution_and_clarification() -> None:
+    normalized = _base_normalized(_base_message())
+    normalized["warnings"] = [
+        "Reply needed: STATT TYP ABC BITTE TYP DEF",
+        "Reply needed: Porta ambiguous standalone code token(s) removed; please confirm valid item codes. Removed: line 2: ? / 66015.",
+    ]
+    msg = _compose(normalized)
+    assert msg["Subject"] == "Reply needed - multiple issues - 1000001"
+    body = msg.get_content()
+    assert "Detected multiple reply-needed conditions:" in body
+    assert "Substitution details" in body
+    assert "Clarification details" in body
+
+
 def main() -> int:
     _assert_substitution_only()
     _assert_missing_critical_only()
     _assert_combined_equal()
     _assert_missing_critical_item_only()
-    print("OK: reply email compose supports substitution, missing-critical, and combined cases.")
+    _assert_clarification_only()
+    _assert_combined_substitution_and_clarification()
+    print("OK: reply email compose supports substitution, missing-critical, clarification, and combined cases.")
     return 0
 
 

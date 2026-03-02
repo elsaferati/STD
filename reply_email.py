@@ -51,10 +51,18 @@ def _parse_missing_critical_case(reply_case: str) -> str:
     return ""
 
 
-def _classify_reply_cases(reply_cases: list[str]) -> tuple[list[str], list[str]]:
+def _is_substitution_case(reply_case: str) -> bool:
+    upper = str(reply_case or "").upper()
+    return "STATT" in upper and "BITTE" in upper
+
+
+def _classify_reply_cases(reply_cases: list[str]) -> tuple[list[str], list[str], list[str]]:
     substitution_cases: list[str] = []
     missing_cases: list[str] = []
+    clarification_cases: list[str] = []
+    seen_substitution: set[str] = set()
     seen_missing: set[str] = set()
+    seen_clarification: set[str] = set()
 
     for case in reply_cases:
         parsed_missing = _parse_missing_critical_case(case)
@@ -65,9 +73,20 @@ def _classify_reply_cases(reply_cases: list[str]) -> tuple[list[str], list[str]]
             seen_missing.add(key)
             missing_cases.append(parsed_missing)
             continue
-        substitution_cases.append(case)
+        if _is_substitution_case(case):
+            key = case.lower()
+            if key in seen_substitution:
+                continue
+            seen_substitution.add(key)
+            substitution_cases.append(case)
+            continue
+        key = case.lower()
+        if key in seen_clarification:
+            continue
+        seen_clarification.add(key)
+        clarification_cases.append(case)
 
-    return substitution_cases, missing_cases
+    return substitution_cases, missing_cases, clarification_cases
 
 
 def compose_reply_needed_email(
@@ -87,9 +106,13 @@ def compose_reply_needed_email(
     subject_hint = ticket_number or kom_nr or message_id or "unknown"
 
     reply_cases = _reply_cases_from_warnings(warnings)
-    substitution_cases, missing_critical_fields = _classify_reply_cases(reply_cases)
+    substitution_cases, missing_critical_fields, clarification_cases = _classify_reply_cases(reply_cases)
+    if not substitution_cases and not missing_critical_fields and not clarification_cases:
+        clarification_cases = ["Automatic clarification requested by workflow."]
     has_substitution = bool(substitution_cases)
     has_missing_critical = bool(missing_critical_fields)
+    has_clarification = bool(clarification_cases)
+    category_count = sum(1 for flag in (has_substitution, has_missing_critical, has_clarification) if flag)
 
     body_lines: list[str] = []
     if not has_missing_critical:
@@ -98,21 +121,33 @@ def compose_reply_needed_email(
             body_lines.append(template_text)
             body_lines.append("")
     body_lines.append("What happened")
-    if has_substitution and has_missing_critical:
-        body_lines.append("Detected two reply-needed conditions:")
-        body_lines.append("1) Substitution request (STATT ... BITTE ...).")
-        body_lines.append("2) Missing mandatory header fields for automatic processing.")
+    if category_count > 1:
+        body_lines.append("Detected multiple reply-needed conditions:")
+        condition_no = 1
+        if has_substitution:
+            body_lines.append(f"{condition_no}) Substitution request (STATT ... BITTE ...).")
+            condition_no += 1
+        if has_missing_critical:
+            body_lines.append(f"{condition_no}) Missing mandatory header/item fields for automatic processing.")
+            condition_no += 1
+        if has_clarification:
+            body_lines.append(f"{condition_no}) Clarification needed for ambiguous order data.")
         body_lines.append("")
-        body_lines.append("Substitution details")
-        for idx, case in enumerate(substitution_cases, start=1):
-            body_lines.append(f"{idx}. {case}")
-        body_lines.append("")
-        body_lines.append("Missing mandatory fields")
-        for idx, case in enumerate(missing_critical_fields, start=1):
-            body_lines.append(f"{idx}. {case}")
-        body_lines.append(
-            "Please resend the order with these fields filled in, or send a corrected order via furnplan."
-        )
+        if has_substitution:
+            body_lines.append("Substitution details")
+            for idx, case in enumerate(substitution_cases, start=1):
+                body_lines.append(f"{idx}. {case}")
+            body_lines.append("")
+        if has_missing_critical:
+            body_lines.append("Missing mandatory fields")
+            for idx, case in enumerate(missing_critical_fields, start=1):
+                body_lines.append(f"{idx}. {case}")
+            body_lines.append("")
+        if has_clarification:
+            body_lines.append("Clarification details")
+            for idx, case in enumerate(clarification_cases, start=1):
+                body_lines.append(f"{idx}. {case}")
+        body_lines.append("Please send a corrected order or confirmation via furnplan so we can proceed.")
     elif has_missing_critical:
         body_lines.append("Automatic order processing could not continue because mandatory fields are missing.")
         body_lines.append("")
@@ -122,10 +157,17 @@ def compose_reply_needed_email(
         body_lines.append(
             "Please resend the order with these fields filled in, or send a corrected order via furnplan."
         )
-    else:
+    elif has_substitution:
         body_lines.append("Detected a substitution request (STATT ... BITTE ...).")
         for case in substitution_cases:
             body_lines.append(f"Reply case: {case}")
+    else:
+        body_lines.append("Automatic order processing requires clarification before continuing.")
+        body_lines.append("")
+        body_lines.append("Clarification details")
+        for idx, case in enumerate(clarification_cases, start=1):
+            body_lines.append(f"{idx}. {case}")
+        body_lines.append("Please confirm the correct values so we can proceed.")
     body_lines.append("")
     body_lines.append("Context")
     body_lines.append(f"Message-ID: {message_id}")
@@ -144,10 +186,12 @@ def compose_reply_needed_email(
 
     msg = EmailMessage()
     msg["To"] = to_addr
-    if has_substitution and has_missing_critical:
+    if category_count > 1:
         msg["Subject"] = f"Reply needed - multiple issues - {subject_hint}"
     elif has_missing_critical:
         msg["Subject"] = f"Reply needed - missing critical fields - {subject_hint}"
+    elif has_clarification:
+        msg["Subject"] = f"Reply needed - clarification required - {subject_hint}"
     else:
         msg["Subject"] = f"Reply needed - swap detected - {subject_hint}"
     msg.set_content("\n".join(body_lines).rstrip() + "\n")
