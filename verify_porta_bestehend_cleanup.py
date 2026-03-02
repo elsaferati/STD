@@ -130,6 +130,16 @@ def _component_block_text(parent_artikel_nr: str = "4611217 / 83") -> str:
     )
 
 
+def _component_block_text_with_slash_component(parent_artikel_nr: str = "4574199 / 00") -> str:
+    return (
+        f"1 {parent_artikel_nr} Liefermodell: Includo Kleiderschrank\n"
+        "bestehend aus je:\n"
+        "1 Stk Liefermodell: Includo\n"
+        "PD96713696/54415 Schwebetuerschrank\n"
+        "Anlieferung:\n"
+    )
+
+
 def _component_block_text_qty_split_lines(parent_artikel_nr: str = "4611217 / 83") -> str:
     return (
         f"1 {parent_artikel_nr} Liefermodell: Sinfonie Plus CQEG5899 76953G\n"
@@ -250,6 +260,26 @@ def test_identical_artikel_nr_and_parent_still_count_as_new_occurrence() -> None
     assert keys.count(("CQEG5899", "76953G", "1")) == 2
     assert keys.count(("CQEG00", "09387", "1")) == 2
     print("SUCCESS: identical parent/Artikel-Nr. still yields new component occurrences.")
+
+
+def test_slash_component_pair_is_extracted_from_bestehend_block() -> None:
+    page_texts = {
+        "order-1.png": _component_block_text_with_slash_component("4574199 / 00"),
+    }
+    extracted = pipeline._extract_porta_component_occurrences_from_page_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+    keys = [
+        (
+            item.get("modellnummer"),
+            item.get("artikelnummer"),
+            str(item.get("menge")),
+        )
+        for item in extracted
+    ]
+    assert ("PD96713696", "54415", "1") in keys
+    assert all(key[:2] != ("4574199", "00") for key in keys)
+    print("SUCCESS: slash-separated component pair is extracted; parent table Artikel-Nr is ignored.")
 
 
 def test_qty_marker_split_across_lines_is_extracted() -> None:
@@ -517,6 +547,13 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "Do not semantically collapse rows just because modellnummer/artikelnummer are identical." in verify_prompt
     assert "OJ00 31681 -> modellnummer='OJ00', artikelnummer='31681'" in porta_prompt
     assert "OJ00 31681 -> modellnummer='OJ00', artikelnummer='31681'" in verify_prompt
+    assert "PD96713696/54415 -> modellnummer='PD96713696', artikelnummer='54415'" in porta_prompt
+    assert "PD96713696/54415 -> modellnummer='PD96713696', artikelnummer='54415'" in verify_prompt
+    assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in porta_prompt
+    assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in verify_prompt
+    assert "If the Verkaufshaus store address is missing, use lieferanschrift for store_address." in porta_prompt
+    assert "If an explicit Verkaufshaus store address is present, keep it and do not overwrite it with lieferanschrift." in porta_prompt
+    assert "NEVER copy delivery address into store_address." not in porta_prompt
     print("SUCCESS: prompt contract explicitly enforces cross-page no-dedupe behavior.")
 
 
@@ -546,9 +583,130 @@ def test_porta_oj_accessory_article_backfill_from_space_separated_pair() -> None
     print("SUCCESS: OJ/0J accessory article number is backfilled from space-separated PDF pair.")
 
 
+def _qty_for_pair(normalized: dict, modell: str, artikel: str) -> int | float | str | None:
+    items = normalized.get("items") or []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        model = str((item.get("modellnummer") or {}).get("value") or "").strip().upper()
+        article_no = str((item.get("artikelnummer") or {}).get("value") or "").strip().upper()
+        if model == modell.upper() and article_no == artikel.upper():
+            return (item.get("menge") or {}).get("value")
+    return None
+
+
+def test_qty_correction_no_adjacent_swap_for_cq12_cq1212_pairs() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQ12", "86087", menge=1),
+            _item(2, "CQ1212", "09611", menge=2),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 4624469 / 64 Liefermodell: SinfoniePlus\n"
+            "bestehend aus je:\n"
+            "2 Stk CQ12 86087 Aussenseite Standard 240\n"
+            "1 Stk CQ1212 09611 Stollen-Grundregal\n"
+        )
+    }
+
+    pipeline._apply_porta_quantity_corrections(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    assert _qty_for_pair(normalized, "CQ12", "86087") == 2
+    assert _qty_for_pair(normalized, "CQ1212", "09611") == 1
+    print("SUCCESS: strict quantity correction keeps CQ12/CQ1212 rows from adjacent swap.")
+
+
+def test_qty_correction_no_adjacent_swap_for_cq124112g5_cq12411212g1_pairs() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQ124112G5", "86047", menge=1),
+            _item(2, "CQ12411212G1", "86080", menge=2),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 4624469 / 64 Liefermodell: SinfoniePlus\n"
+            "bestehend aus je:\n"
+            "2 Stk CQ124112G5 86047 Anbauelement 83/240\n"
+            "1 Stk CQ12411212G1 86080 Anbauelement 83/240\n"
+        )
+    }
+
+    pipeline._apply_porta_quantity_corrections(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    assert _qty_for_pair(normalized, "CQ124112G5", "86047") == 2
+    assert _qty_for_pair(normalized, "CQ12411212G1", "86080") == 1
+    print("SUCCESS: strict quantity correction keeps CQ124112G5/CQ12411212G1 rows from adjacent swap.")
+
+
+def test_qty_correction_keeps_parent_row_qty_for_cqeg1299_76947g() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQEG1299", "76947G", menge=2),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 4624469 / 66 Liefermodell: Sinfonie Plus Bett\n"
+            "bestehend aus je:\n"
+            "1 Stk CQ1212 09377G Bettrahmen\n"
+            "1 Stk CQEG12 09341G Bettkopfteil\n"
+            "2 Stk 4624469 / 67 Liefermodell: Sinfonie Plus CQEG1299 76947G\n"
+            "Konsole\n"
+        )
+    }
+
+    pipeline._apply_porta_quantity_corrections(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    assert _qty_for_pair(normalized, "CQEG1299", "76947G") == 2
+    print("SUCCESS: parent-row qty for CQEG1299/76947G is not overwritten by unrelated component rows.")
+
+
+def test_qty_correction_skips_ambiguous_pair_and_warns() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQ1212", "09377G", menge=3),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 4624469 / 66 Liefermodell: Sinfonie Plus Bett\n"
+            "bestehend aus je:\n"
+            "1 Stk CQ1212 09377G Bettrahmen\n"
+        ),
+        "order-2.png": (
+            "1 4624469 / 66 Liefermodell: Sinfonie Plus Bett\n"
+            "bestehend aus je:\n"
+            "2 Stk CQ1212 09377G Bettrahmen\n"
+        ),
+    }
+
+    pipeline._apply_porta_quantity_corrections(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    assert _qty_for_pair(normalized, "CQ1212", "09377G") == 3
+    warnings = normalized.get("warnings") or []
+    assert any("ambiguous PDF quantity signals" in str(w) for w in warnings)
+    print("SUCCESS: ambiguous quantity signals are skipped and warned (no forced correction).")
+
+
 if __name__ == "__main__":
     test_cross_page_repeated_block_is_counted_again()
     test_identical_artikel_nr_and_parent_still_count_as_new_occurrence()
+    test_slash_component_pair_is_extracted_from_bestehend_block()
     test_qty_marker_split_across_lines_is_extracted()
     test_cross_page_repeated_split_qty_block_is_counted_again()
     test_repeated_block_with_partial_second_page_is_backfilled()
@@ -560,3 +718,7 @@ if __name__ == "__main__":
     test_extract_porta_store_name_prefers_full_legal_line()
     test_prompt_contract_mentions_cross_page_no_dedupe()
     test_porta_oj_accessory_article_backfill_from_space_separated_pair()
+    test_qty_correction_no_adjacent_swap_for_cq12_cq1212_pairs()
+    test_qty_correction_no_adjacent_swap_for_cq124112g5_cq12411212g1_pairs()
+    test_qty_correction_keeps_parent_row_qty_for_cqeg1299_76947g()
+    test_qty_correction_skips_ambiguous_pair_and_warns()
