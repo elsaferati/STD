@@ -81,11 +81,12 @@ def _parse_field_names_from_warning(warnings: list[str], prefix: str) -> list[st
 def detect_missing_fields(normalized: dict[str, Any], warnings: list[Any]) -> list[str]:
     header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
     items = normalized.get("items") if isinstance(normalized.get("items"), list) else []
+    extraction_branch = str(normalized.get("extraction_branch") or "").strip()
     missing: list[str] = []
 
     if _is_missing(header.get("lieferanschrift")):
         missing.append("lieferanschrift")
-    if _is_missing(header.get("store_address")):
+    if _is_missing(header.get("store_address")) and extraction_branch != "braun":
         missing.append("store_address")
 
     if not items:
