@@ -771,15 +771,6 @@ def _prune_porta_items_without_explicit_pdf_pairs(
     reply_entry["confidence"] = 1.0
     reply_entry["derived_from"] = "porta_ambiguous_code_reply_needed"
 
-    review_entry = header.get("human_review_needed")
-    if not isinstance(review_entry, dict):
-        review_entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["human_review_needed"] = review_entry
-    review_entry["value"] = True
-    review_entry["source"] = "derived"
-    review_entry["confidence"] = 1.0
-    review_entry["derived_from"] = "porta_explicit_pair_prune"
-
     warnings = _ensure_warning_list(normalized)
     removed_summary = ", ".join(removed_rows[:6])
     if len(removed_rows) > 6:
@@ -820,14 +811,14 @@ def _force_porta_reply_needed_for_ambiguous_ignored_codes(
         header = {}
         normalized["header"] = header
 
-    review_entry = header.get("human_review_needed")
-    if not isinstance(review_entry, dict):
-        review_entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["human_review_needed"] = review_entry
-    review_entry["value"] = True
-    review_entry["source"] = "derived"
-    review_entry["confidence"] = 1.0
-    review_entry["derived_from"] = "porta_explicit_pair_prune"
+    reply_entry = header.get("reply_needed")
+    if not isinstance(reply_entry, dict):
+        reply_entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["reply_needed"] = reply_entry
+    reply_entry["value"] = True
+    reply_entry["source"] = "derived"
+    reply_entry["confidence"] = 1.0
+    reply_entry["derived_from"] = "porta_ambiguous_code_reply_needed"
 
     reply_warning = (
         "Reply needed: Porta ambiguous standalone code token(s) were ignored; "

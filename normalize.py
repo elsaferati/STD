@@ -1487,13 +1487,6 @@ def normalize_output(
             store_entry["derived_from"] = "porta_store_address_from_lieferanschrift"
             header["store_address"] = store_entry
 
-    # When agent used ILN fallback or AI-assisted match, require human review (header-only edit)
-    kdnr_entry = header.get("kundennummer", {})
-    if isinstance(kdnr_entry, dict):
-        derived = (kdnr_entry.get("derived_from") or "").strip()
-        if derived in ("iln_fallback", "ai_assisted_match"):
-            _ensure_field(header, "human_review_needed")
-            header["human_review_needed"]["value"] = True
 
     items = data.get("items")
     if not isinstance(items, list):

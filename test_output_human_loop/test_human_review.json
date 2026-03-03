@@ -103,9 +103,10 @@
   },
   "items": [],
   "warnings": [
-    "Routing: selected=xxxlutz_default confidence=1.00 forced=false fallback=false",
+    "Routing: selected=xxxlutz_default confidence=0.00 forced=false fallback=true (rule_unknown)",
+    "Routing fallback: forced human_review_needed=true",
     "Missing header fields: adressnummer, kom_nr, kom_name, liefertermin, wunschtermin, bestelldatum, lieferanschrift, tour, store_name, store_address, seller, delivery_week, iln, iln_anl, iln_fil",
-    "Reply needed: Missing critical header fields: kom_nr",
+    "Reply needed: Missing critical header fields: kom_nr, lieferanschrift, store_address",
     "ticket number is missing",
     "No items extracted.",
     "Auto-reply email failed: SMTP_HOST is missing"
