@@ -90,7 +90,7 @@ EDITABLE_HEADER_FIELDS = [
 ]
 EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"]
 
-VALID_STATUSES = {"ok", "partial", "failed", "unknown"}
+VALID_STATUSES = {"ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown"}
 ALLOWED_SORTS = {"received_at_desc", "received_at_asc"}
 ALLOWED_DOWNLOAD_EXTENSIONS = {".xml", ".json"}
 
@@ -201,9 +201,13 @@ def _clean_form_value(value: str | None) -> str:
 
 
 def _normalize_status(value: Any) -> str:
-    status = str(value or "unknown").strip().lower()
+    status = str(value or "ok").strip().lower()
+    if status == "partial":
+        return "reply"
+    if status == "unknown":
+        return "ok"
     if status not in VALID_STATUSES:
-        return "unknown"
+        return "ok"
     return status
 
 
@@ -301,7 +305,7 @@ def _list_orders(output_dir: Path) -> list[dict[str, Any]]:
 
 
 def _status_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"ok": 0, "partial": 0, "failed": 0, "unknown": 0}
+    counts = {"ok": 0, "reply": 0, "human_in_the_loop": 0, "post": 0, "failed": 0}
     for order in orders:
         status = _normalize_status(order.get("status"))
         counts[status] += 1
@@ -321,13 +325,15 @@ def _status_breakdown(orders: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total": total,
         "ok": counts["ok"],
-        "partial": counts["partial"],
+        "reply": counts["reply"],
+        "human_in_the_loop": counts["human_in_the_loop"],
+        "post": counts["post"],
         "failed": counts["failed"],
-        "unknown": counts["unknown"],
         "ok_rate": _rate(counts["ok"], total),
-        "partial_rate": _rate(counts["partial"], total),
+        "reply_rate": _rate(counts["reply"], total),
+        "human_in_the_loop_rate": _rate(counts["human_in_the_loop"], total),
+        "post_rate": _rate(counts["post"], total),
         "failed_rate": _rate(counts["failed"], total),
-        "unknown_rate": _rate(counts["unknown"], total),
     }
 
 
@@ -531,8 +537,10 @@ def _tab_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "all": len(orders),
         "today": sum(1 for order in orders if _effective_received_at(order).date() == today),
-        "needs_reply": sum(1 for order in orders if bool(order.get("reply_needed"))),
-        "manual_review": sum(1 for order in orders if bool(order.get("human_review_needed"))),
+        "needs_reply": sum(1 for order in orders if _normalize_status(order.get("status")) == "reply"),
+        "manual_review": sum(
+            1 for order in orders if _normalize_status(order.get("status")) == "human_in_the_loop"
+        ),
     }
 
 
@@ -543,10 +551,10 @@ def _parse_orders_query(allow_default_pagination: bool = True):
     statuses: set[str] | None = None
     if raw_status:
         parsed_statuses = {item.strip().lower() for item in raw_status.split(",") if item.strip()}
-        unknown = [status for status in parsed_statuses if status not in VALID_STATUSES]
-        if unknown:
-            return None, _api_error(400, "invalid_status", f"Invalid status values: {', '.join(sorted(unknown))}")
-        statuses = parsed_statuses
+        invalid = [status for status in parsed_statuses if status not in VALID_STATUSES]
+        if invalid:
+            return None, _api_error(400, "invalid_status", f"Invalid status values: {', '.join(sorted(invalid))}")
+        statuses = {_normalize_status(status) for status in parsed_statuses}
 
     try:
         date_from = _parse_date_query(request.args.get("from"))
@@ -995,7 +1003,9 @@ def _as_orders_xlsx_bytes(
             if status_idx is not None:
                 status_fills = {
                     "ok": PatternFill(fill_type="solid", fgColor="C6EFCE"),
-                    "partial": PatternFill(fill_type="solid", fgColor="FCE4D6"),
+                    "reply": PatternFill(fill_type="solid", fgColor="FCE4D6"),
+                    "human_in_the_loop": PatternFill(fill_type="solid", fgColor="FFEB9C"),
+                    "post": PatternFill(fill_type="solid", fgColor="DDEBF7"),
                     "failed": PatternFill(fill_type="solid", fgColor="F8CBAD"),
                 }
                 for row_idx in range(data_start_row, last_row + 1):
@@ -1460,9 +1470,9 @@ def api_overview():
     last_24h_orders: list[dict[str, Any]] = []
 
     queue_counts = {
-        "reply_needed": 0,
-        "human_review_needed": 0,
-        "post_case": 0,
+        "reply": 0,
+        "human_in_the_loop": 0,
+        "post": 0,
     }
 
     day_buckets: dict[date, dict[str, Any]] = {}
@@ -1472,9 +1482,10 @@ def api_overview():
             "date": bucket_day.isoformat(),
             "label": bucket_day.strftime("%a"),
             "ok": 0,
-            "partial": 0,
+            "reply": 0,
+            "human_in_the_loop": 0,
+            "post": 0,
             "failed": 0,
-            "unknown": 0,
             "total": 0,
         }
 
@@ -1488,12 +1499,8 @@ def api_overview():
         status = _normalize_status(order.get("status"))
         effective_dt = _effective_received_at(order)
 
-        if bool(order.get("reply_needed")):
-            queue_counts["reply_needed"] += 1
-        if bool(order.get("human_review_needed")):
-            queue_counts["human_review_needed"] += 1
-        if bool(order.get("post_case")):
-            queue_counts["post_case"] += 1
+        if status in queue_counts:
+            queue_counts[status] += 1
 
         if effective_dt.date() == today:
             today_orders.append(order)

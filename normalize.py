@@ -554,6 +554,11 @@ def _set_reply_needed_from_derived(header: dict[str, Any]) -> None:
         reply_entry["confidence"] = 1.0
 
 
+def _flag_true(header: dict[str, Any], key: str) -> bool:
+    entry = header.get(key)
+    return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
+
+
 def _append_unique_warning(warnings: list[str], message: str) -> None:
     if not message:
         return
@@ -1543,12 +1548,18 @@ def normalize_output(
             _missing_critical_item_reply_warning(missing_critical_item_fields),
         )
 
+    if not items:
+        _set_reply_needed_from_derived(header)
+
     # Status: furncloud_id alone is non-blocking (OK with warning)
-    critical_missing_items = [(i, f) for (i, f) in missing_items if f != "furncloud_id"]
     if not had_structure and not items:
         data["status"] = "failed"
-    elif missing_header or critical_missing_items or not items:
-        data["status"] = "partial"
+    elif _flag_true(header, "reply_needed"):
+        data["status"] = "reply"
+    elif _flag_true(header, "human_review_needed"):
+        data["status"] = "human_in_the_loop"
+    elif _flag_true(header, "post_case"):
+        data["status"] = "post"
     else:
         data["status"] = "ok"
 
@@ -1617,9 +1628,15 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     if missing_critical_item_fields:
         _set_reply_needed_from_derived(header)
 
-    critical_missing_items = [(i, f) for (i, f) in missing_items if f != "furncloud_id"]
-    if missing_header or critical_missing_items or not items:
-        data["status"] = "partial"
+    if not items:
+        _set_reply_needed_from_derived(header)
+
+    if _flag_true(header, "reply_needed"):
+        data["status"] = "reply"
+    elif _flag_true(header, "human_review_needed"):
+        data["status"] = "human_in_the_loop"
+    elif _flag_true(header, "post_case"):
+        data["status"] = "post"
     else:
         data["status"] = "ok"
 

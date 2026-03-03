@@ -69,11 +69,12 @@ function toNumber(value) {
 
 function getBucketTotals(bucket) {
   const ok = toNumber(bucket?.ok);
-  const partial = toNumber(bucket?.partial);
+  const reply = toNumber(bucket?.reply);
+  const humanInTheLoop = toNumber(bucket?.human_in_the_loop);
+  const post = toNumber(bucket?.post);
   const failed = toNumber(bucket?.failed);
-  const unknown = toNumber(bucket?.unknown);
-  const total = ok + partial + failed + unknown;
-  return { ok, partial, failed, unknown, total };
+  const total = ok + reply + humanInTheLoop + post + failed;
+  return { ok, reply, humanInTheLoop, post, failed, total };
 }
 
 export function OverviewPage() {
@@ -193,9 +194,9 @@ export function OverviewPage() {
                   accentClass="border-l-4 border-l-success"
                 />
                 <MetricCard
-                  title={t("overview.partialRate")}
-                  value={formatPercent(overview?.today?.partial_rate)}
-                  subtitle={t("overview.partialCount", { count: overview?.today?.partial ?? 0 })}
+                  title={t("overview.replyRate")}
+                  value={formatPercent(overview?.today?.reply_rate)}
+                  subtitle={t("overview.replyCount", { count: overview?.today?.reply ?? 0 })}
                   icon="warning"
                   accentClass="border-l-4 border-l-warning"
                 />
@@ -210,18 +211,18 @@ export function OverviewPage() {
 
               <div className="col-span-1 md:col-span-2 lg:col-span-4 xl:col-span-3 grid grid-cols-3 gap-4">
                 <QueueCard
-                  title={t("overview.queueReplyNeeded")}
-                  value={overview?.queue_counts?.reply_needed ?? 0}
+                  title={t("overview.queueReply")}
+                  value={overview?.queue_counts?.reply ?? 0}
                   subtitle={t("overview.queueReplySubtitle")}
                 />
                 <QueueCard
-                  title={t("overview.queueReview")}
-                  value={overview?.queue_counts?.human_review_needed ?? 0}
-                  subtitle={t("overview.queueReviewSubtitle")}
+                  title={t("overview.queueHumanInTheLoop")}
+                  value={overview?.queue_counts?.human_in_the_loop ?? 0}
+                  subtitle={t("overview.queueHumanInTheLoopSubtitle")}
                 />
                 <QueueCard
                   title={t("overview.queuePostCase")}
-                  value={overview?.queue_counts?.post_case ?? 0}
+                  value={overview?.queue_counts?.post ?? 0}
                   subtitle={t("overview.queuePostCaseSubtitle")}
                 />
               </div>
@@ -237,9 +238,10 @@ export function OverviewPage() {
                   <div className="flex items-center gap-4">
                     <div className="flex gap-2 text-xs font-medium">
                       <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-success" />{t("status.ok")}</div>
-                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-warning" />{t("status.partial")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-300" />{t("status.reply")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-300" />{t("status.human_in_the_loop")}</div>
+                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-300" />{t("status.post")}</div>
                       <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-danger" />{t("status.failed")}</div>
-                      <div className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-slate-300" />{t("status.unknown")}</div>
                     </div>
                   </div>
                 </div>
@@ -249,14 +251,16 @@ export function OverviewPage() {
                       const totals = getBucketTotals(bucket);
                       const scale = maxDayTotal > 0 ? maxDayTotal : 1;
                       const okHeight = `${(totals.ok / scale) * 100}%`;
-                      const partialHeight = `${(totals.partial / scale) * 100}%`;
+                      const replyHeight = `${(totals.reply / scale) * 100}%`;
+                      const humanInTheLoopHeight = `${(totals.humanInTheLoop / scale) * 100}%`;
+                      const postHeight = `${(totals.post / scale) * 100}%`;
                       const failedHeight = `${(totals.failed / scale) * 100}%`;
-                      const unknownHeight = `${(totals.unknown / scale) * 100}%`;
                       const tooltip = [
                         `${t("status.ok")}: ${totals.ok}`,
-                        `${t("status.partial")}: ${totals.partial}`,
+                        `${t("status.reply")}: ${totals.reply}`,
+                        `${t("status.human_in_the_loop")}: ${totals.humanInTheLoop}`,
+                        `${t("status.post")}: ${totals.post}`,
                         `${t("status.failed")}: ${totals.failed}`,
-                        `${t("status.unknown")}: ${totals.unknown}`,
                         `Total: ${totals.total}`,
                       ].join("\n");
 
@@ -274,9 +278,10 @@ export function OverviewPage() {
                             className="w-full max-w-[40px] flex flex-col flex-1 justify-end rounded-t-lg overflow-hidden"
                             title={tooltip}
                           >
-                            <div className="bg-slate-300 w-full" style={{ height: unknownHeight }} />
                             <div className="bg-danger w-full" style={{ height: failedHeight }} />
-                            <div className="bg-warning w-full" style={{ height: partialHeight }} />
+                            <div className="bg-slate-300 w-full" style={{ height: postHeight }} />
+                            <div className="bg-orange-300 w-full" style={{ height: humanInTheLoopHeight }} />
+                            <div className="bg-red-300 w-full" style={{ height: replyHeight }} />
                             <div className="bg-success w-full" style={{ height: okHeight }} />
                           </div>
                           <span className="text-xs text-slate-400">{bucket.label}</span>
@@ -304,16 +309,20 @@ export function OverviewPage() {
                       <span>{t("status.ok")} {selectedTotals.ok}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-warning" />
-                      <span>{t("status.partial")} {selectedTotals.partial}</span>
+                      <span className="w-2 h-2 rounded-full bg-red-300" />
+                      <span>{t("status.reply")} {selectedTotals.reply}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-orange-300" />
+                      <span>{t("status.human_in_the_loop")} {selectedTotals.humanInTheLoop}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-slate-300" />
+                      <span>{t("status.post")} {selectedTotals.post}</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="w-2 h-2 rounded-full bg-danger" />
                       <span>{t("status.failed")} {selectedTotals.failed}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-slate-300" />
-                      <span>{t("status.unknown")} {selectedTotals.unknown}</span>
                     </div>
                   </div>
                 ) : null}
@@ -370,7 +379,6 @@ export function OverviewPage() {
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-56 max-w-[224px]">{t("common.clientStore")}</th>
                       <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.items")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.flags")}</th>
                       <th className="px-6 py-4 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
                     </tr>
                   </thead>
@@ -392,17 +400,6 @@ export function OverviewPage() {
                           <div className="text-xs text-slate-500 truncate">{order.store_name || "-"}</div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-slate-600">{order.item_count}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-xs text-slate-500">
-                          {order.reply_needed || order.human_review_needed || order.post_case
-                            ? [
-                                order.reply_needed ? t("flags.reply") : "",
-                                order.human_review_needed ? t("flags.review") : "",
-                                order.post_case ? t("flags.post") : "",
-                              ]
-                                .filter(Boolean)
-                                .join(" | ")
-                            : "-"}
-                        </td>
                         <td className="px-6 py-4 text-right">
                           <Link
                             to={`/orders/${order.id}`}
@@ -415,7 +412,7 @@ export function OverviewPage() {
                     ))}
                     {!loading && (overview?.latest_orders || []).length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
+                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
                       </tr>
                     ) : null}
                   </tbody>
