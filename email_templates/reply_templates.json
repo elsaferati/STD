@@ -2,7 +2,8 @@
   "version": 1,
   "placeholders": {
     "kommisionsnummer": "Kommissionsnummer from header.kom_nr -> header.ticket_number -> message_id",
-    "fehlende_pflichtfelder_liste": "Bullet list of missing mandatory data"
+    "fehlende_pflichtfelder_liste": "Bullet list of missing mandatory data",
+    "betroffene_positionen": "Bullet list of affected items, each referenced by the complementary identifier (artikelnummer <-> modellnummer)"
   },
   "templates": {
     "missing_lieferanschrift": {
@@ -21,14 +22,14 @@
     },
     "missing_modellnummer": {
       "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Modellnummer fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung korrekt erfassen konnen, benotigen wir noch die Modellnummer:\n- Modellnummer (genaue Schreibweise)\n- ggf. Ausfuhrung/Variante (falls relevant)\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung korrekt erfassen konnen, benotigen wir noch die Modellnummer fur folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
       "required_fields": [
         "modellnummer"
       ]
     },
     "missing_artikelnummer": {
       "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Artikelnummer fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nFur die vollstandige Bearbeitung benotigen wir noch die Artikelnummer:\n- Artikelnummer(n) je Position\n- optional: kurze Artikelbezeichnung zur Zuordnung\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nFur die vollstandige Bearbeitung benotigen wir noch die Artikelnummer fur folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
       "required_fields": [
         "artikelnummer"
       ]

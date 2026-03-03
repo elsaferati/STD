@@ -91,6 +91,7 @@ def _assert_template_3_missing_modellnummer() -> None:
     body = msg.get_content()
     assert msg["Subject"] == "Ruckfrage zu Ihrer Bestellung KOM-1 - Modellnummer fehlt"
     assert "benotigen wir noch die Modellnummer" in body
+    assert "ART-1" in body
 
 
 def _assert_template_4_missing_artikelnummer() -> None:
@@ -100,6 +101,7 @@ def _assert_template_4_missing_artikelnummer() -> None:
     body = msg.get_content()
     assert msg["Subject"] == "Ruckfrage zu Ihrer Bestellung KOM-1 - Artikelnummer fehlt"
     assert "benotigen wir noch die Artikelnummer" in body
+    assert "MOD-1" in body
 
 
 def _assert_template_5_missing_menge() -> None:
@@ -159,6 +161,19 @@ def _assert_dormant_template_7_8_not_auto_selected() -> None:
     assert str(msg["Subject"]).endswith("Angaben fehlen")
 
 
+def _assert_braun_store_address_not_missing_field() -> None:
+    # Braun order: store_address is always empty by design — should NOT trigger store_address template
+    normalized = _base_normalized(_base_message())
+    normalized["extraction_branch"] = "braun"
+    normalized["header"]["store_address"]["value"] = ""
+    normalized["header"]["lieferanschrift"]["value"] = ""
+    msg = _compose(normalized)
+    # Only lieferanschrift is missing (store_address excluded for Braun) → single-field template
+    assert msg["Subject"] == "Ruckfrage zu Ihrer Bestellung KOM-1 - Lieferanschrift fehlt", (
+        f"Unexpected subject: {msg['Subject']}"
+    )
+
+
 def _assert_malformed_template_file_falls_back_to_legacy() -> None:
     malformed = Path("tmp_malformed_reply_templates.json")
     malformed.write_text("{}", encoding="utf-8")
@@ -184,6 +199,7 @@ def main() -> int:
     _assert_placeholder_fallback_ticket_then_message_id()
     _assert_dormant_template_7_8_not_auto_selected()
     _assert_malformed_template_file_falls_back_to_legacy()
+    _assert_braun_store_address_not_missing_field()
     print("OK: reply email templates route and render correctly with fallback support.")
     return 0
 

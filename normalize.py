@@ -1524,6 +1524,8 @@ def normalize_output(
     missing_header = [field for field in HEADER_FIELDS if _is_missing(header.get(field, {}))]
     if is_momax_bg:
         missing_header = [field for field in missing_header if field != "kom_name"]
+    if (branch_id or "").strip() == "braun":
+        missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     if missing_critical_fields:
@@ -1578,6 +1580,7 @@ def normalize_output(
             parts = [f"{f} (line {i})" for (i, f) in sorted(missing_items)]
             data["warnings"].append(f"Missing item fields: {'; '.join(parts)}")
 
+    data["extraction_branch"] = (branch_id or "").strip()
     return data
 
 
@@ -1607,9 +1610,13 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         and kom_name_entry.get("derived_from") == "momax_bg_policy"
     )
 
+    extraction_branch = str(data.get("extraction_branch") or "").strip()
+
     missing_header = [f for f in HEADER_FIELDS if _is_missing(header.get(f, {}))]
     if is_momax_bg:
         missing_header = [field for field in missing_header if field != "kom_name"]
+    if extraction_branch == "braun":
+        missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     if missing_critical_fields:

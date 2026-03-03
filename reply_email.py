@@ -81,11 +81,12 @@ def _parse_field_names_from_warning(warnings: list[str], prefix: str) -> list[st
 def detect_missing_fields(normalized: dict[str, Any], warnings: list[Any]) -> list[str]:
     header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
     items = normalized.get("items") if isinstance(normalized.get("items"), list) else []
+    extraction_branch = str(normalized.get("extraction_branch") or "").strip()
     missing: list[str] = []
 
     if _is_missing(header.get("lieferanschrift")):
         missing.append("lieferanschrift")
-    if _is_missing(header.get("store_address")):
+    if _is_missing(header.get("store_address")) and extraction_branch != "braun":
         missing.append("store_address")
 
     if not items:
@@ -118,6 +119,28 @@ def detect_missing_fields(normalized: dict[str, Any], warnings: list[Any]) -> li
 
     field_set = set(missing)
     return [field for field in _FIELD_ORDER if field in field_set]
+
+
+def _format_affected_items(items: list[Any], missing_field: str) -> str:
+    """Bullet list of items missing a field, each referenced by the other identifier."""
+    _REF = {
+        "artikelnummer": ("modellnummer", "Modellnummer"),
+        "modellnummer": ("artikelnummer", "Artikelnummer"),
+    }
+    ref_key, ref_label = _REF.get(missing_field, (None, None))
+    bullets: list[str] = []
+    for idx, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        if not _is_missing(item.get(missing_field)):
+            continue
+        if ref_key:
+            entry = item.get(ref_key, {})
+            ref_val = str((entry.get("value") if isinstance(entry, dict) else entry) or "").strip()
+        else:
+            ref_val = ""
+        bullets.append(f"- {ref_label}: {ref_val}" if ref_val else f"- Position {idx}")
+    return "\n".join(bullets) if bullets else "- (keine Zuordnung verfugbar)"
 
 
 def _format_missing_field_list(missing_fields: list[str], reply_cases: list[str]) -> str:
@@ -232,9 +255,13 @@ def compose_reply_needed_email(
         if not isinstance(template_data, dict):
             raise ValueError(f"Template '{template_id}' not found in {template_path}")
 
+        items = normalized.get("items") if isinstance(normalized.get("items"), list) else []
         placeholders = {
             "kommisionsnummer": kom_number,
             "fehlende_pflichtfelder_liste": _format_missing_field_list(missing_fields, reply_cases),
+            "betroffene_positionen": _format_affected_items(
+                items, missing_fields[0] if len(missing_fields) == 1 else ""
+            ),
         }
         subject = render_template(str(template_data.get("subject", "")), placeholders).strip()
         body = render_template(str(template_data.get("body", "")), placeholders).strip()
