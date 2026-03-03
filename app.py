@@ -12,6 +12,7 @@ from threading import Lock
 import time
 from typing import Any
 from urllib.parse import quote
+from urllib.parse import urlparse
 import uuid
 
 from dotenv import load_dotenv
@@ -455,6 +456,9 @@ def _is_origin_allowed(origin: str | None) -> bool:
     if not origin:
         return False
     if ALLOW_ANY_ORIGIN:
+        return True
+    parsed_origin = urlparse(origin)
+    if parsed_origin.scheme in {"http", "https"} and parsed_origin.hostname in {"localhost", "127.0.0.1"}:
         return True
     return origin in DASHBOARD_ALLOWED_ORIGINS
 
