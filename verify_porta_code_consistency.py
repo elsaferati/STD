@@ -378,6 +378,59 @@ def test_inline_pair_reconciliation_sets_human_review_and_warning() -> None:
     print("SUCCESS: inline reconciliation sets review flag and warning trace.")
 
 
+def test_inline_pair_reconciliation_skips_qtyless_duplicate_when_pair_exists() -> None:
+    normalized = _normalized([_item(1, "CQEG1299", "76947G", menge=2)])
+    page_texts = {
+        "order-1.png": (
+            "2 Stk 4624469 / 67 Liefermodell: Sinfonie Plus CQEG1299 76947G\n"
+            "Konsole\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    added = pipeline._reconcile_porta_inline_pair_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert added == 0
+    items = normalized.get("items") or []
+    assert len(items) == 1
+    assert (items[0].get("modellnummer") or {}).get("value") == "CQEG1299"
+    assert (items[0].get("artikelnummer") or {}).get("value") == "76947G"
+    assert (items[0].get("menge") or {}).get("value") == 2
+    print("SUCCESS: qty-less inline pair mention does not create duplicate when pair already exists.")
+
+
+def test_inline_pair_reconciliation_keeps_explicit_qty_non_regression() -> None:
+    normalized = _normalized([_item(1, "CQEG1299", "76947G", menge=2)])
+    page_texts = {
+        "order-1.png": (
+            "2 Stk 4624469 / 67 Liefermodell: Sinfonie Plus CQEG1299 76947G\n"
+            "1 Stk CQEG1299 76947G\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    added = pipeline._reconcile_porta_inline_pair_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert added == 1
+    items = normalized.get("items") or []
+    assert len(items) == 2
+    qty_values = sorted(
+        [
+            (item.get("menge") or {}).get("value")
+            for item in items
+            if isinstance(item, dict)
+        ]
+    )
+    assert qty_values == [1, 2]
+    print("SUCCESS: explicit inline qty occurrence is still added as a distinct item.")
+
+
 def test_porta_explicit_pair_prune_drops_ambiguous_rows_and_forces_reply() -> None:
     normalized = _normalized(
         [
@@ -425,6 +478,49 @@ def test_porta_explicit_pair_prune_drops_ambiguous_rows_and_forces_reply() -> No
     )
     assert any("Porta explicit-pair prune removed" in str(w) for w in warnings)
     print("SUCCESS: explicit-pair prune drops ambiguous rows and forces reply_needed.")
+
+
+def test_porta_explicit_pair_prune_skips_bestehend_aus_je_orders() -> None:
+    normalized = _normalized(
+        [
+            _item(1, "CQ9191XA", "42889"),
+            _item(2, "", "66015"),
+            _item(3, "OJ00", "30156"),
+            _item(4, "OJ9191", "53669"),
+        ]
+    )
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ9191XA 42889\n"
+            "bestehend aus je:\n"
+            "1 Stk CQ9191XA 42889\n"
+            "1 Stk OJ9191 53669\n"
+            "66015\n"
+            "30156\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    removed = pipeline._prune_porta_items_without_explicit_pdf_pairs(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert removed == 0
+    items = normalized.get("items") or []
+    assert len(items) == 4
+    assert (items[0].get("modellnummer") or {}).get("value") == "CQ9191XA"
+    assert (items[1].get("modellnummer") or {}).get("value") == ""
+    assert (items[2].get("modellnummer") or {}).get("value") == "OJ00"
+    assert (items[3].get("modellnummer") or {}).get("value") == "OJ9191"
+
+    header = normalized.get("header") or {}
+    reply = header.get("reply_needed") or {}
+    assert reply.get("value") is not True
+
+    warnings = normalized.get("warnings") or []
+    assert not any("Porta explicit-pair prune removed" in str(w) for w in warnings)
+    print("SUCCESS: explicit-pair prune is skipped when 'bestehend aus je:' is present.")
 
 
 def test_porta_ambiguous_ignore_warning_forces_reply_needed() -> None:
@@ -537,7 +633,10 @@ if __name__ == "__main__":
     test_inline_pair_reconciliation_idempotent()
     test_inline_pair_reconciliation_skips_footer_legal_tokens()
     test_inline_pair_reconciliation_sets_human_review_and_warning()
+    test_inline_pair_reconciliation_skips_qtyless_duplicate_when_pair_exists()
+    test_inline_pair_reconciliation_keeps_explicit_qty_non_regression()
     test_porta_explicit_pair_prune_drops_ambiguous_rows_and_forces_reply()
+    test_porta_explicit_pair_prune_skips_bestehend_aus_je_orders()
     test_porta_ambiguous_ignore_warning_forces_reply_needed()
     test_porta_numeric_tokens_without_model_prefix_warning_forces_reply_needed()
     test_porta_standalone_numeric_rule10_warning_forces_reply_needed()

@@ -726,6 +726,8 @@ def _prune_porta_items_without_explicit_pdf_pairs(
     items = normalized.get("items")
     if not isinstance(items, list) or not items:
         return 0
+    if _porta_has_bestehend_aus_je_block(page_text_by_image_name):
+        return 0
 
     explicit_occurrences = _extract_porta_component_occurrences_from_page_texts(
         page_text_by_image_name
@@ -830,6 +832,19 @@ def _prune_porta_items_without_explicit_pdf_pairs(
     )
 
     return removed_count
+
+
+def _porta_has_bestehend_aus_je_block(
+    page_text_by_image_name: dict[str, str],
+) -> bool:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return False
+
+    for _image_name, page_text in ordered_pages.items():
+        if _BESTEHEND_AUS_JE_RE.search(str(page_text or "")):
+            return True
+    return False
 
 
 def _force_porta_reply_needed_for_ambiguous_ignored_codes(
@@ -1701,6 +1716,7 @@ def _extract_porta_inline_pair_occurrences_from_page_texts(
 
                 qty_match = _PORTA_QTY_STK_RE.search(current_upper)
                 qty_value = _parse_qty_token(qty_match.group(1)) if qty_match else 1
+                qty_explicit = bool(qty_match)
 
                 for model_raw, article_raw in _PORTA_COMPONENT_PAIR_RE.findall(current_upper):
                     model = _strip_porta_qty_prefix_from_model_token(model_raw)
@@ -1718,6 +1734,7 @@ def _extract_porta_inline_pair_occurrences_from_page_texts(
                             "modellnummer": model,
                             "artikelnummer": article,
                             "menge": qty_value,
+                            "qty_explicit": qty_explicit,
                             "page": image_name,
                             "explicit": True,
                         }
@@ -2156,6 +2173,12 @@ def _reconcile_porta_inline_pair_occurrences(
         return 0
 
     seen_expected: Counter[tuple[str, str, str]] = Counter()
+    existing_pair_counts: Counter[tuple[str, str]] = Counter()
+    for key, count in existing_counts.items():
+        if count <= 0:
+            continue
+        existing_pair_counts[(key[0], key[1])] += count
+
     missing_occurrences: list[dict[str, Any]] = []
     for occurrence in expected_occurrences:
         key = (
@@ -2167,6 +2190,13 @@ def _reconcile_porta_inline_pair_occurrences(
             continue
         seen_expected[key] += 1
         if seen_expected[key] > existing_counts.get(key, 0):
+            # Guard against false duplicate rows when inline text repeats a pair
+            # without an explicit qty marker (defaults to qty=1 in parser).
+            if (
+                not bool(occurrence.get("qty_explicit", False))
+                and existing_pair_counts.get((key[0], key[1]), 0) > 0
+            ):
+                continue
             missing_occurrences.append(occurrence)
 
     if not missing_occurrences:
