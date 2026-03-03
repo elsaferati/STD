@@ -55,6 +55,7 @@ An automated order extraction system specifically designed for **XXLUTZ/MÖMAX**
    # Reply-needed email settings
    REPLY_EMAIL_TO=323primex.eu@gmail.com
    REPLY_EMAIL_BODY=Please send the order with furnplan or make the order with 2 positions.
+   REPLY_TEMPLATE_FILE=email_templates/reply_templates.json
    
    # Processing Options
    OUTPUT_DIR=output
@@ -154,6 +155,7 @@ Use an absolute backend URL when frontend and backend are separately deployed.
 | `SMTP_SSL` | `true` | Use TLS (STARTTLS on 587; SSL on 465) |
 | `REPLY_EMAIL_TO` | `00primex.eu@gmail.com` | Recipient for reply-needed notifications |
 | `REPLY_EMAIL_BODY` | - | First line of the reply-needed email body |
+| `REPLY_TEMPLATE_FILE` | `email_templates/reply_templates.json` | JSON template file for structured reply-needed emails (falls back to legacy body mode on template load/render errors) |
 | `ROUTER_ENABLED` | `true` | Enable branch routing classifier before extraction |
 | `ROUTER_USE_LLM` | `false` | Use LLM for routing (`false` = deterministic hard/hint routing only) |
 | `ROUTER_MIN_CONFIDENCE` | `0.75` | Minimum confidence to trust classifier-selected branch |

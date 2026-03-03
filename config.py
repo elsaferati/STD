@@ -62,6 +62,7 @@ class Config:
 
     reply_email_to: str
     reply_email_body: str
+    reply_template_file: Path
 
     source_priority: list[str]
     max_email_chars: int
@@ -113,6 +114,9 @@ class Config:
                 "REPLY_EMAIL_BODY",
                 "Please send the order with furnplan or make the order with 2 positions.",
             ).strip(),
+            reply_template_file=Path(
+                os.getenv("REPLY_TEMPLATE_FILE", "email_templates/reply_templates.json").strip()
+            ),
 
             source_priority=priority,
             max_email_chars=_get_int("MAX_EMAIL_CHARS", 20000),

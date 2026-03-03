@@ -2732,6 +2732,7 @@ def process_message(
                 normalized=normalized,
                 to_addr=config.reply_email_to,
                 body_template=config.reply_email_body,
+                template_file=config.reply_template_file,
             )
             reply_email.send_email_via_smtp(config, msg)
             w = normalized.get("warnings")

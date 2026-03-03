@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 from email.message import EmailMessage
+from pathlib import Path
+import re
 import smtplib
 from typing import Any
 
 from config import Config
 from email_ingest import IngestedEmail
+from email_templates import load_reply_templates
 
 
 _REPLY_WARNING_PREFIX = "Reply needed:"
 _MISSING_CRITICAL_REPLY_PREFIX = "Missing critical header fields:"
 _MISSING_CRITICAL_ITEM_REPLY_PREFIX = "Missing critical item fields:"
+_MISSING_ITEM_FIELDS_PREFIX = "Missing item fields:"
+_DEFAULT_TEMPLATE_FILE = Path("email_templates/reply_templates.json")
+
+_FIELD_LABELS = {
+    "lieferanschrift": "Lieferanschrift",
+    "store_address": "Anschrift bestellendes Haus",
+    "modellnummer": "Modellnummer",
+    "artikelnummer": "Artikelnummer",
+    "menge": "Menge",
+}
+_FIELD_ORDER = ["lieferanschrift", "store_address", "modellnummer", "artikelnummer", "menge"]
 
 
 def _header_value(header: dict[str, Any], key: str) -> str:
@@ -18,6 +32,12 @@ def _header_value(header: dict[str, Any], key: str) -> str:
     if isinstance(entry, dict):
         return str(entry.get("value", "") or "").strip()
     return str(entry or "").strip()
+
+
+def _is_missing(value: Any) -> bool:
+    if isinstance(value, dict):
+        value = value.get("value")
+    return str(value or "").strip() == ""
 
 
 def _reply_cases_from_warnings(warnings: list[Any]) -> list[str]:
@@ -38,58 +58,108 @@ def _reply_cases_from_warnings(warnings: list[Any]) -> list[str]:
     return cases
 
 
-def _parse_missing_critical_case(reply_case: str) -> str:
-    if not isinstance(reply_case, str):
-        return ""
-    stripped = reply_case.strip()
-    if stripped[: len(_MISSING_CRITICAL_REPLY_PREFIX)].lower() == _MISSING_CRITICAL_REPLY_PREFIX.lower():
-        tail = stripped[len(_MISSING_CRITICAL_REPLY_PREFIX) :].strip()
-        return f"{_MISSING_CRITICAL_REPLY_PREFIX} {tail}".strip()
-    if stripped[: len(_MISSING_CRITICAL_ITEM_REPLY_PREFIX)].lower() == _MISSING_CRITICAL_ITEM_REPLY_PREFIX.lower():
-        tail = stripped[len(_MISSING_CRITICAL_ITEM_REPLY_PREFIX) :].strip()
-        return f"{_MISSING_CRITICAL_ITEM_REPLY_PREFIX} {tail}".strip()
-    return ""
-
-
-def _is_substitution_case(reply_case: str) -> bool:
-    upper = str(reply_case or "").upper()
-    return "STATT" in upper and "BITTE" in upper
-
-
-def _classify_reply_cases(reply_cases: list[str]) -> tuple[list[str], list[str], list[str]]:
-    substitution_cases: list[str] = []
-    missing_cases: list[str] = []
-    clarification_cases: list[str] = []
-    seen_substitution: set[str] = set()
-    seen_missing: set[str] = set()
-    seen_clarification: set[str] = set()
-
-    for case in reply_cases:
-        parsed_missing = _parse_missing_critical_case(case)
-        if parsed_missing:
-            key = parsed_missing.lower()
-            if key in seen_missing:
+def _parse_field_names_from_warning(warnings: list[str], prefix: str) -> list[str]:
+    parsed: list[str] = []
+    for warning in warnings:
+        if not isinstance(warning, str):
+            continue
+        if not warning.startswith(prefix):
+            continue
+        tail = warning[len(prefix) :].strip()
+        if not tail:
+            continue
+        for chunk in tail.split(";"):
+            chunk = chunk.strip()
+            if not chunk:
                 continue
-            seen_missing.add(key)
-            missing_cases.append(parsed_missing)
-            continue
-        if _is_substitution_case(case):
-            key = case.lower()
-            if key in seen_substitution:
+            token = re.split(r"\s*\(line.*", chunk, maxsplit=1)[0].strip().lower()
+            if token in {"modellnummer", "artikelnummer", "menge"}:
+                parsed.append(token)
+    return parsed
+
+
+def detect_missing_fields(normalized: dict[str, Any], warnings: list[Any]) -> list[str]:
+    header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
+    items = normalized.get("items") if isinstance(normalized.get("items"), list) else []
+    missing: list[str] = []
+
+    if _is_missing(header.get("lieferanschrift")):
+        missing.append("lieferanschrift")
+    if _is_missing(header.get("store_address")):
+        missing.append("store_address")
+
+    if not items:
+        if "modellnummer" not in missing:
+            missing.append("modellnummer")
+        if "artikelnummer" not in missing:
+            missing.append("artikelnummer")
+        if "menge" not in missing:
+            missing.append("menge")
+    else:
+        for item in items:
+            if not isinstance(item, dict):
                 continue
-            seen_substitution.add(key)
-            substitution_cases.append(case)
-            continue
-        key = case.lower()
-        if key in seen_clarification:
-            continue
-        seen_clarification.add(key)
-        clarification_cases.append(case)
+            if _is_missing(item.get("modellnummer")) and "modellnummer" not in missing:
+                missing.append("modellnummer")
+            if _is_missing(item.get("artikelnummer")) and "artikelnummer" not in missing:
+                missing.append("artikelnummer")
+            if _is_missing(item.get("menge")) and "menge" not in missing:
+                missing.append("menge")
 
-    return substitution_cases, missing_cases, clarification_cases
+    warning_texts = [str(w) for w in warnings if isinstance(w, str)]
+    for field in _parse_field_names_from_warning(warning_texts, _MISSING_ITEM_FIELDS_PREFIX):
+        if field not in missing:
+            missing.append(field)
+    for field in _parse_field_names_from_warning(
+        warning_texts, f"{_REPLY_WARNING_PREFIX} {_MISSING_CRITICAL_ITEM_REPLY_PREFIX}"
+    ):
+        if field not in missing:
+            missing.append(field)
+
+    field_set = set(missing)
+    return [field for field in _FIELD_ORDER if field in field_set]
 
 
-def compose_reply_needed_email(
+def _format_missing_field_list(missing_fields: list[str], reply_cases: list[str]) -> str:
+    bullets = [f"- {_FIELD_LABELS[field]}" for field in missing_fields if field in _FIELD_LABELS]
+    if not bullets and reply_cases:
+        bullets = [f"- {case}" for case in reply_cases]
+    if not bullets:
+        bullets = ["- Lieferanschrift", "- Anschrift bestellendes Haus", "- Modellnummer", "- Artikelnummer", "- Menge"]
+    return "\n".join(bullets)
+
+
+def select_template_id(missing_fields: list[str], reply_cases: list[str]) -> str:
+    if len(missing_fields) == 1:
+        if missing_fields[0] == "lieferanschrift":
+            return "missing_lieferanschrift"
+        if missing_fields[0] == "store_address":
+            return "missing_bestellendes_haus"
+        if missing_fields[0] == "modellnummer":
+            return "missing_modellnummer"
+        if missing_fields[0] == "artikelnummer":
+            return "missing_artikelnummer"
+        if missing_fields[0] == "menge":
+            return "missing_menge"
+
+    if len(missing_fields) > 1:
+        return "missing_multiple_pflichtfelder"
+
+    if reply_cases:
+        # Per plan: non-field clarification/substitution cases route to generic missing-data template.
+        return "missing_multiple_pflichtfelder"
+
+    return "missing_multiple_pflichtfelder"
+
+
+def render_template(template_text: str, placeholders: dict[str, str]) -> str:
+    output = str(template_text or "")
+    for key, value in placeholders.items():
+        output = output.replace(f"{{{{{key}}}}}", str(value or ""))
+    return output
+
+
+def _compose_legacy_reply_needed_email(
     message: IngestedEmail,
     normalized: dict[str, Any],
     to_addr: str,
@@ -106,96 +176,86 @@ def compose_reply_needed_email(
     subject_hint = ticket_number or kom_nr or message_id or "unknown"
 
     reply_cases = _reply_cases_from_warnings(warnings)
-    substitution_cases, missing_critical_fields, clarification_cases = _classify_reply_cases(reply_cases)
-    if not substitution_cases and not missing_critical_fields and not clarification_cases:
-        clarification_cases = ["Automatic clarification requested by workflow."]
-    has_substitution = bool(substitution_cases)
-    has_missing_critical = bool(missing_critical_fields)
-    has_clarification = bool(clarification_cases)
-    category_count = sum(1 for flag in (has_substitution, has_missing_critical, has_clarification) if flag)
+    if not reply_cases:
+        reply_cases = ["Automatic clarification requested by workflow."]
 
     body_lines: list[str] = []
-    if not has_missing_critical:
-        template_text = (body_template or "").strip()
-        if template_text:
-            body_lines.append(template_text)
-            body_lines.append("")
+    template_text = (body_template or "").strip()
+    if template_text:
+        body_lines.append(template_text)
+        body_lines.append("")
     body_lines.append("What happened")
-    if category_count > 1:
-        body_lines.append("Detected multiple reply-needed conditions:")
-        condition_no = 1
-        if has_substitution:
-            body_lines.append(f"{condition_no}) Substitution request (STATT ... BITTE ...).")
-            condition_no += 1
-        if has_missing_critical:
-            body_lines.append(f"{condition_no}) Missing mandatory header/item fields for automatic processing.")
-            condition_no += 1
-        if has_clarification:
-            body_lines.append(f"{condition_no}) Clarification needed for ambiguous order data.")
-        body_lines.append("")
-        if has_substitution:
-            body_lines.append("Substitution details")
-            for idx, case in enumerate(substitution_cases, start=1):
-                body_lines.append(f"{idx}. {case}")
-            body_lines.append("")
-        if has_missing_critical:
-            body_lines.append("Missing mandatory fields")
-            for idx, case in enumerate(missing_critical_fields, start=1):
-                body_lines.append(f"{idx}. {case}")
-            body_lines.append("")
-        if has_clarification:
-            body_lines.append("Clarification details")
-            for idx, case in enumerate(clarification_cases, start=1):
-                body_lines.append(f"{idx}. {case}")
-        body_lines.append("Please send a corrected order or confirmation via furnplan so we can proceed.")
-    elif has_missing_critical:
-        body_lines.append("Automatic order processing could not continue because mandatory fields are missing.")
-        body_lines.append("")
-        body_lines.append("Missing mandatory fields")
-        for idx, case in enumerate(missing_critical_fields, start=1):
-            body_lines.append(f"{idx}. {case}")
-        body_lines.append(
-            "Please resend the order with these fields filled in, or send a corrected order via furnplan."
-        )
-    elif has_substitution:
-        body_lines.append("Detected a substitution request (STATT ... BITTE ...).")
-        for case in substitution_cases:
-            body_lines.append(f"Reply case: {case}")
-    else:
-        body_lines.append("Automatic order processing requires clarification before continuing.")
-        body_lines.append("")
-        body_lines.append("Clarification details")
-        for idx, case in enumerate(clarification_cases, start=1):
-            body_lines.append(f"{idx}. {case}")
-        body_lines.append("Please confirm the correct values so we can proceed.")
+    body_lines.append("Detected reply-needed conditions:")
+    for idx, case in enumerate(reply_cases, start=1):
+        body_lines.append(f"{idx}. {case}")
     body_lines.append("")
     body_lines.append("Context")
     body_lines.append(f"Message-ID: {message_id}")
     body_lines.append(f"Received-At: {message.received_at or normalized.get('received_at') or ''}")
     body_lines.append(f"From: {message.sender or ''}")
     body_lines.append(f"Subject: {message.subject or ''}")
-    body_lines.append("")
-    body_lines.append("Extracted fields")
-    body_lines.append(f"ticket_number: {ticket_number}")
-    body_lines.append(f"kundennummer: {_header_value(header, 'kundennummer')}")
-    body_lines.append(f"kom_nr: {kom_nr}")
-    body_lines.append(f"kom_name: {_header_value(header, 'kom_name')}")
-    body_lines.append(f"liefertermin: {_header_value(header, 'liefertermin')}")
-    body_lines.append(f"wunschtermin: {_header_value(header, 'wunschtermin')}")
-    body_lines.append(f"iln: {_header_value(header, 'iln')}")
 
     msg = EmailMessage()
     msg["To"] = to_addr
-    if category_count > 1:
-        msg["Subject"] = f"Reply needed - multiple issues - {subject_hint}"
-    elif has_missing_critical:
-        msg["Subject"] = f"Reply needed - missing critical fields - {subject_hint}"
-    elif has_clarification:
-        msg["Subject"] = f"Reply needed - clarification required - {subject_hint}"
-    else:
-        msg["Subject"] = f"Reply needed - swap detected - {subject_hint}"
+    msg["Subject"] = f"Reply needed - {subject_hint}"
     msg.set_content("\n".join(body_lines).rstrip() + "\n")
     return msg
+
+
+def compose_reply_needed_email(
+    message: IngestedEmail,
+    normalized: dict[str, Any],
+    to_addr: str,
+    body_template: str,
+    template_file: str | Path | None = None,
+) -> EmailMessage:
+    if not (to_addr or "").strip():
+        raise ValueError("Reply email recipient is empty")
+
+    header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
+    warnings = normalized.get("warnings") if isinstance(normalized.get("warnings"), list) else []
+    message_id = str(message.message_id or normalized.get("message_id") or "").strip()
+    kom_number = (
+        _header_value(header, "kom_nr")
+        or _header_value(header, "ticket_number")
+        or message_id
+    )
+    reply_cases = _reply_cases_from_warnings(warnings)
+
+    template_path = Path(template_file) if template_file else _DEFAULT_TEMPLATE_FILE
+    try:
+        store = load_reply_templates(template_path)
+        templates = store.get("templates") if isinstance(store.get("templates"), dict) else {}
+        missing_fields = detect_missing_fields(normalized, warnings)
+        template_id = select_template_id(missing_fields, reply_cases)
+        template_data = templates.get(template_id)
+        if not isinstance(template_data, dict):
+            raise ValueError(f"Template '{template_id}' not found in {template_path}")
+
+        placeholders = {
+            "kommisionsnummer": kom_number,
+            "fehlende_pflichtfelder_liste": _format_missing_field_list(missing_fields, reply_cases),
+        }
+        subject = render_template(str(template_data.get("subject", "")), placeholders).strip()
+        body = render_template(str(template_data.get("body", "")), placeholders).strip()
+        if not subject or not body:
+            raise ValueError(f"Template '{template_id}' rendered empty subject/body")
+
+        msg = EmailMessage()
+        msg["To"] = to_addr
+        msg["Subject"] = subject
+        msg.set_content(body + "\n")
+        return msg
+    except Exception as exc:
+        # Compatibility fallback: if templates are unavailable or invalid, keep old behavior.
+        if isinstance(warnings, list):
+            warnings.append(f"Reply email template fallback: {exc}")
+        return _compose_legacy_reply_needed_email(
+            message=message,
+            normalized=normalized,
+            to_addr=to_addr,
+            body_template=body_template,
+        )
 
 
 def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
