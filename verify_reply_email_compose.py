@@ -91,6 +91,7 @@ def _assert_template_3_missing_modellnummer() -> None:
     body = msg.get_content()
     assert msg["Subject"] == "Ruckfrage zu Ihrer Bestellung KOM-1 - Modellnummer fehlt"
     assert "benotigen wir noch die Modellnummer" in body
+    assert "ART-1" in body
 
 
 def _assert_template_4_missing_artikelnummer() -> None:
@@ -100,6 +101,7 @@ def _assert_template_4_missing_artikelnummer() -> None:
     body = msg.get_content()
     assert msg["Subject"] == "Ruckfrage zu Ihrer Bestellung KOM-1 - Artikelnummer fehlt"
     assert "benotigen wir noch die Artikelnummer" in body
+    assert "MOD-1" in body
 
 
 def _assert_template_5_missing_menge() -> None:
