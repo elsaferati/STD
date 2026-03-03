@@ -820,15 +820,6 @@ def _force_porta_reply_needed_for_ambiguous_ignored_codes(
         header = {}
         normalized["header"] = header
 
-    reply_entry = header.get("reply_needed")
-    if not isinstance(reply_entry, dict):
-        reply_entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["reply_needed"] = reply_entry
-    reply_entry["value"] = True
-    reply_entry["source"] = "derived"
-    reply_entry["confidence"] = 1.0
-    reply_entry["derived_from"] = "porta_ambiguous_code_reply_needed"
-
     review_entry = header.get("human_review_needed")
     if not isinstance(review_entry, dict):
         review_entry = {"value": False, "source": "derived", "confidence": 1.0}
@@ -2320,7 +2311,6 @@ def process_message(
                 )
 
         braun_items = normalized.get("items")
-        braun_reply_needed = False
         if isinstance(braun_items, list):
             for item in braun_items:
                 if not isinstance(item, dict):
@@ -2332,22 +2322,10 @@ def process_message(
                     _braun_warnings.append(
                         f"Reply needed: item line {line} is missing artikelnummer — please provide the article number."
                     )
-                    braun_reply_needed = True
                 if not str(modelnr).strip():
                     _braun_warnings.append(
                         f"Reply needed: item line {line} is missing modellnummer (artikelnummer: {artnr or 'unknown'}) — please provide the model number."
                     )
-                    braun_reply_needed = True
-        if braun_reply_needed:
-            reply_entry = braun_header.get("reply_needed")
-            already_true = isinstance(reply_entry, dict) and reply_entry.get("value") is True
-            if not already_true:
-                braun_header["reply_needed"] = {
-                    "value": True,
-                    "source": "derived",
-                    "confidence": 1.0,
-                    "derived_from": "braun_missing_item_code",
-                }
 
     if route.used_fallback:
         header = normalized.get("header")

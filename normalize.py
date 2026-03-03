@@ -166,7 +166,7 @@ _REPLY_HEADER_STOP_RE = re.compile(
 TICKET_MISSING_WARNING = "ticket number is missing"
 # Header fields that should automatically trigger reply_needed when missing.
 # Extend this list (e.g. "liefertermin", "kundennummer") to add more triggers.
-CRITICAL_REPLY_FIELDS = ["kom_nr", "kundennummer"]
+CRITICAL_REPLY_FIELDS = ["kom_nr", "lieferanschrift", "store_address"]
 CRITICAL_ITEM_REPLY_FIELDS = ["artikelnummer", "modellnummer"]
 MISSING_CRITICAL_REPLY_PREFIX = "Missing critical header fields:"
 MISSING_CRITICAL_ITEM_REPLY_PREFIX = "Missing critical item fields:"
