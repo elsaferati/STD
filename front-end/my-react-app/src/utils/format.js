@@ -64,20 +64,32 @@ export function formatPercent(value) {
 }
 
 export function statusLabel(status, t) {
-  const normalized = (status || "unknown").toLowerCase();
+  const raw = (status || "ok").toLowerCase();
+  const normalized = raw === "partial" ? "reply" : raw === "unknown" ? "ok" : raw;
   if (typeof t === "function") {
-    return t(`status.${normalized}`, null, normalized);
+    if (normalized === "reply") return t("status.reply", null, "Reply");
+    if (normalized === "human_in_the_loop") return t("status.human_in_the_loop", null, "Human in the Loop");
+    if (normalized === "post") return t("status.post", null, "Post");
+    if (normalized === "ok") return t("status.ok", null, "OK");
+    if (normalized === "failed") return t("status.failed", null, "Failed");
+    return t("status.ok", null, "OK");
   }
   if (normalized === "ok") {
     return "OK";
   }
-  if (normalized === "partial") {
-    return "Partial";
+  if (normalized === "reply") {
+    return "Reply";
+  }
+  if (normalized === "human_in_the_loop") {
+    return "Human in the Loop";
+  }
+  if (normalized === "post") {
+    return "Post";
   }
   if (normalized === "failed") {
     return "Failed";
   }
-  return "Unknown";
+  return "OK";
 }
 
 export function fieldLabel(field, t) {

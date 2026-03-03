@@ -9,7 +9,7 @@ import { downloadBlob } from "../utils/download";
 import { formatDateTime, statusLabel } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
-const STATUS_OPTIONS = ["ok", "partial", "failed", "unknown"];
+const STATUS_OPTIONS = ["ok", "reply", "human_in_the_loop", "post", "failed"];
 const EXPORT_INITIALS_STORAGE_KEY = "orders_export_initials";
 
 function buildExportFilename(title, initials) {
@@ -22,28 +22,6 @@ function buildExportFilename(title, initials) {
   const parts = [safeTitle, dateStamp];
   if (initials) parts.push(initials);
   return `${parts.join("_")}.xlsx`;
-}
-
-function flagLabel(order, t) {
-  const labels = [];
-  if (order.reply_needed) labels.push(t("flags.reply"));
-  if (order.human_review_needed) labels.push(t("flags.review"));
-  if (order.post_case) labels.push(t("flags.post"));
-  return labels.length ? labels.join(" | ") : "-";
-}
-
-function FlagPill({ label, color }) {
-  const colors = {
-    orange: "bg-orange-50 text-orange-700 border-orange-200",
-    red: "bg-red-50 text-red-700 border-red-200",
-    slate: "bg-slate-100 text-slate-600 border-slate-200",
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${colors[color]}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {label}
-    </span>
-  );
 }
 
 export function OrdersPage() {
@@ -74,22 +52,20 @@ export function OrdersPage() {
     [searchParams],
   );
 
-  const replyNeededParam = searchParams.get("reply_needed");
-  const humanReviewParam = searchParams.get("human_review_needed");
-  const postCaseParam = searchParams.get("post_case");
+  const statusParam = searchParams.get("status");
 
   const activeTab = useMemo(() => {
-    if (replyNeededParam === "true") {
+    if (statusParam === "reply") {
       return "needs_reply";
     }
-    if (humanReviewParam === "true") {
+    if (statusParam === "human_in_the_loop") {
       return "manual_review";
     }
     if (fromDate === todayIso && toDate === todayIso) {
       return "today";
     }
     return "all";
-  }, [fromDate, humanReviewParam, replyNeededParam, toDate, todayIso]);
+  }, [fromDate, statusParam, toDate, todayIso]);
 
   const updateParams = useCallback(
     (updates, options = {}) => {
@@ -133,15 +109,22 @@ export function OrdersPage() {
 
   const applyTab = (tab) => {
     if (tab === "today") {
-      updateParams({ from: todayIso, to: todayIso, reply_needed: null, human_review_needed: null });
+      updateParams({
+        from: todayIso,
+        to: todayIso,
+        status: null,
+        reply_needed: null,
+        human_review_needed: null,
+        post_case: null,
+      });
       return;
     }
     if (tab === "needs_reply") {
-      updateParams({ reply_needed: "true", human_review_needed: null });
+      updateParams({ status: "reply", human_review_needed: null, reply_needed: null, post_case: null });
       return;
     }
     if (tab === "manual_review") {
-      updateParams({ human_review_needed: "true", reply_needed: null });
+      updateParams({ status: "human_in_the_loop", reply_needed: null, human_review_needed: null, post_case: null });
       return;
     }
     updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null });
@@ -185,34 +168,6 @@ export function OrdersPage() {
       downloadBlob(blob, buildExportFilename(exportTitle, initials));
     } catch (requestError) {
       setActionError(requestError.message || t("orders.excelExportFailed"));
-    } finally {
-      setActionBusy("");
-    }
-  };
-
-  const handleExportXml = async (orderId) => {
-    setActionBusy(`export:${orderId}`);
-    setActionError("");
-    try {
-      const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/export-xml`, { method: "POST" });
-      const xmlFiles = Array.isArray(result?.xml_files) ? result.xml_files : [];
-      if (!xmlFiles.length) {
-        throw new Error(t("orders.noXmlAvailable"));
-      }
-      if (xmlFiles.length > 1) {
-        setActionError(t("orders.multipleXmlNotice", { count: xmlFiles.length }));
-        await loadOrders();
-        return;
-      }
-      const xmlFile = xmlFiles[0];
-      if (!xmlFile?.filename) {
-        throw new Error(t("orders.noXmlAvailable"));
-      }
-      const blob = await fetchBlob(`/api/files/${encodeURIComponent(xmlFile.filename)}`);
-      downloadBlob(blob, xmlFile.filename);
-      await loadOrders();
-    } catch (requestError) {
-      setActionError(requestError.message || t("orders.xmlExportFailed"));
     } finally {
       setActionBusy("");
     }
@@ -278,7 +233,7 @@ export function OrdersPage() {
     tableScrollRef.current.scrollLeft = dragStartScrollRef.current - deltaX;
   };
 
-  const handleTablePointerUp = (event) => {
+  const handleTablePointerUp = () => {
     if (!isDraggingTable || !tableScrollRef.current) return;
     if (dragPointerIdRef.current !== null) {
       tableScrollRef.current.releasePointerCapture(dragPointerIdRef.current);
@@ -386,52 +341,6 @@ export function OrdersPage() {
           ))}
         </div>
       </div>
-
-      <div>
-        <h3
-          className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center ${
-            isDark ? "text-slate-400" : "text-slate-400"
-          }`}
-        >
-          <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>flag</span>
-          {t("orders.workflowFlags")}
-        </h3>
-        <div className="space-y-4">
-          <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.replyNeeded")}</span>
-            <input
-              type="checkbox"
-              checked={replyNeededParam === "true"}
-              onChange={(event) => updateParams({ reply_needed: event.target.checked ? "true" : null })}
-              className={`h-4 w-4 text-primary rounded focus:ring-primary ${
-                isDark ? "border-slate-700 bg-slate-950/70" : "border-slate-300"
-              }`}
-            />
-          </label>
-          <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.humanReview")}</span>
-            <input
-              type="checkbox"
-              checked={humanReviewParam === "true"}
-              onChange={(event) => updateParams({ human_review_needed: event.target.checked ? "true" : null })}
-              className={`h-4 w-4 text-primary rounded focus:ring-primary ${
-                isDark ? "border-slate-700 bg-slate-950/70" : "border-slate-300"
-              }`}
-            />
-          </label>
-          <label className="flex items-center justify-between">
-            <span className={`text-sm ${isDark ? "text-slate-200" : "text-slate-700"}`}>{t("common.postCase")}</span>
-            <input
-              type="checkbox"
-              checked={postCaseParam === "true"}
-              onChange={(event) => updateParams({ post_case: event.target.checked ? "true" : null })}
-              className={`h-4 w-4 text-primary rounded focus:ring-primary ${
-                isDark ? "border-slate-700 bg-slate-950/70" : "border-slate-300"
-              }`}
-            />
-          </label>
-        </div>
-      </div>
     </aside>
   );
 
@@ -537,7 +446,6 @@ export function OrdersPage() {
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-64 max-w-64">{t("common.customer")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.flags")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
                   </tr>
                 </thead>
@@ -566,16 +474,6 @@ export function OrdersPage() {
                         <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1">
-                          {order.human_review_needed && <FlagPill label={t("flags.review")} color="orange" />}
-                          {order.reply_needed && <FlagPill label={t("flags.reply")} color="red" />}
-                          {order.post_case && <FlagPill label={t("flags.post")} color="slate" />}
-                          {!order.human_review_needed && !order.reply_needed && !order.post_case && (
-                            <span className="text-slate-400 text-xs">-</span>
-                          )}
-                        </div>
-                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
@@ -609,7 +507,7 @@ export function OrdersPage() {
                   ))}
                   {!loading && orders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={9}>{t("orders.noMatchingOrders")}</td>
+                      <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>{t("orders.noMatchingOrders")}</td>
                     </tr>
                   ) : null}
                 </tbody>
