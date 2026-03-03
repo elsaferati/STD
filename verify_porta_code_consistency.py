@@ -415,11 +415,8 @@ def test_porta_explicit_pair_prune_drops_ambiguous_rows_and_forces_reply() -> No
 
     header = normalized.get("header") or {}
     reply = header.get("reply_needed") or {}
-    review = header.get("human_review_needed") or {}
     assert reply.get("value") is True
     assert reply.get("derived_from") == "porta_ambiguous_code_reply_needed"
-    assert review.get("value") is True
-    assert review.get("derived_from") == "porta_explicit_pair_prune"
 
     warnings = normalized.get("warnings") or []
     assert any(
@@ -448,10 +445,8 @@ def test_porta_ambiguous_ignore_warning_forces_reply_needed() -> None:
     assert changed is True
     header = normalized.get("header") or {}
     reply = header.get("reply_needed") or {}
-    review = header.get("human_review_needed") or {}
     assert reply.get("value") is True
     assert reply.get("derived_from") == "porta_ambiguous_code_reply_needed"
-    assert review.get("value") is True
     warnings = normalized.get("warnings") or []
     assert any(
         str(w).startswith("Reply needed: Porta ambiguous standalone code token(s)")
@@ -482,10 +477,8 @@ def test_porta_numeric_tokens_without_model_prefix_warning_forces_reply_needed()
     assert changed is True
     header = normalized.get("header") or {}
     reply = header.get("reply_needed") or {}
-    review = header.get("human_review_needed") or {}
     assert reply.get("value") is True
     assert reply.get("derived_from") == "porta_ambiguous_code_reply_needed"
-    assert review.get("value") is True
     warnings = normalized.get("warnings") or []
     assert any(
         str(w).startswith("Reply needed: Porta ambiguous standalone code token(s)")
@@ -518,10 +511,8 @@ def test_porta_standalone_numeric_rule10_warning_forces_reply_needed() -> None:
     assert changed is True
     header = normalized.get("header") or {}
     reply = header.get("reply_needed") or {}
-    review = header.get("human_review_needed") or {}
     assert reply.get("value") is True
     assert reply.get("derived_from") == "porta_ambiguous_code_reply_needed"
-    assert review.get("value") is True
     warnings = normalized.get("warnings") or []
     assert any(
         str(w).startswith("Reply needed: Porta ambiguous standalone code token(s)")

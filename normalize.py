@@ -166,7 +166,7 @@ _REPLY_HEADER_STOP_RE = re.compile(
 TICKET_MISSING_WARNING = "ticket number is missing"
 # Header fields that should automatically trigger reply_needed when missing.
 # Extend this list (e.g. "liefertermin", "kundennummer") to add more triggers.
-CRITICAL_REPLY_FIELDS = ["kom_nr", "kundennummer"]
+CRITICAL_REPLY_FIELDS = ["kom_nr", "lieferanschrift", "store_address"]
 CRITICAL_ITEM_REPLY_FIELDS = ["artikelnummer", "modellnummer"]
 MISSING_CRITICAL_REPLY_PREFIX = "Missing critical header fields:"
 MISSING_CRITICAL_ITEM_REPLY_PREFIX = "Missing critical item fields:"
@@ -1489,13 +1489,6 @@ def normalize_output(
             store_entry["derived_from"] = "porta_store_address_from_lieferanschrift"
             header["store_address"] = store_entry
 
-    # When agent used ILN fallback or AI-assisted match, require human review (header-only edit)
-    kdnr_entry = header.get("kundennummer", {})
-    if isinstance(kdnr_entry, dict):
-        derived = (kdnr_entry.get("derived_from") or "").strip()
-        if derived in ("iln_fallback", "ai_assisted_match"):
-            _ensure_field(header, "human_review_needed")
-            header["human_review_needed"]["value"] = True
 
     items = data.get("items")
     if not isinstance(items, list):

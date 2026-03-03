@@ -72,6 +72,8 @@ def test_reply_needed_from_missing_critical_fields() -> None:
     data = {
         "header": {
             "kundennummer": {"value": "123456", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Some Store", "source": "email", "confidence": 1.0},
             "reply_needed": {"value": False, "source": "email", "confidence": 1.0},
         },
         "items": [
@@ -107,11 +109,13 @@ def test_reply_needed_from_missing_critical_fields() -> None:
     print("SUCCESS: Missing critical header fields now force reply_needed and warning output.")
 
 
-def test_reply_needed_from_missing_kundennummer() -> None:
+def test_reply_needed_from_missing_lieferanschrift() -> None:
     warnings: list[str] = []
     data = {
         "header": {
             "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "kundennummer": {"value": "123456", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Some Store", "source": "email", "confidence": 1.0},
             "reply_needed": {"value": False, "source": "email", "confidence": 1.0},
         },
         "items": [
@@ -127,7 +131,7 @@ def test_reply_needed_from_missing_kundennummer() -> None:
     }
     normalized = normalize_output(
         data=data,
-        message_id="test_missing_kundennummer",
+        message_id="test_missing_lieferanschrift",
         received_at="2026-02-12T12:00:00+00:00",
         dayfirst=True,
         warnings=warnings,
@@ -135,9 +139,89 @@ def test_reply_needed_from_missing_kundennummer() -> None:
         sender="test@example.com",
     )
     warning_list = normalized.get("warnings") if isinstance(normalized.get("warnings"), list) else []
-    assert normalized["header"].get("reply_needed", {}).get("value") is True
-    assert "Reply needed: Missing critical header fields: kundennummer" in warning_list
-    print("SUCCESS: Missing kundennummer also triggers reply_needed.")
+    assert normalized["header"].get("reply_needed", {}).get("value") is True, (
+        f"Expected reply_needed=True when lieferanschrift is missing, got {normalized['header'].get('reply_needed', {}).get('value')}"
+    )
+    assert "Reply needed: Missing critical header fields: lieferanschrift" in warning_list, (
+        f"Expected lieferanschrift warning, got: {warning_list}"
+    )
+    print("SUCCESS: Missing lieferanschrift triggers reply_needed.")
+
+
+def test_reply_needed_from_missing_store_address() -> None:
+    warnings: list[str] = []
+    data = {
+        "header": {
+            "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "kundennummer": {"value": "123456", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "reply_needed": {"value": False, "source": "email", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "artikelnummer": {"value": "A-1", "source": "email", "confidence": 1.0},
+                "modellnummer": {"value": "M-1", "source": "email", "confidence": 1.0},
+                "menge": {"value": 1, "source": "email", "confidence": 1.0},
+                "furncloud_id": {"value": "FC-1", "source": "email", "confidence": 1.0},
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+    normalized = normalize_output(
+        data=data,
+        message_id="test_missing_store_address",
+        received_at="2026-02-12T12:00:00+00:00",
+        dayfirst=True,
+        warnings=warnings,
+        email_body="",
+        sender="test@example.com",
+    )
+    warning_list = normalized.get("warnings") if isinstance(normalized.get("warnings"), list) else []
+    assert normalized["header"].get("reply_needed", {}).get("value") is True, (
+        f"Expected reply_needed=True when store_address is missing, got {normalized['header'].get('reply_needed', {}).get('value')}"
+    )
+    assert "Reply needed: Missing critical header fields: store_address" in warning_list, (
+        f"Expected store_address warning, got: {warning_list}"
+    )
+    print("SUCCESS: Missing store_address triggers reply_needed.")
+
+
+def test_kundennummer_alone_does_not_trigger_reply_needed() -> None:
+    """kundennummer is no longer a critical reply field — missing it alone should NOT set reply_needed."""
+    warnings: list[str] = []
+    data = {
+        "header": {
+            "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Some Store", "source": "email", "confidence": 1.0},
+            "reply_needed": {"value": False, "source": "email", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "artikelnummer": {"value": "A-1", "source": "email", "confidence": 1.0},
+                "modellnummer": {"value": "M-1", "source": "email", "confidence": 1.0},
+                "menge": {"value": 1, "source": "email", "confidence": 1.0},
+                "furncloud_id": {"value": "FC-1", "source": "email", "confidence": 1.0},
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+    normalized = normalize_output(
+        data=data,
+        message_id="test_kundennummer_not_critical",
+        received_at="2026-02-12T12:00:00+00:00",
+        dayfirst=True,
+        warnings=warnings,
+        email_body="",
+        sender="test@example.com",
+    )
+    flag = normalized["header"].get("reply_needed", {}).get("value")
+    assert flag is not True, (
+        f"Expected reply_needed=False when only kundennummer is missing, got {flag}"
+    )
+    print("SUCCESS: Missing kundennummer alone does NOT trigger reply_needed.")
 
 
 def test_reply_needed_from_missing_critical_item_fields() -> None:
@@ -274,7 +358,9 @@ def test_dashboard_list_orders_post_case_mapping() -> None:
 if __name__ == "__main__":
     test_reply_needed_preservation()
     test_reply_needed_from_missing_critical_fields()
-    test_reply_needed_from_missing_kundennummer()
+    test_reply_needed_from_missing_lieferanschrift()
+    test_reply_needed_from_missing_store_address()
+    test_kundennummer_alone_does_not_trigger_reply_needed()
     test_reply_needed_from_missing_critical_item_fields()
     test_post_case_preservation()
     test_post_case_default_false_when_missing()

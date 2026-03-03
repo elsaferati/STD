@@ -95,20 +95,6 @@ def _ensure_warnings(normalized: dict[str, Any]) -> list[str]:
     return warnings
 
 
-def _set_human_review_needed(
-    normalized: dict[str, Any],
-    verification_profile: str,
-) -> None:
-    header = normalized.get("header")
-    if not isinstance(header, dict):
-        header = {}
-        normalized["header"] = header
-    entry = _ensure_field(header, "human_review_needed")
-    entry["value"] = True
-    entry["source"] = "derived"
-    entry["confidence"] = 1.0
-    entry["derived_from"] = _profile_derived_from(verification_profile)
-
 
 def _format_change_warning(
     profile_label: str,
@@ -214,10 +200,5 @@ def apply_item_code_verification(
             corrections_applied += 1
 
     if corrections_applied > 0:
-        _set_human_review_needed(normalized, verification_profile)
-        warnings.append(
-            f"{profile_label} verification applied automatic item-code correction(s); "
-            "human review forced."
-        )
         return True
     return False

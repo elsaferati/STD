@@ -45,13 +45,9 @@ def test_apply_braun_item_code_verification() -> None:
     assert item_1["artikelnummer"]["value"] == "A-NEW"
     assert item_1["artikelnummer"]["derived_from"] == "braun_item_code_verification"
 
-    review_entry = normalized["header"]["human_review_needed"]
     warnings = normalized.get("warnings") or []
-    assert review_entry.get("value") is True
-    assert review_entry.get("derived_from") == "braun_item_code_verification"
     assert any("Braun verification corrected item line 1 field artikelnummer" in str(w) for w in warnings)
-    assert any("Braun verification applied automatic item-code correction(s)" in str(w) for w in warnings)
-    print("SUCCESS: Braun verification applies high-confidence corrections and forces human review.")
+    print("SUCCESS: Braun verification applies high-confidence corrections.")
 
 
 if __name__ == "__main__":

@@ -62,14 +62,9 @@ def test_apply_porta_item_code_verification() -> None:
     assert item_2["modellnummer"]["value"] == before["items"][1]["modellnummer"]["value"]
     assert item_2["artikelnummer"]["value"] == before["items"][1]["artikelnummer"]["value"]
 
-    review_flag = normalized["header"]["human_review_needed"]["value"]
-    review_source = normalized["header"]["human_review_needed"].get("derived_from")
     warnings = normalized.get("warnings") or []
-    assert review_flag is True
-    assert review_source == "porta_item_code_verification"
     assert any("Porta verification corrected item line 1 field artikelnummer" in str(w) for w in warnings)
-    assert any("Porta verification applied automatic item-code correction(s)" in str(w) for w in warnings)
-    print("SUCCESS: Porta verification applies high-confidence corrections and forces human review.")
+    print("SUCCESS: Porta verification applies high-confidence corrections.")
 
 
 def test_apply_momax_bg_item_code_verification_model_article_only() -> None:
@@ -118,14 +113,9 @@ def test_apply_momax_bg_item_code_verification_model_article_only() -> None:
     assert item_1["artikelnummer"]["derived_from"] == "momax_bg_item_code_verification"
     assert item_1["menge"]["value"] == 1
 
-    review_flag = normalized["header"]["human_review_needed"]["value"]
-    review_source = normalized["header"]["human_review_needed"].get("derived_from")
     warnings = normalized.get("warnings") or []
-    assert review_flag is True
-    assert review_source == "momax_bg_item_code_verification"
     assert any("MOMAX BG verification corrected item line 1 field modellnummer" in str(w) for w in warnings)
-    assert any("MOMAX BG verification applied automatic item-code correction(s)" in str(w) for w in warnings)
-    print("SUCCESS: MOMAX BG verification updates only model/article and forces human review.")
+    print("SUCCESS: MOMAX BG verification updates only model/article.")
 
 
 if __name__ == "__main__":

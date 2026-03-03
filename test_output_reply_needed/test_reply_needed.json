@@ -6,9 +6,10 @@
       "confidence": 0.9
     },
     "human_review_needed": {
-      "value": false,
-      "source": "pdf",
-      "confidence": 1.0
+      "value": true,
+      "source": "derived",
+      "confidence": 1.0,
+      "derived_from": "routing_fallback"
     },
     "reply_needed": {
       "value": true,
@@ -103,13 +104,14 @@
   },
   "items": [],
   "warnings": [
-    "Routing: selected=xxxlutz_default confidence=1.00 forced=false fallback=false",
+    "Routing: selected=xxxlutz_default confidence=0.00 forced=false fallback=true (rule_unknown)",
     "Reply needed: STATT X BITTE Y",
+    "Routing fallback: forced human_review_needed=true",
     "Missing header fields: adressnummer, kom_nr, kom_name, liefertermin, wunschtermin, bestelldatum, lieferanschrift, tour, store_name, store_address, seller, delivery_week, iln, iln_anl, iln_fil",
-    "Reply needed: Missing critical header fields: kom_nr",
+    "Reply needed: Missing critical header fields: kom_nr, lieferanschrift, store_address",
     "ticket number is missing",
     "No items extracted.",
-    "Auto-reply email sent to 00primex.eu@gmail.com."
+    "Auto-reply email sent to 333primex.eu@gmail.com."
   ],
   "errors": [],
   "message_id": "test_reply_needed",

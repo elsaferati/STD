@@ -53,7 +53,7 @@ An automated order extraction system specifically designed for **XXLUTZ/MÖMAX**
    SMTP_SSL=true
    
    # Reply-needed email settings
-   REPLY_EMAIL_TO=00primex.eu@gmail.com
+   REPLY_EMAIL_TO=323primex.eu@gmail.com
    REPLY_EMAIL_BODY=Please send the order with furnplan or make the order with 2 positions.
    
    # Processing Options
