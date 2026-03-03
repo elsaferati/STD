@@ -98,16 +98,19 @@ def _message() -> IngestedEmail:
     )
 
 
-def _extraction_payload(items: list[dict]) -> str:
+def _extraction_payload(items: list[dict], header_updates: dict | None = None) -> str:
+    header = {
+        "kundennummer": {"value": "123456", "source": "email", "confidence": 1.0},
+        "kom_nr": {"value": "KOM-1", "source": "email", "confidence": 1.0},
+        "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+        "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+        "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+    }
+    if isinstance(header_updates, dict):
+        header.update(header_updates)
     return json.dumps(
         {
-            "header": {
-                "kundennummer": {"value": "123456", "source": "email", "confidence": 1.0},
-                "kom_nr": {"value": "KOM-1", "source": "email", "confidence": 1.0},
-                "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
-                "post_case": {"value": False, "source": "derived", "confidence": 1.0},
-            },
+            "header": header,
             "items": items,
             "warnings": [],
             "errors": [],
@@ -188,26 +191,43 @@ def _component_block_text_other_parent(parent_artikel_nr: str = "4611217 / 84") 
     )
 
 
-def _run_pipeline_with_items(branch_id: str, items: list[dict], page_text_map: dict[str, str]) -> dict:
+def _run_pipeline_with_items(
+    branch_id: str,
+    items: list[dict],
+    page_text_map: dict[str, str],
+    header_updates: dict | None = None,
+) -> dict:
     extractor = MagicMock()
     extractor.complete_text.return_value = json.dumps(
         {"branch_id": branch_id, "confidence": 1.0, "reason": "test"}
     )
-    extractor.extract_with_prompts.return_value = _extraction_payload(items)
+    extractor.extract_with_prompts.return_value = _extraction_payload(
+        items, header_updates=header_updates
+    )
     extractor.verify_items_from_text.return_value = json.dumps(
         {"verified_items": [], "warnings": []}
     )
 
     original_prepare_images = pipeline._prepare_images
+    original_route_message = pipeline.extraction_router.route_message
     pipeline._prepare_images = lambda attachments, config, warnings: (
         [ImageInput(name=name, source="pdf", data_url="data:image/png;base64,") for name in page_text_map.keys()],
         page_text_map,
+    )
+    pipeline.extraction_router.route_message = lambda *_args, **_kwargs: pipeline.extraction_router.RouteDecision(
+        selected_branch_id=branch_id,
+        classifier_branch_id=branch_id,
+        confidence=1.0,
+        reason="test",
+        forced_by_detector=False,
+        used_fallback=False,
     )
     try:
         result = pipeline.process_message(_message(), _config(), extractor)
         return result.data
     finally:
         pipeline._prepare_images = original_prepare_images
+        pipeline.extraction_router.route_message = original_route_message
 
 
 def test_cross_page_repeated_block_is_counted_again() -> None:
@@ -534,6 +554,48 @@ def test_extract_porta_store_name_prefers_full_legal_line() -> None:
     print("SUCCESS: Porta store_name extraction prefers full legal Verkaufshaus line.")
 
 
+def test_porta_store_address_uses_lieferanschrift_when_verkaufshaus_missing() -> None:
+    page_texts = {
+        "order-1.png": (
+            "Anlieferung:\n"
+            "Porta Moebel Bad Vilbel\n"
+            "4040051017219\n"
+            "Industriestrasse 2\n"
+            "61118 Bad Vilbel\n"
+            "\n"
+            "Rechnungsadresse:\n"
+            "FuG Handelsgesellschaft West mbH & Co. KG\n"
+            "Bakenweg 16-20\n"
+            "32457 Porta Westfalica\n"
+        )
+    }
+    data = _run_pipeline_with_items(
+        branch_id="porta",
+        items=[_item(1, "CQEG00", "09387")],
+        page_text_map=page_texts,
+        header_updates={
+            "lieferanschrift": {
+                "value": "Industriestrasse 2\n61118 Bad Vilbel",
+                "source": "pdf",
+                "confidence": 0.95,
+            },
+            "store_address": {
+                "value": "Bakenweg 16-20\n32457 Porta Westfalica",
+                "source": "pdf",
+                "confidence": 0.85,
+            },
+        },
+    )
+    header = data.get("header") or {}
+    store_entry = header.get("store_address") or {}
+    store_value = str((store_entry.get("value") if isinstance(store_entry, dict) else store_entry) or "").strip()
+    assert store_value == "Industriestrasse 2\n61118 Bad Vilbel"
+    assert isinstance(store_entry, dict)
+    assert store_entry.get("source") == "derived"
+    assert store_entry.get("derived_from") == "porta_store_address_from_lieferanschrift_no_verkaufshaus"
+    print("SUCCESS: missing Verkaufshaus block forces store_address fallback to lieferanschrift.")
+
+
 def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     porta_prompt = prompts_porta.build_user_instructions_porta(["pdf", "email", "image"])
     verify_prompt = prompts_verify_items.build_verify_items_instructions("porta")
@@ -549,12 +611,177 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "OJ00 31681 -> modellnummer='OJ00', artikelnummer='31681'" in verify_prompt
     assert "PD96713696/54415 -> modellnummer='PD96713696', artikelnummer='54415'" in porta_prompt
     assert "PD96713696/54415 -> modellnummer='PD96713696', artikelnummer='54415'" in verify_prompt
+    assert "Example: 'Typ 77171' and 'Ausf. CQ1616'" in porta_prompt
+    assert "Example: 'Typ 77171' and 'Ausf. CQ1616'" in verify_prompt
+    assert "'Typ' is an article label and is NEVER a modellnummer token." in porta_prompt
+    assert "'Typ' is an article label and is NEVER a modellnummer token." in verify_prompt
+    assert "This rule does NOT make table-column 'Artikel-Nr.' valid" in porta_prompt
+    assert "This rule does NOT make table-column 'Artikel-Nr.' valid" in verify_prompt
     assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in porta_prompt
     assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in verify_prompt
+    assert "1xPDSL71SP44-57383" in porta_prompt
+    assert "2xCQ1212-09377G" in porta_prompt
+    assert "strip it from modellnummer" in porta_prompt
+    assert "1xPDSL71SP44-57383" in verify_prompt
+    assert "2xCQ1212-09377G" in verify_prompt
+    assert "strip it from modellnummer" in verify_prompt
+    assert "'Siehe Skizze vcrr kwkk' and 'Siehe Skizze: vcrr kwkk' style phrases" in porta_prompt
+    assert "For 'Siehe Skizze ...' phrases, accept only when the extracted candidate is exactly 8 alphanumeric characters after cleanup." in porta_prompt
     assert "If the Verkaufshaus store address is missing, use lieferanschrift for store_address." in porta_prompt
     assert "If an explicit Verkaufshaus store address is present, keep it and do not overwrite it with lieferanschrift." in porta_prompt
     assert "NEVER copy delivery address into store_address." not in porta_prompt
     print("SUCCESS: prompt contract explicitly enforces cross-page no-dedupe behavior.")
+
+
+def test_porta_typ_ausf_backfill_fills_missing_codes() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [_item(1, "", "")],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Menge Artikel-Nr. Bezeichnung des Artikels\n"
+            "1 1005141 / 88 Liefermodell: Sinfonie Plus\n"
+            "Typ 77171\n"
+            "Kopfteil Polster Mocca mit Raute\n"
+            "Ausf CQ1616\n"
+        )
+    }
+
+    pipeline._apply_porta_typ_ausf_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+
+    item = (normalized.get("items") or [])[0]
+    modell_entry = item.get("modellnummer") or {}
+    artikel_entry = item.get("artikelnummer") or {}
+    assert modell_entry.get("value") == "CQ1616"
+    assert artikel_entry.get("value") == "77171"
+    assert modell_entry.get("derived_from") == "porta_typ_ausf_backfill"
+    assert artikel_entry.get("derived_from") == "porta_typ_ausf_backfill"
+    assert artikel_entry.get("value") != "1005141"
+    header = normalized.get("header") or {}
+    assert (header.get("human_review_needed") or {}).get("value") is True
+    assert (header.get("human_review_needed") or {}).get("derived_from") == "porta_typ_ausf_backfill"
+    print("SUCCESS: Typ/Ausf fallback fills missing item codes and ignores table Artikel-Nr.")
+
+
+def test_porta_typ_ausf_backfill_does_not_overwrite_partial_item() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [_item(1, "CQSD58", "")],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Typ 77171\n"
+            "Ausf CQ1616\n"
+        )
+    }
+
+    pipeline._apply_porta_typ_ausf_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+
+    item = (normalized.get("items") or [])[0]
+    assert (item.get("modellnummer") or {}).get("value") == "CQSD58"
+    assert (item.get("artikelnummer") or {}).get("value") == ""
+    assert (item.get("artikelnummer") or {}).get("derived_from") != "porta_typ_ausf_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is False
+    print("SUCCESS: Typ/Ausf fallback does not overwrite partially filled items.")
+
+
+def test_porta_typ_ausf_backfill_repairs_placeholder_model_from_matching_article() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [_item(1, "TYP", "77171")],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Menge Artikel-Nr. Bezeichnung des Artikels\n"
+            "1 1005141 / 88 Liefermodell: Sinfonie Plus\n"
+            "Typ 77171\n"
+            "Ausf: CQ1616\n"
+        )
+    }
+
+    pipeline._apply_porta_typ_ausf_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+
+    item = (normalized.get("items") or [])[0]
+    assert (item.get("artikelnummer") or {}).get("value") == "77171"
+    assert (item.get("modellnummer") or {}).get("value") == "CQ1616"
+    assert (item.get("modellnummer") or {}).get("derived_from") == "porta_typ_ausf_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is True
+    print("SUCCESS: Typ/Ausf fallback repairs placeholder model token 'TYP' to CQ1616.")
+
+
+def test_porta_typ_ausf_backfill_keeps_non_placeholder_model() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [_item(1, "CQSD58", "77171")],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Typ 77171\n"
+            "Ausf: CQ1616\n"
+        )
+    }
+
+    pipeline._apply_porta_typ_ausf_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+
+    item = (normalized.get("items") or [])[0]
+    assert (item.get("modellnummer") or {}).get("value") == "CQSD58"
+    assert (item.get("modellnummer") or {}).get("derived_from") != "porta_typ_ausf_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is False
+    print("SUCCESS: Typ/Ausf fallback does not overwrite non-placeholder modellnummer values.")
+
+
+def test_porta_collect_pairs_ignores_typ_label_as_model() -> None:
+    page_texts = {
+        "order-1.png": (
+            "Typ 77171\n"
+            "Ausf: CQ1616\n"
+        )
+    }
+
+    _model_to_articles, _article_to_models, pair_set = pipeline._collect_porta_pdf_code_pairs(  # type: ignore[attr-defined]
+        page_texts
+    )
+    assert ("TYP", "77171") not in pair_set
+    print("SUCCESS: PDF pair collector ignores Typ label token as modellnummer.")
+
+
+def test_porta_typ_ausf_backfill_skips_when_pair_count_mismatch() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [_item(1, "", ""), _item(2, "", "")],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Typ 77171\n"
+            "Ausf CQ1616\n"
+        )
+    }
+
+    pipeline._apply_porta_typ_ausf_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+
+    items = normalized.get("items") or []
+    assert (items[0].get("modellnummer") or {}).get("value") == ""
+    assert (items[0].get("artikelnummer") or {}).get("value") == ""
+    assert (items[1].get("modellnummer") or {}).get("value") == ""
+    assert (items[1].get("artikelnummer") or {}).get("value") == ""
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is False
+    print("SUCCESS: Typ/Ausf fallback skips writes when detected pair count mismatches missing rows.")
 
 
 def test_porta_oj_accessory_article_backfill_from_space_separated_pair() -> None:
@@ -581,6 +808,33 @@ def test_porta_oj_accessory_article_backfill_from_space_separated_pair() -> None
     assert (items[1].get("artikelnummer") or {}).get("derived_from") == "porta_oj_accessory_backfill"
     assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is True
     print("SUCCESS: OJ/0J accessory article number is backfilled from space-separated PDF pair.")
+
+
+def test_porta_ojoo_accessory_article_backfill_from_hyphen_pair() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "CQEG4112G5", "85951K"),
+            _item(2, "OJOO", ""),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "1 Stk CQEG4112G5 85951K Startelement 42/240\n"
+            "1 Stk OJOO-30156 LED Schrankbeleuchtung\n"
+        )
+    }
+
+    pipeline._apply_porta_oj_accessory_article_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    items = normalized.get("items") or []
+    assert (items[1].get("modellnummer") or {}).get("value") == "OJOO"
+    assert (items[1].get("artikelnummer") or {}).get("value") == "30156"
+    assert (items[1].get("artikelnummer") or {}).get("derived_from") == "porta_oj_accessory_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is True
+    print("SUCCESS: OJOO accessory article number is backfilled from hyphen-separated PDF pair.")
 
 
 def _qty_for_pair(normalized: dict, modell: str, artikel: str) -> int | float | str | None:
@@ -716,8 +970,16 @@ if __name__ == "__main__":
     test_no_backfill_without_parent_signature_match()
     test_non_porta_branch_no_reconciliation()
     test_extract_porta_store_name_prefers_full_legal_line()
+    test_porta_store_address_uses_lieferanschrift_when_verkaufshaus_missing()
     test_prompt_contract_mentions_cross_page_no_dedupe()
+    test_porta_typ_ausf_backfill_fills_missing_codes()
+    test_porta_typ_ausf_backfill_does_not_overwrite_partial_item()
+    test_porta_typ_ausf_backfill_repairs_placeholder_model_from_matching_article()
+    test_porta_typ_ausf_backfill_keeps_non_placeholder_model()
+    test_porta_collect_pairs_ignores_typ_label_as_model()
+    test_porta_typ_ausf_backfill_skips_when_pair_count_mismatch()
     test_porta_oj_accessory_article_backfill_from_space_separated_pair()
+    test_porta_ojoo_accessory_article_backfill_from_hyphen_pair()
     test_qty_correction_no_adjacent_swap_for_cq12_cq1212_pairs()
     test_qty_correction_no_adjacent_swap_for_cq124112g5_cq12411212g1_pairs()
     test_qty_correction_keeps_parent_row_qty_for_cqeg1299_76947g()

@@ -1473,14 +1473,16 @@ def normalize_output(
     if (branch_id or "").strip() == "porta":
         store_entry = _ensure_field(header, "store_address")
         delivery_entry = header.get("lieferanschrift", {})
+        store_raw = store_entry.get("value", "")
         store_val = ""
         delivery_val = ""
-        store_val = str(store_entry.get("value", "") or "").strip()
+        store_val = str(store_raw or "")
         if isinstance(delivery_entry, dict):
             delivery_val = str(delivery_entry.get("value", "") or "").strip()
         else:
             delivery_val = str(delivery_entry or "").strip()
-        if not store_val and delivery_val:
+        store_missing = store_val.strip() == ""
+        if store_missing and delivery_val:
             store_entry["value"] = delivery_val
             store_entry["source"] = "derived"
             store_entry["confidence"] = 1.0

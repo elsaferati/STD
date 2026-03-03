@@ -202,6 +202,46 @@ def test_component_pair_parser_accepts_hyphen_separator() -> None:
     print("SUCCESS: component parser captures whitespace, hyphen, and slash separated model/article pairs.")
 
 
+def test_component_pair_parser_strips_numeric_x_prefix_from_model() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 4574199 / 19 Liefermodell: Includo PDSL61SP96 57383\n"
+            "bestehend aus je:\n"
+            "1 Stk 1xPDSL71SP44-57383\n"
+            "1 Stk 2xCQ1212-09377G\n"
+            "Anlieferung:\n"
+        )
+    }
+    occurrences = pipeline._extract_porta_component_occurrences_from_page_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+    got_pairs = {
+        (str(entry.get("modellnummer")), str(entry.get("artikelnummer")))
+        for entry in occurrences
+        if isinstance(entry, dict)
+    }
+    assert ("PDSL71SP44", "57383") in got_pairs
+    assert ("CQ1212", "09377G") in got_pairs
+    print("SUCCESS: component parser strips '<number>x' quantity prefixes from model tokens.")
+
+
+def test_collect_pairs_strips_numeric_x_prefix_and_keeps_standard_pairs() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 Stk 1xPDSL71SP44-57383\n"
+            "1 Stk 2xCQ1212-09377G\n"
+            "1 Stk CQ1616XP-00943\n"
+        )
+    }
+    _model_to_articles, _article_to_models, pair_set = pipeline._collect_porta_pdf_code_pairs(  # type: ignore[attr-defined]
+        page_texts
+    )
+    assert ("PDSL71SP44", "57383") in pair_set
+    assert ("CQ1212", "09377G") in pair_set
+    assert ("CQ1616XP", "00943") in pair_set
+    print("SUCCESS: pair collector strips '<number>x' prefixes and keeps regular pairs unchanged.")
+
+
 def test_inline_pair_reconciliation_adds_missing_item_non_bestehend() -> None:
     normalized = _normalized([_item(1, "PD7871SP36", "80010")])
     page_texts = {
@@ -499,6 +539,8 @@ if __name__ == "__main__":
     test_unique_model_correction_by_article()
     test_ambiguous_model_candidates_no_correction()
     test_component_pair_parser_accepts_hyphen_separator()
+    test_component_pair_parser_strips_numeric_x_prefix_from_model()
+    test_collect_pairs_strips_numeric_x_prefix_and_keeps_standard_pairs()
     test_inline_pair_reconciliation_adds_missing_item_non_bestehend()
     test_inline_pair_reconciliation_hyphen_and_space_supported()
     test_inline_pair_reconciliation_idempotent()

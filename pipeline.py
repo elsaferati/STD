@@ -38,7 +38,23 @@ _BESTEHEND_AUS_JE_RE = re.compile(r"bestehend\s+aus\s+je\s*:", re.IGNORECASE)
 _PORTA_PARENT_ARTIKEL_NR_RE = re.compile(r"\b\d{6,8}\s*/\s*\d{2}\b")
 _PORTA_COMPONENT_PAIR_RE = re.compile(r"\b([A-Z0-9]{3,14})\s*(?:-|/| )\s*(\d{4,6}[A-Z]?)\b")
 _PORTA_ARTICLE_TOKEN_RE = re.compile(r"^(\d{4,6})([A-Z]?)$")
-_PORTA_OJ_ACCESSORY_PAIR_RE = re.compile(r"\b([O0]J\d{2})\s*(?:-| )\s*(\d{4,6}[A-Z]?)\b")
+_PORTA_MODEL_QTY_PREFIX_RE = re.compile(r"^\s*\d+\s*[X]\s*")
+_PORTA_OJ_ACCESSORY_PAIR_RE = re.compile(
+    r"\b((?:[O0]J\d{2})|(?:OJOO))\s*(?:-| )\s*(\d{4,6}[A-Z]?)\b"
+)
+_PORTA_TYP_ARTICLE_RE = re.compile(
+    r"\bTYP\.?\s*[:\-]?\s*(\d{4,6}[A-Z]?)\b",
+    re.IGNORECASE,
+)
+_PORTA_AUSF_MODEL_RE = re.compile(
+    r"\bAUSF(?:UEHRUNG|UHRUNG|ÜHRUNG)?\.?\s*[:\-]?\s*([A-Z0-9][A-Z0-9/\-]{1,19})\b",
+    re.IGNORECASE,
+)
+_PORTA_TYP_AUSF_CONTEXT_BREAK_RE = re.compile(
+    r"\b(?:MENGE|ARTIKEL-NR|ANLIEFERUNG|RECHNUNGSADRESSE|VERKAUFSHAUS|SERVICE-CENTER)\b",
+    re.IGNORECASE,
+)
+_PORTA_TYP_AUSF_CONTEXT_WINDOW = 10
 _PORTA_QTY_STK_RE = re.compile(r"\b(\d+(?:[.,]\d+)?)\s*STK\b")
 _PORTA_QTY_ONLY_LINE_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*$")
 _PORTA_STK_ONLY_LINE_RE = re.compile(r"^\s*STK\.?\s*$", re.IGNORECASE)
@@ -205,6 +221,19 @@ def _extract_porta_store_name_from_pdf_texts(
     return best
 
 
+def _porta_has_verkaufshaus_block(
+    page_text_by_image_name: dict[str, str],
+) -> bool:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return False
+
+    for _image_name, page_text in ordered_pages.items():
+        if re.search(r"\bverkaufshaus\b", str(page_text or ""), re.IGNORECASE):
+            return True
+    return False
+
+
 @dataclass
 class ProcessedResult:
     data: dict[str, Any]
@@ -314,10 +343,25 @@ def _is_invalid_porta_component_model(model: str) -> bool:
     if not token:
         return True
     normalized = token.replace("8", "B")
+    # Label tokens from "Typ" fields are not valid model codes.
+    if normalized in {"TYP", "TYPE", "TY"}:
+        return True
     if normalized in _PORTA_INVALID_COMPONENT_MODELS:
         return True
     # OCR variants of legal register tokens should never become item models.
     return normalized.startswith("HRB") or normalized.startswith("HRA")
+
+
+def _strip_porta_qty_prefix_from_model_token(token: str) -> str:
+    normalized = str(token or "").strip().upper()
+    if not normalized:
+        return ""
+    stripped = _PORTA_MODEL_QTY_PREFIX_RE.sub("", normalized, count=1).strip()
+    if not stripped:
+        return normalized
+    if not re.search(r"[A-Z0-9]", stripped):
+        return normalized
+    return stripped
 
 
 def _extract_pdf_page_texts(
@@ -896,6 +940,198 @@ def _is_porta_ambiguous_ignored_code_warning(text: str) -> bool:
     )
 
 
+def _extract_porta_typ_article_token(line: str) -> str:
+    match = _PORTA_TYP_ARTICLE_RE.search(str(line or "").upper())
+    if not match:
+        return ""
+    token = str(match.group(1) or "").strip().upper()
+    if not _PORTA_ARTICLE_TOKEN_RE.fullmatch(token):
+        return ""
+    return token
+
+
+def _extract_porta_ausf_model_token(line: str) -> str:
+    match = _PORTA_AUSF_MODEL_RE.search(str(line or "").upper())
+    if not match:
+        return ""
+    token = re.sub(r"[^A-Z0-9]", "", str(match.group(1) or "").upper())
+    if len(token) < 3 or len(token) > 18:
+        return ""
+    if not any(ch.isalpha() for ch in token):
+        return ""
+    if not any(ch.isdigit() for ch in token):
+        return ""
+    if _PORTA_ARTICLE_TOKEN_RE.fullmatch(token):
+        return ""
+    return token
+
+
+def _extract_porta_typ_ausf_pairs_from_pdf_texts(
+    page_text_by_image_name: dict[str, str],
+) -> list[tuple[str, str]]:
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    if not ordered_pages:
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    for _image_name, page_text in ordered_pages.items():
+        lines = [
+            str(line).strip()
+            for line in str(page_text or "").splitlines()
+            if str(line).strip()
+        ]
+        for index, line in enumerate(lines):
+            article = _extract_porta_typ_article_token(line)
+            if not article:
+                continue
+
+            model = ""
+            end = min(len(lines), index + _PORTA_TYP_AUSF_CONTEXT_WINDOW + 1)
+            for cursor in range(index, end):
+                probe = lines[cursor]
+                if cursor > index and _PORTA_TYP_AUSF_CONTEXT_BREAK_RE.search(probe.upper()):
+                    break
+                model = _extract_porta_ausf_model_token(probe)
+                if model:
+                    break
+
+            if not model:
+                start = max(0, index - _PORTA_TYP_AUSF_CONTEXT_WINDOW)
+                for cursor in range(index - 1, start - 1, -1):
+                    probe = lines[cursor]
+                    if _PORTA_TYP_AUSF_CONTEXT_BREAK_RE.search(probe.upper()):
+                        break
+                    model = _extract_porta_ausf_model_token(probe)
+                    if model:
+                        break
+
+            if model:
+                pairs.append((model, article))
+    return pairs
+
+
+def _apply_porta_typ_ausf_backfill(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return
+
+    expected_pairs = _extract_porta_typ_ausf_pairs_from_pdf_texts(page_text_by_image_name)
+    if not expected_pairs:
+        return
+
+    def _is_placeholder_model(value: Any) -> bool:
+        token = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+        return token in {"", "TYP", "TYPE", "TY"}
+
+    warnings = _ensure_warning_list(normalized)
+    corrections = 0
+
+    consumed_pairs: Counter[tuple[str, str]] = Counter()
+
+    # Pass 1: repair rows where artikelnummer exists but modellnummer is only a placeholder.
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
+        if not article or not _is_placeholder_model(model):
+            continue
+
+        candidate_models: set[str] = {
+            pair_model
+            for pair_model, pair_article in expected_pairs
+            if pair_article == article
+            and consumed_pairs[(pair_model, pair_article)]
+            < expected_pairs.count((pair_model, pair_article))
+        }
+        if len(candidate_models) != 1:
+            continue
+
+        chosen_model = next(iter(candidate_models))
+        if not chosen_model:
+            continue
+
+        model_entry = _ensure_item_field(item, "modellnummer")
+        current_model = str(model_entry.get("value") or "").strip()
+        if not _is_placeholder_model(current_model):
+            continue
+        model_entry["value"] = chosen_model
+        model_entry["source"] = "derived"
+        model_entry["confidence"] = 1.0
+        model_entry["derived_from"] = "porta_typ_ausf_backfill"
+
+        consumed_pairs[(chosen_model, article)] += 1
+        line_no = item.get("line_no", index)
+        warnings.append(
+            f"Porta: filled missing modellnummer for item line {line_no} "
+            f"from PDF Typ/Ausf pair {chosen_model} {article}."
+        )
+        corrections += 1
+
+    # Build remaining pairs in original reading order for fully-missing rows.
+    remaining_counts: Counter[tuple[str, str]] = Counter(expected_pairs)
+    for pair, used_count in consumed_pairs.items():
+        remaining_counts[pair] = max(0, remaining_counts.get(pair, 0) - used_count)
+    remaining_pairs_ordered: list[tuple[str, str]] = []
+    for pair in expected_pairs:
+        if remaining_counts.get(pair, 0) <= 0:
+            continue
+        remaining_pairs_ordered.append(pair)
+        remaining_counts[pair] -= 1
+
+    target_items: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        model = str(_entry_value(item.get("modellnummer")) or "").strip()
+        article = str(_entry_value(item.get("artikelnummer")) or "").strip()
+        if model or article:
+            continue
+        target_items.append((index, item))
+
+    # Deterministic safety guard: only apply to fully-empty rows when counts align.
+    if target_items and len(remaining_pairs_ordered) == len(target_items):
+        for (model, article), (index, item) in zip(remaining_pairs_ordered, target_items):
+            model_entry = _ensure_item_field(item, "modellnummer")
+            article_entry = _ensure_item_field(item, "artikelnummer")
+            if str(model_entry.get("value") or "").strip() or str(article_entry.get("value") or "").strip():
+                continue
+
+            model_entry["value"] = model
+            model_entry["source"] = "derived"
+            model_entry["confidence"] = 1.0
+            model_entry["derived_from"] = "porta_typ_ausf_backfill"
+
+            article_entry["value"] = article
+            article_entry["source"] = "derived"
+            article_entry["confidence"] = 1.0
+            article_entry["derived_from"] = "porta_typ_ausf_backfill"
+
+            line_no = item.get("line_no", index)
+            warnings.append(
+                f"Porta: filled missing modellnummer/artikelnummer for item line {line_no} "
+                f"from PDF Typ/Ausf pair {model} {article}."
+            )
+            corrections += 1
+
+    if corrections > 0:
+        header = normalized.get("header")
+        if not isinstance(header, dict):
+            header = {}
+            normalized["header"] = header
+        review_entry = header.get("human_review_needed")
+        if not isinstance(review_entry, dict):
+            review_entry = {"value": False, "source": "derived", "confidence": 1.0}
+            header["human_review_needed"] = review_entry
+        review_entry["value"] = True
+        review_entry["source"] = "derived"
+        review_entry["confidence"] = 1.0
+        review_entry["derived_from"] = "porta_typ_ausf_backfill"
+
+
 def _apply_porta_oj_accessory_article_backfill(
     normalized: dict[str, Any],
     page_text_by_image_name: dict[str, str],
@@ -1102,7 +1338,8 @@ def _extract_porta_parent_signature(line: str) -> tuple[str, str, str] | None:
 
     pair_model = ""
     pair_article = ""
-    for model, article in _PORTA_COMPONENT_PAIR_RE.findall(upper):
+    for model_raw, article in _PORTA_COMPONENT_PAIR_RE.findall(upper):
+        model = _strip_porta_qty_prefix_from_model_token(model_raw)
         if not any(ch.isalpha() for ch in model):
             continue
         if _is_invalid_porta_component_model(model):
@@ -1133,7 +1370,8 @@ def _extract_porta_component_pair_from_group(
     if not pairs:
         return None
 
-    model, article = pairs[-1]
+    model_raw, article = pairs[-1]
+    model = _strip_porta_qty_prefix_from_model_token(model_raw)
     if not any(ch.isalpha() for ch in model):
         return None
     if _is_invalid_porta_component_model(model):
@@ -1483,7 +1721,7 @@ def _extract_porta_inline_pair_occurrences_from_page_texts(
                 qty_value = _parse_qty_token(qty_match.group(1)) if qty_match else 1
 
                 for model_raw, article_raw in _PORTA_COMPONENT_PAIR_RE.findall(current_upper):
-                    model = str(model_raw or "").strip().upper()
+                    model = _strip_porta_qty_prefix_from_model_token(model_raw)
                     article = str(article_raw or "").strip().upper()
                     if not model or not article:
                         continue
@@ -1597,7 +1835,7 @@ def _collect_porta_pdf_code_pairs(
             if _PORTA_LEGAL_LINE_RE.search(upper):
                 continue
             for model_raw, article_raw in _PORTA_COMPONENT_PAIR_RE.findall(upper):
-                model = str(model_raw or "").strip().upper()
+                model = _strip_porta_qty_prefix_from_model_token(model_raw)
                 article = str(article_raw or "").strip().upper()
                 if not model or not article:
                     continue
@@ -2114,6 +2352,7 @@ def process_message(
         if not isinstance(header, dict):
             header = {}
             normalized["header"] = header
+        has_verkaufshaus_block = _porta_has_verkaufshaus_block(pdf_text_by_image_name)
         store_from_pdf = _extract_porta_store_name_from_pdf_texts(pdf_text_by_image_name)
         if store_from_pdf:
             store_entry = header.get("store_name")
@@ -2144,6 +2383,30 @@ def process_message(
                         normalized_warnings.append(
                             "Porta: store_name filled from PDF Verkaufshaus legal name."
                         )
+        if not has_verkaufshaus_block:
+            delivery_entry = header.get("lieferanschrift", {})
+            store_addr_entry = header.get("store_address", {})
+            delivery_val = _entry_value(delivery_entry).strip()
+            existing_store_addr = _entry_value(store_addr_entry).strip()
+            store_addr_derived_from = ""
+            if isinstance(store_addr_entry, dict):
+                store_addr_derived_from = str(store_addr_entry.get("derived_from", "") or "").strip()
+            if (
+                delivery_val
+                and store_addr_derived_from != "iln_excel_lookup"
+                and existing_store_addr != delivery_val
+            ):
+                header["store_address"] = {
+                    "value": delivery_val,
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "porta_store_address_from_lieferanschrift_no_verkaufshaus",
+                }
+                normalized_warnings = normalized.get("warnings")
+                if isinstance(normalized_warnings, list):
+                    normalized_warnings.append(
+                        "Porta: store_address set from lieferanschrift because Verkaufshaus block is missing."
+                    )
         kom_nr_entry = header.get("kom_nr", {})
         kom_nr_val = ""
         if isinstance(kom_nr_entry, dict):
@@ -2282,6 +2545,7 @@ def process_message(
         refresh_missing_warnings(normalized)
 
     if branch.id == "porta":
+        _apply_porta_typ_ausf_backfill(normalized, pdf_text_by_image_name)
         _apply_porta_oj_accessory_article_backfill(normalized, pdf_text_by_image_name)
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
         _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)

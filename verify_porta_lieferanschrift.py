@@ -97,6 +97,17 @@ def test_porta_store_address_fallback_from_lieferanschrift_when_missing() -> Non
     print("SUCCESS: Porta fills missing store_address from lieferanschrift.")
 
 
+def test_porta_store_address_fallback_from_lieferanschrift_when_whitespace() -> None:
+    value = "Robert-Bosch Str.1\n02828 Goerlitz/Klingewalde"
+    header = _normalize_header_for_branch(value, "porta", store_address_value="   \n\t  ")
+    store_entry = header["store_address"]
+    assert store_entry["value"] == "Robert-Bosch Str. 1\n02828 Goerlitz/Klingewalde"
+    assert store_entry["source"] == "derived"
+    assert store_entry["confidence"] == 1.0
+    assert store_entry.get("derived_from") == "porta_store_address_from_lieferanschrift"
+    print("SUCCESS: Porta treats whitespace-only store_address as missing and falls back.")
+
+
 def test_porta_explicit_store_address_is_preserved() -> None:
     liefer = "Robert-Bosch Str.1\n02828 Goerlitz/Klingewalde"
     store = "Europaallee 1\n50226 Frechen"
@@ -136,6 +147,7 @@ if __name__ == "__main__":
     test_porta_fallback_preserves_ambiguous_raw_text()
     test_non_porta_regression_behavior_unchanged()
     test_porta_store_address_fallback_from_lieferanschrift_when_missing()
+    test_porta_store_address_fallback_from_lieferanschrift_when_whitespace()
     test_porta_explicit_store_address_is_preserved()
     test_porta_matching_store_and_delivery_is_not_cleared()
     test_non_porta_missing_store_address_does_not_fallback()
