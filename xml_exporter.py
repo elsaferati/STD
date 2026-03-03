@@ -33,13 +33,33 @@ def _sanitize_for_filename(value: str) -> str:
     return s.strip("_") or ""
 
 
+def _compress_kom_nr(value: str) -> str:
+    """Convert 'BASE-1/BASE-2/BASE-3' to 'BASE-1/2/3' compact form for filenames."""
+    parts = value.split('/')
+    if len(parts) <= 1:
+        return value
+    first_match = re.match(r'^(.+-)(\d+)$', parts[0].strip())
+    if not first_match:
+        return value
+    prefix = first_match.group(1)
+    compressed = [parts[0].strip()]
+    for part in parts[1:]:
+        part = part.strip()
+        if part.startswith(prefix):
+            suffix = part[len(prefix):]
+            compressed.append(suffix if suffix.isdigit() else part)
+        else:
+            compressed.append(part)
+    return '/'.join(compressed)
+
+
 def _effective_xml_base_name(data: Dict[str, Any]) -> str:
     """Return base name for XML files: ticket_number, else kom_nr, else kom_name, else 'unknown'."""
     header = data.get("header") or {}
     ticket_number = _sanitize_for_filename(_get_val(header, "ticket_number"))
     if ticket_number:
         return ticket_number
-    kom_nr = _sanitize_for_filename(_get_val(header, "kom_nr"))
+    kom_nr = _sanitize_for_filename(_compress_kom_nr(_get_val(header, "kom_nr")))
     if kom_nr:
         return kom_nr
     kom_name = _sanitize_for_filename(_get_val(header, "kom_name"))

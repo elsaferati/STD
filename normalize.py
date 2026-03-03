@@ -600,6 +600,34 @@ def _normalize_quantity(value: Any) -> tuple[Any, bool]:
     return number, True
 
 
+def _compress_kom_nr(value: str) -> str:
+    """Convert 'BASE-1/BASE-2/BASE-3' to 'BASE-1/2/3' compact form.
+
+    Examples:
+        '21RCK2-1/21RCK2-2'          -> '21RCK2-1/2'
+        '21RCK2-1/21RCK2-2/21RCK2-3' -> '21RCK2-1/2/3'
+        '21RCK2-1/2'                  -> '21RCK2-1/2'   (unchanged, already compact)
+        'KBDHG6-6/7'                  -> 'KBDHG6-6/7'   (unchanged, already compact)
+        '0531/LL-1'                   -> '0531/LL-1'     (unchanged, different pattern)
+    """
+    parts = value.split('/')
+    if len(parts) <= 1:
+        return value
+    first_match = re.match(r'^(.+-)(\d+)$', parts[0].strip())
+    if not first_match:
+        return value
+    prefix = first_match.group(1)  # e.g. "21RCK2-"
+    compressed = [parts[0].strip()]
+    for part in parts[1:]:
+        part = part.strip()
+        if part.startswith(prefix):
+            suffix = part[len(prefix):]
+            compressed.append(suffix if suffix.isdigit() else part)
+        else:
+            compressed.append(part)
+    return '/'.join(compressed)
+
+
 def _normalize_momax_bg_modellnummer(value: Any) -> str:
     text = _clean_text(value)
     if not text:
@@ -986,6 +1014,14 @@ def _normalize_header(header: dict[str, Any], dayfirst: bool, warnings: list[str
                  entry["value"] = True
              else:
                  entry["value"] = False
+        elif field == "kom_nr":
+            raw = _clean_text(entry.get("value"))
+            compressed = _compress_kom_nr(raw) if raw else raw
+            if compressed != raw:
+                entry["value"] = compressed
+                entry["derived_from"] = entry.get("derived_from", "") or "kom_nr_compress"
+            else:
+                entry["value"] = raw
         else:
             entry["value"] = _clean_text(entry.get("value"))
 
