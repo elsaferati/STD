@@ -1161,6 +1161,7 @@ def _enrich_from_excel(
     email_body: str = "",
     sender: str = "",
     is_momax_bg: bool = False,
+    branch_id: str = "",
 ) -> None:
     """Try to find missing customer fields in the Excel database."""
     delivery_address = header.get("lieferanschrift", {}).get("value")
@@ -1240,7 +1241,8 @@ def _enrich_from_excel(
             if len(digits_only) >= 4 and len(digits_only) <= 8 and len(digits_only) != 13:
                 kdnr_from_email = digits_only.lstrip("0") or digits_only
     kdnr_match = None
-    if (not is_momax_bg) and kdnr_from_email:
+    is_segmuller = (branch_id or "").strip() == "segmuller"
+    if (not is_momax_bg) and kdnr_from_email and not is_segmuller:
         kdnr_match = lookup.find_customer_by_address("", kundennummer=kdnr_from_email)
         if kdnr_match:
             header["kundennummer"] = {
@@ -1267,6 +1269,55 @@ def _enrich_from_excel(
     # The store is the billing entity. Delivery address is where it goes.
     # momax_bg must use store_address from extraction only (no ILN-derived address source).
     address_to_search = store_address if is_momax_bg else (store_address if store_address else delivery_address)
+
+    # Segmuller: derive Kundennummer from kom_nr prefix (overrides address-based lookup)
+    if is_segmuller and not kdnr_match:
+        import segmuller_lookup as _seg_lookup
+        kom_nr_entry = header.get("kom_nr", {})
+        kom_nr_val = (
+            (kom_nr_entry.get("value") or "") if isinstance(kom_nr_entry, dict) else str(kom_nr_entry or "")
+        ).strip()
+        seg_result = _seg_lookup.get_kundennummer_by_kom_nr(kom_nr_val)
+        if seg_result:
+            seg_kdnr, seg_ort = seg_result
+            header["kundennummer"] = {
+                "value": seg_kdnr,
+                "source": "derived",
+                "confidence": 1.0,
+                "derived_from": "segmuller_kom_nr_prefix",
+            }
+            primex_match = lookup.find_customer_by_address(
+                address_to_search or "",
+                kundennummer=seg_kdnr,
+                warnings=warnings,
+            )
+            if primex_match:
+                header["adressnummer"] = {
+                    "value": primex_match["adressnummer"],
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "segmuller_kom_nr_prefix",
+                }
+                header["tour"] = {
+                    "value": primex_match["tour"],
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "segmuller_kom_nr_prefix",
+                }
+                kdnr_match = primex_match
+            else:
+                header["adressnummer"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "excel_lookup_failed"}
+                header["tour"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "excel_lookup_failed"}
+                warnings.append("Segmuller Kundennummer from kom_nr prefix not found in Primex; please verify.")
+                kdnr_match = {"kundennummer": seg_kdnr, "adressnummer": "", "tour": ""}
+        else:
+            warnings.append(
+                f"Segmuller kom_nr prefix not found in Kundennummern SEGMULLER.xlsx (kom_nr='{kom_nr_val}'); please verify."
+            )
+            header["kundennummer"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "excel_lookup_failed"}
+            header["adressnummer"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "excel_lookup_failed"}
+            header["tour"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "excel_lookup_failed"}
+            kdnr_match = {"kundennummer": "", "adressnummer": "", "tour": ""}
 
     # Check for JOOP
     is_joop = "JOOP" in email_body.upper() if email_body else False
@@ -1496,6 +1547,7 @@ def normalize_output(
         email_body=email_body,
         sender=sender,
         is_momax_bg=is_momax_bg,
+        branch_id=branch_id,
     )
     for field in ("lieferanschrift", "store_address"):
         entry = header.get(field)
