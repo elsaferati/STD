@@ -19,6 +19,9 @@ ILN_EXCEL_PATH = "ALL ILN LISTE_20.01.2026_LH.xlsx"
 _momax_bg_excel_cache: Optional[pd.DataFrame] = None
 MOMAX_BG_EXCEL_PATH = "Kunden_Bulgarien.xlsx"
 
+_braun_kundennummern_cache: Optional[pd.DataFrame] = None
+_BRAUN_KUNDENNUMMERN_FILE = "BRAUN KUNDENNUMMERN.xlsx"
+
 # ---------------------------------------------------------------------------
 # Column mapping and normalization (single place for both Excels)
 # ---------------------------------------------------------------------------
@@ -223,6 +226,55 @@ def load_momax_bg_data() -> Optional[pd.DataFrame]:
     _momax_bg_excel_cache = df
     print(f"Loaded {len(_momax_bg_excel_cache)} MOMAX BG records from Excel.")
     return _momax_bg_excel_cache
+
+
+def load_braun_kundennummern_data() -> Optional[pd.DataFrame]:
+    global _braun_kundennummern_cache
+    if _braun_kundennummern_cache is not None:
+        return _braun_kundennummern_cache
+    if not os.path.exists(_BRAUN_KUNDENNUMMERN_FILE):
+        print(f"BRAUN KUNDENNUMMERN file not found: {_BRAUN_KUNDENNUMMERN_FILE}")
+        return None
+    try:
+        df = pd.read_excel(_BRAUN_KUNDENNUMMERN_FILE, dtype=str)
+        df.columns = df.columns.str.strip()
+        _braun_kundennummern_cache = df
+        print(f"Loaded {len(df)} Braun Kundennummern records.")
+        return df
+    except Exception as e:
+        print(f"Error loading BRAUN KUNDENNUMMERN data: {e}")
+        return None
+
+
+def find_braun_kundennummer_by_city(city_str: str) -> Optional[str]:
+    """Return Braun Kundennummer for the given city from BRAUN KUNDENNUMMERN.xlsx."""
+    df = load_braun_kundennummern_data()
+    if df is None or city_str is None:
+        return None
+    city_norm = city_str.strip().lower()
+    ort_col = next((c for c in df.columns if "ort" in c.lower()), None)
+    kd_col = next((c for c in df.columns if "kundennummer" in c.lower() or "kundennr" in c.lower()), None)
+    if not ort_col or not kd_col:
+        print(f"BRAUN KUNDENNUMMERN: expected columns not found. Found: {list(df.columns)}")
+        return None
+    # 1. Exact match
+    mask = df[ort_col].astype(str).str.strip().str.lower() == city_norm
+    matches = df[mask]
+    if not matches.empty:
+        val = str(matches.iloc[0][kd_col]).strip().replace(".0", "")
+        return val if val and val != "nan" else None
+
+    # 2. Prefix fallback: "Homburg-Einöd" matches "Homburg" (word-boundary after city)
+    for _, row in df.iterrows():
+        excel_city = str(row[ort_col]).strip().lower()
+        if city_norm.startswith(excel_city) and (
+            len(city_norm) == len(excel_city)
+            or city_norm[len(excel_city)] in ("-", " ", ",")
+        ):
+            val = str(row[kd_col]).strip().replace(".0", "")
+            return val if val and val != "nan" else None
+
+    return None
 
 
 def _extract_plz_from_address(address_str: str) -> str:

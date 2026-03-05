@@ -1262,6 +1262,17 @@ def _ordered_verification_page_texts(
 
 
 _BRAUN_KUNDEN_NR_RE = re.compile(r"Kunden-Nr\.?\s+(\d+)", re.IGNORECASE)
+_PLZ_CITY_RE = re.compile(r"\b\d{5}\s+(.+)", re.IGNORECASE)
+
+
+def _extract_city_from_address(address_str: str) -> str:
+    """Extract German city name from address string containing a 5-digit postal code."""
+    if not address_str:
+        return ""
+    m = _PLZ_CITY_RE.search(address_str)
+    if m:
+        return m.group(1).strip().split("\n")[0].strip()
+    return ""
 
 
 def _extract_braun_kundennummer_from_pdf_text(
@@ -2574,26 +2585,29 @@ def process_message(
         if not isinstance(braun_header, dict):
             braun_header = {}
             normalized["header"] = braun_header
-        # --- Braun: fill kundennummer from PDF text if AI missed it ---
-        kd_entry = braun_header.get("kundennummer")
-        kd_val = ""
-        if isinstance(kd_entry, dict):
-            kd_val = str(kd_entry.get("value", "") or "").strip()
-        else:
-            kd_val = str(kd_entry or "").strip()
-        # PDF is always the authoritative source for Braun kundennummer — always overwrite
-        kd_from_pdf = _extract_braun_kundennummer_from_pdf_text(pdf_text_by_image_name)
-        if kd_from_pdf:
-            braun_header["kundennummer"] = {
-                "value": kd_from_pdf,
-                "source": "pdf",
-                "confidence": 0.95,
-                "derived_from": "braun_pdf_kunden_nr",
-            }
-            if not kd_val:
+        # --- Braun: derive kundennummer from city in lieferanschrift via BRAUN KUNDENNUMMERN.xlsx ---
+        lieferanschrift_entry = braun_header.get("lieferanschrift", {})
+        lieferanschrift_val = _entry_value(lieferanschrift_entry).strip() if isinstance(lieferanschrift_entry, dict) else str(lieferanschrift_entry or "").strip()
+        braun_city = _extract_city_from_address(lieferanschrift_val)
+        if braun_city:
+            kd_from_city = lookup.find_braun_kundennummer_by_city(braun_city)
+            if kd_from_city:
+                braun_header["kundennummer"] = {
+                    "value": kd_from_city,
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "braun_city_lookup",
+                }
+            else:
+                braun_header["kundennummer"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "braun_city_lookup_failed"}
                 _braun_warnings.append(
-                    f"Braun: kundennummer '{kd_from_pdf}' filled from PDF text (AI missed it)."
+                    f"Braun: city '{braun_city}' not found in BRAUN KUNDENNUMMERN.xlsx — please provide the Kundennummer manually."
                 )
+        else:
+            braun_header["kundennummer"] = {"value": "", "source": "derived", "confidence": 0.0, "derived_from": "braun_city_lookup_failed"}
+            _braun_warnings.append(
+                "Braun: could not extract city from lieferanschrift — please provide the Kundennummer manually."
+            )
 
         braun_items = normalized.get("items")
         if isinstance(braun_items, list):
