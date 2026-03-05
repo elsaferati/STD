@@ -88,10 +88,10 @@
           <td class="col-idx num nowrap">{{ order.display_index }}</td>
           <td>
             <span class="badge {{ order.status }}">{{ order.status|upper }}</span>
-            {% if order.human_review_needed %}
+            {% if order.human_review_needed and order.status != 'human_in_the_loop' %}
             <span class="flag flag-review">Human in the Loop</span>
             {% endif %}
-            {% if order.reply_needed %}
+            {% if order.reply_needed and order.status != 'human_in_the_loop' %}
             <span class="flag flag-reply">REPLY</span>
             {% endif %}
             {% if order.post_case %}

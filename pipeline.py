@@ -79,7 +79,11 @@ _PORTA_AMBIGUOUS_IGNORE_WARNING_RE = re.compile(
     re.IGNORECASE,
 )
 _PORTA_INVALID_COMPONENT_MODELS = {"HRB", "HRA"}
-_AB_NR_RE = re.compile(r"\bAB\.?\s*Nr\.?\b", re.IGNORECASE)
+_AB_NR_RE = re.compile(
+    r"\bAB\.?\s*(?:[-–]\s*)?Nr\.?\b"   # AB Nr, AB - Nr, AB-Nr, AB. Nr. …
+    r"|\bAB\.?\s*(?:[-–]\s*)?\d{5,}\b",  # AB 655658, AB - 2897810 …
+    re.IGNORECASE,
+)
 _PORTA_KOM_NAME_LABEL_RE = re.compile(
     r"\b(?:kommissionsname|kommissions-?name|commissionname)\b",
     re.IGNORECASE,
@@ -2141,6 +2145,7 @@ def _flag_ab_nr_human_review(
         entry["source"] = "derived"
         entry["confidence"] = 1.0
         entry["derived_from"] = "ab_nr_detected"
+    header["ab_nr_detected"] = {"value": True, "source": "derived", "confidence": 1.0}
     warnings = _ensure_warning_list(normalized)
     warnings.append(
         "AB Nr. detected in order text: forced human_review_needed=true"

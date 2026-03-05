@@ -559,6 +559,12 @@ def _flag_true(header: dict[str, Any], key: str) -> bool:
     return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
 
 
+def _is_ab_nr_order(header: dict[str, Any]) -> bool:
+    """Return True if the AB Nr pattern was detected for this order."""
+    entry = header.get("ab_nr_detected")
+    return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
+
+
 def _append_unique_warning(warnings: list[str], message: str) -> None:
     if not message:
         return
@@ -1644,6 +1650,9 @@ def normalize_output(
     # Status: furncloud_id alone is non-blocking (OK with warning)
     if not had_structure and not items:
         data["status"] = "failed"
+    elif _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+        data["status"] = "human_in_the_loop"
+        _ensure_field(header, "reply_needed")["value"] = False
     elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
@@ -1726,7 +1735,10 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     if not items:
         _set_reply_needed_from_derived(header)
 
-    if _flag_true(header, "reply_needed"):
+    if _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+        data["status"] = "human_in_the_loop"
+        _ensure_field(header, "reply_needed")["value"] = False
+    elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
         data["status"] = "human_in_the_loop"
