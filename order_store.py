@@ -93,6 +93,46 @@ def _normalize_extraction_branch(value: Any) -> str:
     return UNKNOWN_EXTRACTION_BRANCH
 
 
+def _normalize_branch_set(branches: set[str] | None) -> list[str] | None:
+    if branches is None:
+        return None
+    normalized = sorted({_normalize_extraction_branch(branch) for branch in branches})
+    return normalized
+
+
+def _scope_where_fragments(
+    *,
+    assigned_user_id: str | None,
+    allowed_client_branches: set[str] | None,
+) -> tuple[list[str], list[Any]]:
+    scope_clauses: list[str] = []
+    scope_params: list[Any] = []
+
+    if assigned_user_id:
+        scope_clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM order_review_tasks t_scope
+                WHERE t_scope.order_id = o.id
+                  AND t_scope.state NOT IN ('resolved', 'cancelled')
+                  AND t_scope.assigned_user_id = %s
+            )
+            """
+        )
+        scope_params.append(assigned_user_id)
+
+    normalized_allowed = _normalize_branch_set(allowed_client_branches)
+    if normalized_allowed is not None:
+        if not normalized_allowed:
+            scope_clauses.append("1 = 0")
+        else:
+            scope_clauses.append(f"{_EXTRACTION_BRANCH_SQL} = ANY(%s)")
+            scope_params.append(normalized_allowed)
+
+    return scope_clauses, scope_params
+
+
 def normalize_status(value: Any) -> str:
     status = str(value or STATUS_OK).strip().lower()
     if status == STATUS_PARTIAL:
@@ -598,6 +638,8 @@ def _build_orders_where_clause(
     human_review_needed: bool | None,
     post_case: bool | None,
     client_branches: set[str] | None,
+    assigned_user_id: str | None,
+    allowed_client_branches: set[str] | None,
 ) -> tuple[str, list[Any]]:
     clauses = ["o.deleted_at IS NULL"]
     params: list[Any] = []
@@ -643,10 +685,17 @@ def _build_orders_where_clause(
         clauses.append("o.post_case = %s")
         params.append(bool(post_case))
 
-    if client_branches:
-        normalized_branches = sorted({_normalize_extraction_branch(branch) for branch in client_branches})
+    normalized_branches = _normalize_branch_set(client_branches)
+    if normalized_branches:
         clauses.append(f"{_EXTRACTION_BRANCH_SQL} = ANY(%s)")
         params.append(normalized_branches)
+
+    scope_clauses, scope_params = _scope_where_fragments(
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
+    )
+    clauses.extend(scope_clauses)
+    params.extend(scope_params)
 
     return " AND ".join(clauses), params
 
@@ -661,6 +710,8 @@ def query_order_summaries(
     human_review_needed: bool | None,
     post_case: bool | None,
     client_branches: set[str] | None,
+    assigned_user_id: str | None,
+    allowed_client_branches: set[str] | None,
     sort_key: str,
     page: int,
     page_size: int,
@@ -678,6 +729,8 @@ def query_order_summaries(
         human_review_needed=human_review_needed,
         post_case=post_case,
         client_branches=client_branches,
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
     )
     order_direction = "ASC" if sort_key == "received_at_asc" else "DESC"
 
@@ -799,15 +852,25 @@ def query_order_summaries(
     }
 
 
-def list_client_branch_counts() -> dict[str, int]:
+def list_client_branch_counts(
+    *,
+    assigned_user_id: str | None = None,
+    allowed_client_branches: set[str] | None = None,
+) -> dict[str, int]:
+    scope_clauses, scope_params = _scope_where_fragments(
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
+    )
+    where_sql = " AND ".join(["o.deleted_at IS NULL", *scope_clauses])
     rows = fetch_all(
         f"""
         SELECT {_EXTRACTION_BRANCH_SQL} AS branch_id,
                COUNT(*)::bigint AS total
         FROM orders o
-        WHERE o.deleted_at IS NULL
+        WHERE {where_sql}
         GROUP BY {_EXTRACTION_BRANCH_SQL}
-        """
+        """,
+        scope_params,
     )
     counts = {branch: 0 for branch in sorted(ALLOWED_EXTRACTION_BRANCHES)}
     for row in rows:
@@ -825,8 +888,19 @@ def query_overview_snapshot(
     last_24h_start: datetime,
     current_hour: datetime,
     hourly_start: datetime,
+    assigned_user_id: str | None = None,
+    allowed_client_branches: set[str] | None = None,
     latest_limit: int = 20,
 ) -> dict[str, Any]:
+    scope_clauses, scope_params = _scope_where_fragments(
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
+    )
+    where_sql = " AND ".join(["o.deleted_at IS NULL", *scope_clauses])
+    join_scope_sql = ""
+    if scope_clauses:
+        join_scope_sql = " AND " + " AND ".join(scope_clauses)
+
     summary = fetch_one(
         f"""
         SELECT
@@ -846,7 +920,7 @@ def query_overview_snapshot(
             SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS queue_human,
             SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS queue_post
         FROM orders o
-        WHERE o.deleted_at IS NULL
+        WHERE {where_sql}
         """,
         [
             today_start,
@@ -873,6 +947,7 @@ def query_overview_snapshot(
             now,
             last_24h_start,
             now,
+            *scope_params,
         ],
     ) or {}
 
@@ -893,10 +968,11 @@ def query_overview_snapshot(
           ON o.deleted_at IS NULL
          AND {_EFFECTIVE_RECEIVED_SQL} >= b.bucket_start
          AND {_EFFECTIVE_RECEIVED_SQL} < b.bucket_start + interval '1 day'
+         {join_scope_sql}
         GROUP BY b.bucket_start
         ORDER BY b.bucket_start
         """,
-        [seven_day_start, today_start],
+        [seven_day_start, today_start, *scope_params],
     )
 
     hour_rows = fetch_all(
@@ -911,10 +987,11 @@ def query_overview_snapshot(
           ON o.deleted_at IS NULL
          AND {_EFFECTIVE_RECEIVED_SQL} >= b.bucket_start
          AND {_EFFECTIVE_RECEIVED_SQL} < b.bucket_start + interval '1 hour'
+         {join_scope_sql}
         GROUP BY b.bucket_start
         ORDER BY b.bucket_start
         """,
-        [hourly_start, current_hour],
+        [hourly_start, current_hour, *scope_params],
     )
 
     latest_rows = fetch_all(
@@ -943,11 +1020,11 @@ def query_overview_snapshot(
                o.parse_error,
                o.updated_at AS mtime
         FROM orders o
-        WHERE o.deleted_at IS NULL
+        WHERE {where_sql}
         ORDER BY {_EFFECTIVE_RECEIVED_SQL} DESC, o.id DESC
         LIMIT %s
         """,
-        [max(1, int(latest_limit))],
+        [*scope_params, max(1, int(latest_limit))],
     )
 
     return {
@@ -994,9 +1071,27 @@ def query_overview_snapshot(
     }
 
 
-def get_order_detail(order_id: str) -> dict[str, Any] | None:
+def get_order_detail(
+    order_id: str,
+    *,
+    assigned_user_id: str | None = None,
+    allowed_client_branches: set[str] | None = None,
+) -> dict[str, Any] | None:
+    where_parts = [
+        "o.id = %s",
+        "o.deleted_at IS NULL",
+    ]
+    params: list[Any] = [order_id]
+    scope_clauses, scope_params = _scope_where_fragments(
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
+    )
+    where_parts.extend(scope_clauses)
+    params.extend(scope_params)
+    where_sql = " AND ".join(where_parts)
+
     row = fetch_one(
-        """
+        f"""
         SELECT o.*,
                r.payload_json,
                t.id AS review_task_id,
@@ -1022,10 +1117,9 @@ def get_order_detail(order_id: str) -> dict[str, Any] | None:
             FROM order_events e1
             WHERE e1.order_id = o.id
         ) e ON TRUE
-        WHERE o.id = %s
-          AND o.deleted_at IS NULL
+        WHERE {where_sql}
         """,
-        (order_id,),
+        params,
     )
     if not row:
         return None
@@ -1271,6 +1365,7 @@ def list_review_tasks(
     states: set[str] | None = None,
     assigned_user_id: str | None = None,
     include_unassigned: bool = True,
+    allowed_client_branches: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     where_parts = ["o.deleted_at IS NULL"]
     params: list[Any] = []
@@ -1285,6 +1380,13 @@ def list_review_tasks(
         else:
             where_parts.append("t.assigned_user_id = %s")
         params.append(assigned_user_id)
+    normalized_branches = _normalize_branch_set(allowed_client_branches)
+    if normalized_branches is not None:
+        if not normalized_branches:
+            where_parts.append("1 = 0")
+        else:
+            where_parts.append(f"{_EXTRACTION_BRANCH_SQL} = ANY(%s)")
+            params.append(normalized_branches)
     where_sql = " AND ".join(where_parts)
     rows = fetch_all(
         f"""

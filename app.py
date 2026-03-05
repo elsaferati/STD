@@ -219,6 +219,117 @@ def _normalize_extraction_branch(value: Any) -> str:
     return UNKNOWN_EXTRACTION_BRANCH
 
 
+def _normalize_client_branches(values: Any) -> set[str]:
+    if values is None:
+        return set()
+    if isinstance(values, str):
+        raw_items = [item.strip() for item in values.split(",")]
+    elif isinstance(values, (list, tuple, set)):
+        raw_items = [str(item).strip() for item in values]
+    else:
+        return set()
+    return {_normalize_extraction_branch(item) for item in raw_items if item}
+
+
+def _parse_client_branches_input(values: Any) -> tuple[set[str] | None, Any]:
+    if values is None:
+        return None, None
+    if not isinstance(values, (list, tuple, set)):
+        return None, _api_error(400, "bad_request", "client_branches must be an array of branch ids")
+    parsed = _normalize_client_branches(values)
+    raw_values = [str(item or "").strip().lower() for item in values if str(item or "").strip()]
+    invalid = sorted(branch for branch in raw_values if branch not in ALLOWED_CLIENT_FILTER_IDS)
+    if invalid:
+        return None, _api_error(400, "invalid_client", f"Invalid client values: {', '.join(invalid)}")
+    return parsed, None
+
+
+def _extract_client_branches_payload(payload: dict[str, Any]) -> tuple[bool, Any]:
+    if "client_branches" in payload:
+        return True, payload.get("client_branches")
+    if "client_branches" in payload:
+        return True, payload.get("client_branches")
+    return False, None
+
+
+def _fetch_user_client_branches(user_id: str) -> list[str]:
+    row = fetch_one(
+        """
+        SELECT COALESCE(array_agg(ucs.branch_id ORDER BY ucs.branch_id), ARRAY[]::text[]) AS client_branches
+        FROM user_client_scopes ucs
+        WHERE ucs.user_id = %s
+        """,
+        (user_id,),
+    ) or {}
+    values = row.get("client_branches")
+    if not isinstance(values, list):
+        return []
+    return [branch for branch in sorted({_normalize_extraction_branch(item) for item in values if str(item or "").strip()})]
+
+
+def _replace_user_client_scopes(user_id: str, branches: set[str], now: datetime | None = None) -> None:
+    execute("DELETE FROM user_client_scopes WHERE user_id = %s", (user_id,))
+    if not branches:
+        return
+    execute(
+        """
+        INSERT INTO user_client_scopes (user_id, branch_id, created_at)
+        SELECT %s, branch_id, %s
+        FROM unnest(%s::text[]) AS branch_id
+        ON CONFLICT (user_id, branch_id) DO NOTHING
+        """,
+        (user_id, now or datetime.now().astimezone(), sorted(branches)),
+    )
+
+
+def _order_access_scope(
+    user: dict[str, Any] | None,
+    *,
+    include_assignment: bool = False,
+) -> dict[str, Any]:
+    principal = user or {}
+    is_admin = principal.get("role") == "admin"
+    user_id = str(principal.get("id") or "").strip()
+    if is_admin:
+        return {"is_admin": True, "assigned_user_id": None, "allowed_client_branches": None}
+    allowed = _normalize_client_branches(principal.get("client_branches"))
+    return {
+        "is_admin": False,
+        "assigned_user_id": (user_id or None) if include_assignment else None,
+        "allowed_client_branches": allowed,
+    }
+
+
+def _effective_client_branches(
+    requested: set[str] | None,
+    allowed: set[str] | None,
+) -> set[str] | None:
+    if allowed is None:
+        return requested
+    if requested is None:
+        return set(allowed)
+    return requested & allowed
+
+
+def _serialize_user_record(row: dict[str, Any]) -> dict[str, Any]:
+    user_id = str(row.get("id") or "")
+    role = str(row.get("role") or "user")
+    payload = {
+        "id": user_id,
+        "username": row.get("username"),
+        "email": row.get("email"),
+        "role": role,
+        "is_active": bool(row.get("is_active")),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "last_login_at": row.get("last_login_at"),
+        "client_branches": _fetch_user_client_branches(user_id),
+    }
+    if role == "admin":
+        payload["client_branches"] = []
+    return payload
+
+
 def _parse_received_at(value: Any) -> datetime | None:
     if not value:
         return None
@@ -317,6 +428,8 @@ def _orders_counts_cache_key(
     human_review_needed: bool | None,
     post_case: bool | None,
     client_branches: set[str] | None,
+    assigned_user_id: str | None,
+    allowed_client_branches: set[str] | None,
     today_start: datetime,
 ) -> tuple[Any, ...]:
     return (
@@ -328,6 +441,8 @@ def _orders_counts_cache_key(
         human_review_needed,
         post_case,
         tuple(sorted(client_branches or set())),
+        assigned_user_id or "",
+        tuple(sorted(allowed_client_branches or set())),
         today_start.date().isoformat(),
     )
 
@@ -669,7 +784,11 @@ def _parse_orders_query(allow_default_pagination: bool = True):
     return query, None
 
 
-def _query_orders(allow_default_pagination: bool = True) -> tuple[dict[str, Any] | None, Any]:
+def _query_orders(
+    allow_default_pagination: bool = True,
+    *,
+    access_scope: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, Any]:
     parsed, parse_error = _parse_orders_query(allow_default_pagination=allow_default_pagination)
     if parse_error is not None:
         return None, parse_error
@@ -687,6 +806,12 @@ def _query_orders(allow_default_pagination: bool = True) -> tuple[dict[str, Any]
     if parsed["date_to"] is not None:
         received_to = datetime.combine(parsed["date_to"] + timedelta(days=1), datetime.min.time(), tzinfo=local_tz)
 
+    scope = access_scope or {"assigned_user_id": None, "allowed_client_branches": None}
+    effective_client_branches = _effective_client_branches(
+        parsed["client_branches"],
+        scope.get("allowed_client_branches"),
+    )
+
     counts_cache_key = _orders_counts_cache_key(
         q=parsed["q"],
         received_from=received_from,
@@ -695,7 +820,9 @@ def _query_orders(allow_default_pagination: bool = True) -> tuple[dict[str, Any]
         reply_needed=parsed["reply_needed"],
         human_review_needed=parsed["human_review_needed"],
         post_case=parsed["post_case"],
-        client_branches=parsed["client_branches"],
+        client_branches=effective_client_branches,
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
         today_start=today_start,
     )
     cached_counts = _get_cached_orders_counts(counts_cache_key)
@@ -709,7 +836,9 @@ def _query_orders(allow_default_pagination: bool = True) -> tuple[dict[str, Any]
             reply_needed=parsed["reply_needed"],
             human_review_needed=parsed["human_review_needed"],
             post_case=parsed["post_case"],
-            client_branches=parsed["client_branches"],
+            client_branches=effective_client_branches,
+            assigned_user_id=scope.get("assigned_user_id"),
+            allowed_client_branches=scope.get("allowed_client_branches"),
             sort_key=parsed["sort_key"],
             page=parsed["page"],
             page_size=parsed["page_size"],
@@ -770,7 +899,12 @@ def _resolve_xml_files(order_id: str, header: dict[str, Any]) -> list[dict[str, 
     return xml_files
 
 
-def _load_order(order_id: str) -> tuple[dict[str, Any] | None, Any]:
+def _load_order(
+    order_id: str,
+    *,
+    assigned_user_id: str | None = None,
+    allowed_client_branches: set[str] | None = None,
+) -> tuple[dict[str, Any] | None, Any]:
     safe_id = _safe_id(order_id)
     if not safe_id:
         return None, _api_error(404, "not_found", "Order not found")
@@ -780,7 +914,11 @@ def _load_order(order_id: str) -> tuple[dict[str, Any] | None, Any]:
     except ValueError:
         return None, _api_error(404, "not_found", "Order not found")
     try:
-        order = order_store.get_order_detail(safe_id)
+        order = order_store.get_order_detail(
+            safe_id,
+            assigned_user_id=assigned_user_id,
+            allowed_client_branches=allowed_client_branches,
+        )
     except Exception as exc:  # noqa: BLE001
         return None, _api_error(500, "db_error", f"Failed to load order: {exc}")
     if not order:
@@ -1285,7 +1423,16 @@ def api_auth_me():
     user = get_session_user(session_id)
     if not user:
         return _api_error(401, "unauthorized", "Authentication required")
-    return jsonify({"user": {"id": user["id"], "username": user["username"], "role": user["role"]}})
+    return jsonify(
+        {
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "role": user["role"],
+                "client_branches": user.get("client_branches", []),
+            }
+        }
+    )
 
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -1328,13 +1475,14 @@ def api_users():
         return admin_error
 
     if request.method == "GET":
-        users = fetch_all(
+        rows = fetch_all(
             """
             SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
             FROM users
             ORDER BY created_at DESC
             """
         )
+        users = [_serialize_user_record(row) for row in rows]
         return jsonify({"users": users})
 
     payload = request.get_json(silent=True) or {}
@@ -1344,11 +1492,17 @@ def api_users():
     role = _clean_form_value(payload.get("role")) or "user"
     is_active = payload.get("is_active")
     is_active = True if is_active is None else bool(is_active)
+    _has_client_branches, raw_client_branches = _extract_client_branches_payload(payload)
+    client_branches, branch_error = _parse_client_branches_input(raw_client_branches)
+    if branch_error is not None:
+        return branch_error
 
     if not username or not password:
         return _api_error(400, "bad_request", "Username and password are required")
     if role not in {"user", "admin"}:
         return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
+    if role != "admin" and not client_branches:
+        return _api_error(400, "bad_request", "client_branches is required for role 'user'")
 
     existing = fetch_one(
         "SELECT id FROM users WHERE lower(username) = lower(%s)",
@@ -1383,6 +1537,10 @@ def api_users():
             now,
         ),
     )
+    if role == "admin":
+        _replace_user_client_scopes(new_id, set(), now=now)
+    else:
+        _replace_user_client_scopes(new_id, client_branches or set(), now=now)
     return (
         jsonify(
             {
@@ -1393,6 +1551,7 @@ def api_users():
                     "role": role,
                     "is_active": is_active,
                     "created_at": now.isoformat(),
+                    "client_branches": [] if role == "admin" else sorted(client_branches or set()),
                 }
             }
         ),
@@ -1413,6 +1572,10 @@ def api_user_update(user_id: str):
     role = _clean_form_value(payload.get("role")) or None
     is_active = payload.get("is_active")
     is_active = None if is_active is None else bool(is_active)
+    has_client_branches, raw_client_branches = _extract_client_branches_payload(payload)
+    client_branches, branch_error = _parse_client_branches_input(raw_client_branches)
+    if has_client_branches and branch_error is not None:
+        return branch_error
 
     existing = fetch_one("SELECT id, username, role FROM users WHERE id = %s", (user_id,))
     if not existing:
@@ -1427,6 +1590,19 @@ def api_user_update(user_id: str):
 
     if role and role not in {"user", "admin"}:
         return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
+
+    effective_role = role or str(existing.get("role") or "user")
+    existing_client_branches = set(_fetch_user_client_branches(user_id))
+    if effective_role == "admin":
+        effective_client_branches: set[str] = set()
+    elif has_client_branches:
+        if not client_branches:
+            return _api_error(400, "bad_request", "client_branches is required for role 'user'")
+        effective_client_branches = set(client_branches)
+    else:
+        if not existing_client_branches:
+            return _api_error(400, "bad_request", "client_branches is required for role 'user'")
+        effective_client_branches = existing_client_branches
 
     if username:
         conflict = fetch_one(
@@ -1462,16 +1638,21 @@ def api_user_update(user_id: str):
         fields.append("password_hash = %s")
         values.append(hash_password(password))
 
-    if not fields:
+    now = datetime.now().astimezone()
+    scopes_need_update = effective_client_branches != existing_client_branches
+    if not fields and not scopes_need_update:
         return _api_error(400, "bad_request", "No changes provided")
 
-    now = datetime.now().astimezone()
-    fields.append("updated_at = %s")
-    values.append(now)
-    values.append(user_id)
+    if fields:
+        fields.append("updated_at = %s")
+        values.append(now)
+        values.append(user_id)
+        execute(f"UPDATE users SET {', '.join(fields)} WHERE id = %s", values)
+    elif scopes_need_update:
+        execute("UPDATE users SET updated_at = %s WHERE id = %s", (now, user_id))
 
-    execute(f"UPDATE users SET {', '.join(fields)} WHERE id = %s", values)
-    updated = fetch_one(
+    _replace_user_client_scopes(user_id, effective_client_branches, now=now)
+    updated_row = fetch_one(
         """
         SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
         FROM users
@@ -1479,13 +1660,16 @@ def api_user_update(user_id: str):
         """,
         (user_id,),
     )
-    return jsonify({"user": updated})
+    if not updated_row:
+        return _api_error(404, "not_found", "User not found")
+    return jsonify({"user": _serialize_user_record(updated_row)})
 
 
 @app.route("/api/review/tasks", methods=["GET"])
 def api_review_tasks():
     user = getattr(g, "user", {}) or {}
-    is_admin = user.get("role") == "admin"
+    scope = _order_access_scope(user, include_assignment=True)
+    is_admin = scope["is_admin"]
     raw_states = (request.args.get("state") or "").strip()
     states: set[str] | None = None
     if raw_states:
@@ -1493,9 +1677,15 @@ def api_review_tasks():
 
     mine_only = _parse_bool_query(request.args.get("mine")) is True
     assigned_user_id: str | None = None
-    if mine_only:
+    include_unassigned = not mine_only
+    allowed_client_branches = scope.get("allowed_client_branches")
+
+    if not is_admin:
+        assigned_user_id = scope.get("assigned_user_id")
+        include_unassigned = False
+    elif mine_only:
         assigned_user_id = str(user.get("id") or "")
-    elif is_admin:
+    else:
         requested_user_id = (request.args.get("assigned_user_id") or "").strip()
         if requested_user_id:
             assigned_user_id = requested_user_id
@@ -1504,7 +1694,8 @@ def api_review_tasks():
         tasks = order_store.list_review_tasks(
             states=states,
             assigned_user_id=assigned_user_id,
-            include_unassigned=not mine_only,
+            include_unassigned=include_unassigned,
+            allowed_client_branches=allowed_client_branches,
         )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to load review tasks: {exc}")
@@ -1581,6 +1772,7 @@ def api_review_task_resolve(task_id: str):
 
 @app.route("/api/overview")
 def api_overview():
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
     now = datetime.now().astimezone()
     today = now.date()
     last_24h_start = now - timedelta(hours=24)
@@ -1601,6 +1793,8 @@ def api_overview():
             last_24h_start=last_24h_start,
             current_hour=current_hour,
             hourly_start=hourly_start,
+            assigned_user_id=scope.get("assigned_user_id"),
+            allowed_client_branches=scope.get("allowed_client_branches"),
             latest_limit=20,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1679,8 +1873,12 @@ def api_overview():
 
 @app.route("/api/clients/counts")
 def api_clients_counts():
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
     try:
-        counts = order_store.list_client_branch_counts()
+        counts = order_store.list_client_branch_counts(
+            assigned_user_id=scope.get("assigned_user_id"),
+            allowed_client_branches=scope.get("allowed_client_branches"),
+        )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to load client counts: {exc}")
     total = sum(int(value or 0) for value in counts.values())
@@ -1689,7 +1887,8 @@ def api_clients_counts():
 
 @app.route("/api/orders")
 def api_orders():
-    result, error = _query_orders(allow_default_pagination=True)
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    result, error = _query_orders(allow_default_pagination=True, access_scope=scope)
     if error is not None:
         return error
 
@@ -1704,7 +1903,8 @@ def api_orders():
 
 @app.route("/api/orders.csv")
 def api_orders_csv():
-    result, error = _query_orders(allow_default_pagination=False)
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    result, error = _query_orders(allow_default_pagination=False, access_scope=scope)
     if error is not None:
         return error
 
@@ -1719,7 +1919,8 @@ def api_orders_csv():
 
 @app.route("/api/orders.xlsx")
 def api_orders_xlsx():
-    result, error = _query_orders(allow_default_pagination=False)
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    result, error = _query_orders(allow_default_pagination=False, access_scope=scope)
     if error is not None:
         return error
 
@@ -1749,7 +1950,12 @@ def api_orders_xlsx():
 
 @app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
 def api_order_detail(order_id: str):
-    order, load_error = _load_order(order_id)
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    order, load_error = _load_order(
+        order_id,
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
     if load_error is not None:
         return load_error
 
@@ -1869,7 +2075,11 @@ def api_order_detail(order_id: str):
             return _api_error(500, "db_error", f"Failed to record XML regeneration metadata: {exc}")
 
     _invalidate_order_index_cache()
-    updated_order, updated_error = _load_order(order["safe_id"])
+    updated_order, updated_error = _load_order(
+        order["safe_id"],
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
     if updated_error is not None:
         return updated_error
 
@@ -1880,7 +2090,12 @@ def api_order_detail(order_id: str):
 
 @app.route("/api/orders/<order_id>/export-xml", methods=["POST"])
 def api_export_order_xml(order_id: str):
-    order, load_error = _load_order(order_id)
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    order, load_error = _load_order(
+        order_id,
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
     if load_error is not None:
         return load_error
     if order["parse_error"]:

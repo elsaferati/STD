@@ -52,6 +52,21 @@ def create_session(user_id: str, ip_address: str | None, user_agent: str | None)
     return session_id
 
 
+def _user_client_branches(user_id: str) -> list[str]:
+    rows = fetch_one(
+        """
+        SELECT COALESCE(array_agg(ucs.branch_id ORDER BY ucs.branch_id), ARRAY[]::text[]) AS client_branches
+        FROM user_client_scopes ucs
+        WHERE ucs.user_id = %s
+        """,
+        (user_id,),
+    ) or {}
+    raw = rows.get("client_branches")
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip().lower() for item in raw if str(item or "").strip()]
+
+
 def revoke_session(session_id: str) -> None:
     execute(
         "UPDATE sessions SET revoked_at = %s WHERE id = %s",
@@ -98,6 +113,7 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
         "id": row.get("id"),
         "username": row.get("username"),
         "role": row.get("role"),
+        "client_branches": _user_client_branches(str(row.get("id") or "")),
         "session_id": row.get("session_id"),
     }
 
@@ -122,6 +138,7 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
         "id": row["id"],
         "username": row["username"],
         "role": row["role"],
+        "client_branches": _user_client_branches(str(row["id"])),
     }
 
 

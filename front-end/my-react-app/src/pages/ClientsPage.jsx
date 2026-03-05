@@ -239,7 +239,11 @@ export function ClientsPage() {
                   <button
                     key={option.id}
                     type="button"
-                    onClick={() => updateParams({ client: option.id === ALL_CLIENT_FILTER ? null : option.id })}
+                    onClick={() =>
+                      updateParams({
+                        client: option.id === ALL_CLIENT_FILTER ? null : active ? null : option.id,
+                      })
+                    }
                     className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-colors ${
                       active
                         ? "bg-primary text-white border-primary"

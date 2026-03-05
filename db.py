@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 _BASE_DIR = Path(__file__).resolve().parent
 _MIGRATIONS_DIR = _BASE_DIR / "migrations"
 _THREAD_LOCAL = local()
+_MIGRATIONS_TABLE = "schema_migrations"
 
 
 def _get_database_url() -> str:
@@ -110,7 +111,23 @@ def init_db() -> None:
 
     with _open_connection(autocommit=False) as conn:
         with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {_MIGRATIONS_TABLE} (
+                    file_name TEXT PRIMARY KEY,
+                    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                )
+                """
+            )
+            cursor.execute(f"SELECT file_name FROM {_MIGRATIONS_TABLE}")
+            applied = {str(row["file_name"]) for row in cursor.fetchall() or []}
             for migration_file in migration_files:
+                if migration_file.name in applied:
+                    continue
                 sql = migration_file.read_text(encoding="utf-8")
                 cursor.execute(sql)
+                cursor.execute(
+                    f"INSERT INTO {_MIGRATIONS_TABLE} (file_name, applied_at) VALUES (%s, now())",
+                    (migration_file.name,),
+                )
         conn.commit()

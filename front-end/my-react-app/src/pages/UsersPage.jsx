@@ -1,10 +1,105 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
+import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBranches";
+
+const DEFAULT_USER_CLIENTS = [];
+
+const toggleClientBranchSelection = (currentSelection, branchId) => {
+  if (currentSelection.includes(branchId)) {
+    return currentSelection.filter((entry) => entry !== branchId);
+  }
+  return [...currentSelection, branchId];
+};
+
+function ClientBranchPicker({
+  label,
+  options,
+  selectedBranchIds,
+  emptyStateLabel,
+  helperLabel,
+  selectAllLabel,
+  clearLabel,
+  onToggleBranch,
+  onSelectAll,
+  onClearAll,
+}) {
+  const selectedLabels = options
+    .filter((option) => selectedBranchIds.includes(option.id))
+    .map((option) => option.label);
+
+  return (
+    <div className="md:col-span-2 flex flex-col gap-2 text-sm text-slate-600">
+      <div className="flex items-center justify-between gap-3">
+        <span>{label}</span>
+        <div className="inline-flex items-center gap-2">
+          <button
+            type="button"
+            className="px-2.5 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50"
+            onClick={onSelectAll}
+          >
+            {selectAllLabel}
+          </button>
+          <button
+            type="button"
+            className="px-2.5 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={onClearAll}
+            disabled={selectedBranchIds.length === 0}
+          >
+            {clearLabel}
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 flex flex-wrap items-center gap-1.5">
+        {selectedLabels.length ? (
+          selectedLabels.map((selectedLabel) => (
+            <span
+              key={selectedLabel}
+              className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary"
+            >
+              {selectedLabel}
+            </span>
+          ))
+        ) : (
+          <span className="text-xs text-slate-500">{emptyStateLabel}</span>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-slate-200 p-2 bg-white max-h-48 overflow-y-auto">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {options.map((option) => {
+            const checked = selectedBranchIds.includes(option.id);
+            return (
+              <label
+                key={option.id}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-md border cursor-pointer transition-colors ${
+                  checked
+                    ? "border-primary/40 bg-primary/5 text-slate-900"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={checked}
+                  onChange={() => onToggleBranch(option.id)}
+                />
+                <span>{option.label}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <span className="text-xs text-slate-500">{helperLabel}</span>
+    </div>
+  );
+}
 
 export function UsersPage() {
   const { user } = useAuth();
@@ -18,6 +113,7 @@ export function UsersPage() {
     password: "",
     email: "",
     role: "user",
+    client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
   });
   const [saving, setSaving] = useState(false);
@@ -26,6 +122,7 @@ export function UsersPage() {
     username: "",
     email: "",
     role: "user",
+    client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
     password: "",
   });
@@ -49,6 +146,33 @@ export function UsersPage() {
     loadUsers();
   }, [loadUsers]);
 
+  const clientOptions = useMemo(
+    () => [
+      ...CLIENT_BRANCHES.map((branch) => ({
+        id: branch.id,
+        label: t(branch.labelKey, null, branch.defaultLabel),
+      })),
+      {
+        id: UNKNOWN_CLIENT_BRANCH_ID,
+        label: t("clients.branch.unknown", null, "Unknown"),
+      },
+    ],
+    [t],
+  );
+
+  const branchLabelMap = useMemo(() => {
+    const labels = {};
+    clientOptions.forEach((option) => {
+      labels[option.id] = option.label;
+    });
+    return labels;
+  }, [clientOptions]);
+
+  const allClientBranchIds = useMemo(
+    () => clientOptions.map((option) => option.id),
+    [clientOptions],
+  );
+
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
     setForm((current) => ({
@@ -65,12 +189,58 @@ export function UsersPage() {
     }));
   };
 
+  const handleCreateClientBranchToggle = (branchId) => {
+    setForm((current) => ({
+      ...current,
+      client_branches: toggleClientBranchSelection(current.client_branches, branchId),
+    }));
+  };
+
+  const handleEditClientBranchToggle = (branchId) => {
+    setEditForm((current) => ({
+      ...current,
+      client_branches: toggleClientBranchSelection(current.client_branches, branchId),
+    }));
+  };
+
+  const handleCreateSelectAllClientBranches = () => {
+    setForm((current) => ({
+      ...current,
+      client_branches: [...allClientBranchIds],
+    }));
+  };
+
+  const handleCreateClearClientBranches = () => {
+    setForm((current) => ({
+      ...current,
+      client_branches: [],
+    }));
+  };
+
+  const handleEditSelectAllClientBranches = () => {
+    setEditForm((current) => ({
+      ...current,
+      client_branches: [...allClientBranchIds],
+    }));
+  };
+
+  const handleEditClearClientBranches = () => {
+    setEditForm((current) => ({
+      ...current,
+      client_branches: [],
+    }));
+  };
+
   const openEdit = (entry) => {
+    const assignedBranches = Array.isArray(entry.client_branches)
+      ? entry.client_branches.filter((item) => typeof item === "string" && item.trim())
+      : [];
     setEditUser(entry);
     setEditForm({
       username: entry.username || "",
       email: entry.email || "",
       role: entry.role || "user",
+      client_branches: assignedBranches.length ? assignedBranches : [],
       is_active: Boolean(entry.is_active),
       password: "",
     });
@@ -82,6 +252,7 @@ export function UsersPage() {
       username: "",
       email: "",
       role: "user",
+      client_branches: [...DEFAULT_USER_CLIENTS],
       is_active: true,
       password: "",
     });
@@ -103,6 +274,7 @@ export function UsersPage() {
           password: form.password,
           email: form.email.trim() || null,
           role: form.role,
+          client_branches: form.role === "admin" ? [] : form.client_branches,
           is_active: form.is_active,
         },
       });
@@ -111,6 +283,7 @@ export function UsersPage() {
         password: "",
         email: "",
         role: "user",
+        client_branches: [...DEFAULT_USER_CLIENTS],
         is_active: true,
       });
       await loadUsers();
@@ -127,6 +300,7 @@ export function UsersPage() {
     const query = searchInput.trim().toLowerCase();
     if (!query) return true;
     return [entry.username, entry.email, entry.role]
+      .concat(Array.isArray(entry.client_branches) ? entry.client_branches : [])
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
   });
@@ -143,6 +317,7 @@ export function UsersPage() {
           username: editForm.username.trim(),
           email: editForm.email.trim() || null,
           role: editForm.role,
+          client_branches: editForm.role === "admin" ? [] : editForm.client_branches,
           is_active: editForm.is_active,
           password: editForm.password || undefined,
         },
@@ -250,6 +425,20 @@ export function UsersPage() {
                   <option value="admin">{t("users.roleAdmin")}</option>
                 </select>
               </label>
+              {form.role === "user" ? (
+                <ClientBranchPicker
+                  label={t("users.client")}
+                  options={clientOptions}
+                  selectedBranchIds={form.client_branches}
+                  emptyStateLabel={t("users.clientNoneSelected")}
+                  helperLabel={t("users.clientPickerHint")}
+                  selectAllLabel={t("users.selectAllClients")}
+                  clearLabel={t("users.clearClients")}
+                  onToggleBranch={handleCreateClientBranchToggle}
+                  onSelectAll={handleCreateSelectAllClientBranches}
+                  onClearAll={handleCreateClearClientBranches}
+                />
+              ) : null}
               <label className="flex items-center gap-2 text-sm text-slate-600">
                 <input
                   type="checkbox"
@@ -309,6 +498,7 @@ export function UsersPage() {
                     <th className="px-4 py-3 text-left">{t("users.username")}</th>
                     <th className="px-4 py-3 text-left">{t("users.email")}</th>
                     <th className="px-4 py-3 text-left">{t("users.role")}</th>
+                    <th className="px-4 py-3 text-left">{t("users.client")}</th>
                     <th className="px-4 py-3 text-left">{t("users.active")}</th>
                     <th className="px-4 py-3 text-left">{t("users.lastLogin")}</th>
                     <th className="px-4 py-3 text-right">{t("users.actions")}</th>
@@ -317,7 +507,7 @@ export function UsersPage() {
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
                     <tr>
-                      <td className="px-4 py-4 text-slate-500" colSpan={6}>
+                      <td className="px-4 py-4 text-slate-500" colSpan={8}>
                         {t("users.loading")}
                       </td>
                     </tr>
@@ -337,6 +527,24 @@ export function UsersPage() {
                           >
                             {entry.role}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {entry.role === "admin"
+                            ? "-"
+                            : (
+                              Array.isArray(entry.client_branches) && entry.client_branches.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {entry.client_branches.map((branchId) => (
+                                    <span
+                                      key={`${entry.id}-${branchId}`}
+                                      className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-700"
+                                    >
+                                      {branchLabelMap[branchId] || branchId}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : "-"
+                            )}
                         </td>
                         <td className="px-4 py-3">
                           <span
@@ -376,7 +584,7 @@ export function UsersPage() {
                     ))
                   ) : (
                     <tr>
-                      <td className="px-4 py-4 text-slate-500" colSpan={6}>
+                      <td className="px-4 py-4 text-slate-500" colSpan={8}>
                         {t("users.noUsers")}
                       </td>
                     </tr>
@@ -430,6 +638,20 @@ export function UsersPage() {
                     <option value="admin">{t("users.roleAdmin")}</option>
                   </select>
                 </label>
+                {editForm.role === "user" ? (
+                  <ClientBranchPicker
+                    label={t("users.client")}
+                    options={clientOptions}
+                    selectedBranchIds={editForm.client_branches}
+                    emptyStateLabel={t("users.clientNoneSelected")}
+                    helperLabel={t("users.clientPickerHint")}
+                    selectAllLabel={t("users.selectAllClients")}
+                    clearLabel={t("users.clearClients")}
+                    onToggleBranch={handleEditClientBranchToggle}
+                    onSelectAll={handleEditSelectAllClientBranches}
+                    onClearAll={handleEditClearClientBranches}
+                  />
+                ) : null}
                 <label className="flex items-center gap-2 text-sm text-slate-600">
                   <input
                     type="checkbox"
