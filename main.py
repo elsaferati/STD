@@ -1,29 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
 from datetime import datetime, timezone
 import time
-import json
-import sys
 
 from dotenv import load_dotenv
 
 from config import Config
+from db import init_db
 from email_ingest import EmailClient
 from openai_extract import OpenAIExtractor
+import order_store
 from pipeline import process_message
 import xml_exporter
-
-
-def _resolve_output_path(output_dir: Path, base_name: str) -> Path:
-    candidate = output_dir / f"{base_name}.json"
-    if not candidate.exists():
-        return candidate
-    for idx in range(1, 1000):
-        candidate = output_dir / f"{base_name}_{idx}.json"
-        if not candidate.exists():
-            return candidate
-    return output_dir / f"{base_name}_overflow.json"
 
 
 def _validate_config(config: Config) -> list[str]:
@@ -44,6 +32,11 @@ def _validate_config(config: Config) -> list[str]:
 def main() -> int:
     load_dotenv()
     config = Config.from_env()
+    try:
+        init_db()
+    except Exception as exc:
+        print(f"DB init failed: {exc}")
+        return 1
 
     missing = _validate_config(config)
     if missing:
@@ -103,18 +96,42 @@ def main() -> int:
 
         for message in new_messages:
             result = process_message(message, config, extractor)
-            output_path = _resolve_output_path(config.output_dir, result.output_name)
-            with output_path.open("w", encoding="utf-8") as handle:
-                json.dump(result.data, handle, ensure_ascii=False, indent=2)
-            print(f"Saved: {output_path}")
+
+            try:
+                persisted = order_store.upsert_order_payload(
+                    result.data,
+                    external_message_id=message.message_id,
+                    change_type="ingested",
+                )
+                print(
+                    "DB upsert complete: "
+                    f"order_id={persisted['order_id']} revision_no={persisted.get('revision_no')}"
+                )
+            except Exception as exc:
+                print(f"DB upsert failed for {message.message_id}: {exc}")
+                return 1
 
             # Generate XML outputs
+            xml_paths: list[str] = []
             try:
-                xml_paths = xml_exporter.export_xmls(result.data, result.output_name, config, config.output_dir)
-                for xp in xml_paths:
+                generated_xml_paths = xml_exporter.export_xmls(result.data, result.output_name, config, config.output_dir)
+                xml_paths = [str(path) for path in generated_xml_paths]
+                for xp in generated_xml_paths:
                     print(f"Generated XML: {xp}")
             except Exception as exc:
                 print(f"Failed to generate XMLs for {result.output_name}: {exc}")
+
+            if xml_paths:
+                try:
+                    order_store.register_order_files(
+                        order_id=persisted["order_id"],
+                        revision_id=persisted.get("revision_id"),
+                        file_type="xml",
+                        storage_paths=xml_paths,
+                    )
+                except Exception as exc:
+                    print(f"DB xml registration failed for {message.message_id}: {exc}")
+                    return 1
 
             seen_message_ids.add(message.message_id)
 

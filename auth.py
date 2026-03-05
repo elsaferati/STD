@@ -62,11 +62,13 @@ def revoke_session(session_id: str) -> None:
 def get_session_user(session_id: str) -> dict[str, Any] | None:
     if not session_id:
         return None
+    now = _now()
     row = fetch_one(
         """
         SELECT s.id AS session_id,
                s.user_id,
                s.expires_at,
+               s.last_seen_at,
                s.revoked_at,
                u.id AS id,
                u.username,
@@ -83,12 +85,15 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
     if row.get("revoked_at") is not None:
         return None
     expires_at = row.get("expires_at")
-    if isinstance(expires_at, datetime) and expires_at <= _now():
+    if isinstance(expires_at, datetime) and expires_at <= now:
         return None
     if not row.get("is_active"):
         return None
 
-    execute("UPDATE sessions SET last_seen_at = %s WHERE id = %s", (_now(), session_id))
+    # Avoid a write on every authenticated API request.
+    last_seen_at = row.get("last_seen_at")
+    if not isinstance(last_seen_at, datetime) or last_seen_at <= now - timedelta(seconds=60):
+        execute("UPDATE sessions SET last_seen_at = %s WHERE id = %s", (now, session_id))
     return {
         "id": row.get("id"),
         "username": row.get("username"),

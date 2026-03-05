@@ -12,83 +12,24 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { StatusBadge } from "../components/StatusBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { formatDateTime } from "../utils/format";
-import { extractBranchFromWarnings, normalizeBranchId } from "../utils/clientClassifier";
+import { normalizeBranchId } from "../utils/clientClassifier";
 
-const ORDER_PAGE_SIZE = 500;
-const DETAIL_REQUEST_CONCURRENCY = 8;
+const ORDER_PAGE_SIZE = 50;
 const REFRESH_INTERVAL_MS = 60_000;
 
 function isAbortError(error) {
   return error?.name === "AbortError";
 }
 
-async function fetchAllOrderSummaries(signal) {
-  const firstPage = await fetchJson(`/api/orders?page=1&page_size=${ORDER_PAGE_SIZE}`, { signal });
-  const firstOrders = Array.isArray(firstPage?.orders) ? firstPage.orders : [];
-  const totalPages = Math.max(1, Number(firstPage?.pagination?.total_pages || 1));
-
-  const allOrders = [...firstOrders];
-  if (totalPages > 1) {
-    const requests = [];
-    for (let page = 2; page <= totalPages; page += 1) {
-      requests.push(fetchJson(`/api/orders?page=${page}&page_size=${ORDER_PAGE_SIZE}`, { signal }));
-    }
-    const pages = await Promise.all(requests);
-    pages.forEach((payload) => {
-      if (Array.isArray(payload?.orders)) {
-        allOrders.push(...payload.orders);
-      }
-    });
-  }
-
-  const seen = new Set();
-  const deduped = [];
-  for (const order of allOrders) {
-    const id = String(order?.id || "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    deduped.push(order);
-  }
-
-  return deduped;
-}
-
-async function classifyOrdersByBranch(orderSummaries, signal) {
-  const classified = new Array(orderSummaries.length);
-  let nextIndex = 0;
-
-  const worker = async () => {
-    while (true) {
-      if (signal.aborted) return;
-
-      const index = nextIndex;
-      nextIndex += 1;
-      if (index >= orderSummaries.length) return;
-
-      const summary = orderSummaries[index];
-      const orderId = String(summary?.id || "");
-      let branchId = UNKNOWN_CLIENT_BRANCH_ID;
-
-      if (orderId) {
-        try {
-          const detail = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`, { signal });
-          branchId = extractBranchFromWarnings(detail?.warnings);
-        } catch (error) {
-          if (isAbortError(error) || signal.aborted) return;
-          branchId = UNKNOWN_CLIENT_BRANCH_ID;
-        }
-      }
-
-      classified[index] = {
-        ...summary,
-        branchId: normalizeBranchId(branchId),
-      };
-    }
+function buildInitialClientCounts() {
+  const counts = {
+    [ALL_CLIENT_FILTER]: 0,
+    [UNKNOWN_CLIENT_BRANCH_ID]: 0,
   };
-
-  const workerCount = Math.min(DETAIL_REQUEST_CONCURRENCY, orderSummaries.length);
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return classified.filter(Boolean);
+  CLIENT_BRANCHES.forEach((branch) => {
+    counts[branch.id] = 0;
+  });
+  return counts;
 }
 
 export function ClientsPage() {
@@ -96,6 +37,13 @@ export function ClientsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [orders, setOrders] = useState([]);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    page_size: ORDER_PAGE_SIZE,
+    total: 0,
+    total_pages: 1,
+  });
+  const [clientCounts, setClientCounts] = useState(buildInitialClientCounts);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState(searchParams.get("q") || "");
@@ -104,6 +52,7 @@ export function ClientsPage() {
 
   const qParam = searchParams.get("q") || "";
   const selectedClientParam = searchParams.get("client") || ALL_CLIENT_FILTER;
+  const pageParam = Math.max(1, Number.parseInt(searchParams.get("page") || "1", 10) || 1);
 
   useEffect(() => {
     setSearchInput(qParam);
@@ -117,7 +66,8 @@ export function ClientsPage() {
   }, [selectedClientParam]);
 
   const updateParams = useCallback(
-    (updates) => {
+    (updates, options = {}) => {
+      const { resetPage = true } = options;
       const next = new URLSearchParams(searchParams);
       Object.entries(updates).forEach(([key, value]) => {
         if (value === null || value === undefined || value === "") {
@@ -126,6 +76,9 @@ export function ClientsPage() {
           next.set(key, String(value));
         }
       });
+      if (resetPage && !Object.prototype.hasOwnProperty.call(updates, "page")) {
+        next.delete("page");
+      }
       setSearchParams(next);
     },
     [searchParams, setSearchParams],
@@ -141,11 +94,48 @@ export function ClientsPage() {
     setLoading(true);
 
     try {
-      const summaries = await fetchAllOrderSummaries(controller.signal);
-      const classified = await classifyOrdersByBranch(summaries, controller.signal);
+      const ordersQuery = new URLSearchParams();
+      if (qParam.trim()) {
+        ordersQuery.set("q", qParam.trim());
+      }
+      if (selectedClient !== ALL_CLIENT_FILTER) {
+        ordersQuery.set("client", selectedClient);
+      }
+      ordersQuery.set("page", String(pageParam));
+      ordersQuery.set("page_size", String(ORDER_PAGE_SIZE));
+
+      const [ordersPayload, countsPayload] = await Promise.all([
+        fetchJson(`/api/orders?${ordersQuery.toString()}`, { signal: controller.signal }),
+        fetchJson("/api/clients/counts", { signal: controller.signal }),
+      ]);
       if (controller.signal.aborted) return;
 
-      setOrders(classified);
+      const rows = Array.isArray(ordersPayload?.orders) ? ordersPayload.orders : [];
+      setOrders(
+        rows.map((row) => ({
+          ...row,
+          branchId: normalizeBranchId(row?.extraction_branch),
+        })),
+      );
+
+      const apiPagination = ordersPayload?.pagination || {};
+      setPagination({
+        page: Number(apiPagination.page || pageParam || 1),
+        page_size: Number(apiPagination.page_size || ORDER_PAGE_SIZE),
+        total: Number(apiPagination.total || 0),
+        total_pages: Number(apiPagination.total_pages || 1),
+      });
+
+      const nextCounts = buildInitialClientCounts();
+      const rawCounts = countsPayload?.counts && typeof countsPayload.counts === "object" ? countsPayload.counts : {};
+      Object.entries(rawCounts).forEach(([branch, value]) => {
+        const normalizedBranch = normalizeBranchId(branch);
+        nextCounts[normalizedBranch] = Number(value || 0);
+      });
+      nextCounts[ALL_CLIENT_FILTER] =
+        Number(countsPayload?.total || 0) || Object.values(nextCounts).reduce((sum, value) => sum + Number(value || 0), 0);
+      setClientCounts(nextCounts);
+
       setError("");
     } catch (requestError) {
       if (isAbortError(requestError) || controller.signal.aborted) return;
@@ -158,7 +148,7 @@ export function ClientsPage() {
         setLoading(false);
       }
     }
-  }, [t]);
+  }, [pageParam, qParam, selectedClient, t]);
 
   useEffect(() => {
     loadOrders();
@@ -170,49 +160,6 @@ export function ClientsPage() {
       }
     };
   }, [loadOrders]);
-
-  const clientCounts = useMemo(() => {
-    const counts = {
-      [ALL_CLIENT_FILTER]: orders.length,
-      [UNKNOWN_CLIENT_BRANCH_ID]: 0,
-    };
-    CLIENT_BRANCHES.forEach((branch) => {
-      counts[branch.id] = 0;
-    });
-
-    orders.forEach((order) => {
-      const branchId = normalizeBranchId(order?.branchId);
-      counts[branchId] = (counts[branchId] || 0) + 1;
-    });
-
-    return counts;
-  }, [orders]);
-
-  const searchQuery = qParam.trim().toLowerCase();
-
-  const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
-      const branchId = normalizeBranchId(order?.branchId);
-      if (selectedClient !== ALL_CLIENT_FILTER && branchId !== selectedClient) {
-        return false;
-      }
-
-      if (!searchQuery) return true;
-      const searchable = [
-        order?.ticket_number,
-        order?.id,
-        order?.kom_nr,
-        order?.kom_name,
-        order?.store_name,
-        order?.kundennummer,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return searchable.includes(searchQuery);
-    });
-  }, [orders, searchQuery, selectedClient]);
 
   const branchLabels = useMemo(() => {
     const labels = {
@@ -244,6 +191,10 @@ export function ClientsPage() {
     ];
   }, [branchLabels, clientCounts, t]);
 
+  const hasPrev = pagination.page > 1;
+  const hasNext = pagination.page < pagination.total_pages;
+  const hasActiveFilters = qParam.trim().length > 0 || selectedClient !== ALL_CLIENT_FILTER;
+
   const handleSearchSubmit = (event) => {
     event.preventDefault();
     const query = searchInput.trim();
@@ -274,7 +225,7 @@ export function ClientsPage() {
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-bold text-slate-900">{t("clients.title")}</h1>
             <p className="text-sm text-slate-500">{t("clients.pageSubtitle", null, t("clients.subtitle"))}</p>
-            <p className="text-sm text-slate-500">{t("clients.showingCount", { count: filteredOrders.length })}</p>
+            <p className="text-sm text-slate-500">{t("clients.showingCount", { count: pagination.total || 0 })}</p>
           </div>
 
           {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
@@ -328,12 +279,14 @@ export function ClientsPage() {
                       {t("clients.loading")}
                     </td>
                   </tr>
-                ) : filteredOrders.length > 0 ? (
-                  filteredOrders.map((order, index) => {
+                ) : orders.length > 0 ? (
+                  orders.map((order, index) => {
                     const branchId = normalizeBranchId(order?.branchId);
                     return (
                       <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-4 py-3 w-[56px] text-slate-500">{index + 1}</td>
+                        <td className="px-4 py-3 w-[56px] text-slate-500">
+                          {(pagination.page - 1) * (pagination.page_size || ORDER_PAGE_SIZE) + index + 1}
+                        </td>
                         <td className="px-4 py-3 w-[180px] overflow-hidden">
                           <Link
                             to={`/orders/${order.id}`}
@@ -380,12 +333,44 @@ export function ClientsPage() {
                 ) : (
                   <tr>
                     <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>
-                      {orders.length === 0 ? t("clients.noOrders") : t("clients.noMatchingOrders")}
+                      {!hasActiveFilters && (clientCounts[ALL_CLIENT_FILTER] || 0) === 0
+                        ? t("clients.noOrders")
+                        : t("clients.noMatchingOrders")}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="mt-4 flex items-center justify-between px-2">
+            <div className="text-sm text-slate-500">
+              {t("orders.showing", {
+                from: orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0,
+                to: (pagination.page - 1) * (pagination.page_size || 0) + orders.length,
+                total: pagination.total || 0,
+              })}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!hasPrev}
+                onClick={() => updateParams({ page: pagination.page - 1 }, { resetPage: false })}
+                className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
+              >
+                <span className="material-icons text-sm">chevron_left</span>
+              </button>
+              <span className="px-3 py-1 bg-primary text-white rounded text-sm font-medium">{pagination.page}</span>
+              <span className="text-sm text-slate-500">/ {pagination.total_pages || 1}</span>
+              <button
+                type="button"
+                disabled={!hasNext}
+                onClick={() => updateParams({ page: pagination.page + 1 }, { resetPage: false })}
+                className="p-2 border border-slate-200 rounded bg-surface-light text-slate-500 disabled:opacity-40"
+              >
+                <span className="material-icons text-sm">chevron_right</span>
+              </button>
+            </div>
           </div>
         </div>
       </main>

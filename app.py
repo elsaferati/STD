@@ -35,8 +35,10 @@ from openpyxl.worksheet.page import PageMargins
 from werkzeug.exceptions import HTTPException
 
 from config import Config
+from extraction_branches import BRANCHES
 from normalize import refresh_missing_warnings
 import xml_exporter
+import order_store
 from auth import (
     authenticate_user,
     create_session,
@@ -93,14 +95,22 @@ EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"
 
 VALID_STATUSES = {"ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown"}
 ALLOWED_SORTS = {"received_at_desc", "received_at_asc"}
-ALLOWED_DOWNLOAD_EXTENSIONS = {".xml", ".json"}
+ALLOWED_DOWNLOAD_EXTENSIONS = {".xml"}
+UNKNOWN_EXTRACTION_BRANCH = "unknown"
+KNOWN_EXTRACTION_BRANCH_IDS = frozenset(BRANCHES.keys())
+ALLOWED_CLIENT_FILTER_IDS = KNOWN_EXTRACTION_BRANCH_IDS | {UNKNOWN_EXTRACTION_BRANCH}
 
 _ORDER_INDEX_CACHE: dict[str, Any] = {
     "checked_at": 0.0,
-    "signature": None,
     "orders": [],
 }
 _ORDER_INDEX_LOCK = Lock()
+ORDERS_FILTER_COUNTS_CACHE_TTL_SECONDS = max(
+    0.5,
+    float((os.getenv("ORDERS_FILTER_COUNTS_CACHE_TTL_SECONDS") or "10").strip()),
+)
+_ORDERS_FILTER_COUNTS_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_ORDERS_FILTER_COUNTS_LOCK = Lock()
 
 init_db()
 if seed_admin_user():
@@ -111,16 +121,6 @@ def _safe_id(value: str) -> str | None:
     if not value or not _SAFE_ID_RE.match(value):
         return None
     return value
-
-
-def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data, None
-        return {"value": data}, None
-    except Exception as exc:  # noqa: BLE001
-        return None, str(exc)
 
 
 def _entry_dict(value: Any) -> dict[str, Any]:
@@ -212,6 +212,13 @@ def _normalize_status(value: Any) -> str:
     return status
 
 
+def _normalize_extraction_branch(value: Any) -> str:
+    branch_id = str(value or "").strip().lower()
+    if branch_id in ALLOWED_CLIENT_FILTER_IDS:
+        return branch_id
+    return UNKNOWN_EXTRACTION_BRANCH
+
+
 def _parse_received_at(value: Any) -> datetime | None:
     if not value:
         return None
@@ -235,75 +242,6 @@ def _effective_received_at(order: dict[str, Any]) -> datetime:
         return mtime.astimezone()
 
     return datetime.fromtimestamp(0).astimezone()
-
-def _list_orders(output_dir: Path) -> list[dict[str, Any]]:
-    if not output_dir.exists():
-        return []
-    files = sorted(
-        output_dir.glob("*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-
-    orders: list[dict[str, Any]] = []
-    for path in files:
-        data, error = _read_json(path)
-        data = data or {}
-        header = data.get("header") if isinstance(data.get("header"), dict) else {}
-        warnings = data.get("warnings", [])
-        errors = data.get("errors", [])
-        if not isinstance(warnings, list):
-            warnings = [str(warnings)]
-        warnings = [str(item) for item in warnings]
-        if not isinstance(errors, list):
-            errors = [str(errors)]
-        errors = [str(item) for item in errors]
-
-        human_review_needed = _is_truthy_flag(header.get("human_review_needed"))
-        reply_needed = _is_truthy_flag(header.get("reply_needed"))
-        post_case = _is_truthy_flag(header.get("post_case"))
-        reply_case = _reply_case_from_warnings(warnings)
-        orders.append(
-            {
-                "id": path.stem,
-                "file_name": path.name,
-                "message_id": data.get("message_id") or path.stem,
-                "received_at": data.get("received_at") or "",
-                "status": _normalize_status(data.get("status")),
-                "item_count": len(data.get("items", []))
-                if isinstance(data.get("items"), list)
-                else 0,
-                "warnings_count": len(warnings),
-                "errors_count": len(errors),
-                "warnings": warnings,
-                "errors": errors,
-                "ticket_number": _header_value(header, "ticket_number"),
-                "kundennummer": _header_value(header, "kundennummer"),
-                "kom_nr": _header_value(header, "kom_nr"),
-                "kom_name": _header_value(header, "kom_name"),
-                "liefertermin": _header_value(header, "liefertermin"),
-                "wunschtermin": _header_value(header, "wunschtermin"),
-                "delivery_week": _header_value(header, "delivery_week"),
-                "store_name": _header_value(header, "store_name"),
-                "store_address": _header_value(header, "store_address"),
-                "iln": _header_value(header, "iln"),
-                "human_review_needed": human_review_needed,
-                "reply_needed": reply_needed,
-                "post_case": post_case,
-                "reply_mailto": _reply_mailto(
-                    data.get("message_id") or path.stem,
-                    path.stem,
-                    reply_case,
-                )
-                if reply_needed
-                else "",
-                "parse_error": error,
-                "mtime": datetime.fromtimestamp(path.stat().st_mtime).astimezone(),
-            }
-        )
-
-    return orders
-
 
 def _status_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"ok": 0, "reply": 0, "human_in_the_loop": 0, "post": 0, "failed": 0}
@@ -338,20 +276,89 @@ def _status_breakdown(orders: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _build_output_signature(output_dir: Path) -> tuple[tuple[str, int, int], ...]:
-    if not output_dir.exists():
-        return ()
-    signature: list[tuple[str, int, int]] = []
-    for path in sorted(output_dir.glob("*.json"), key=lambda item: item.name):
-        stat = path.stat()
-        signature.append((path.name, stat.st_mtime_ns, stat.st_size))
-    return tuple(signature)
+def _status_breakdown_from_counts(
+    *,
+    total: int,
+    ok: int,
+    reply: int,
+    human_in_the_loop: int,
+    post: int,
+    failed: int,
+) -> dict[str, Any]:
+    return {
+        "total": int(total),
+        "ok": int(ok),
+        "reply": int(reply),
+        "human_in_the_loop": int(human_in_the_loop),
+        "post": int(post),
+        "failed": int(failed),
+        "ok_rate": _rate(int(ok), int(total)),
+        "reply_rate": _rate(int(reply), int(total)),
+        "human_in_the_loop_rate": _rate(int(human_in_the_loop), int(total)),
+        "post_rate": _rate(int(post), int(total)),
+        "failed_rate": _rate(int(failed), int(total)),
+    }
 
 
 def _invalidate_order_index_cache() -> None:
     with _ORDER_INDEX_LOCK:
         _ORDER_INDEX_CACHE["checked_at"] = 0.0
-        _ORDER_INDEX_CACHE["signature"] = None
+    with _ORDERS_FILTER_COUNTS_LOCK:
+        _ORDERS_FILTER_COUNTS_CACHE.clear()
+
+
+def _orders_counts_cache_key(
+    *,
+    q: str,
+    received_from: datetime | None,
+    received_to: datetime | None,
+    statuses: set[str] | None,
+    reply_needed: bool | None,
+    human_review_needed: bool | None,
+    post_case: bool | None,
+    client_branches: set[str] | None,
+    today_start: datetime,
+) -> tuple[Any, ...]:
+    return (
+        q,
+        received_from.isoformat() if received_from else "",
+        received_to.isoformat() if received_to else "",
+        tuple(sorted(statuses or set())),
+        reply_needed,
+        human_review_needed,
+        post_case,
+        tuple(sorted(client_branches or set())),
+        today_start.date().isoformat(),
+    )
+
+
+def _get_cached_orders_counts(cache_key: tuple[Any, ...]) -> dict[str, int] | None:
+    now = time.time()
+    with _ORDERS_FILTER_COUNTS_LOCK:
+        entry = _ORDERS_FILTER_COUNTS_CACHE.get(cache_key)
+        if not entry:
+            return None
+        if now >= float(entry.get("expires_at") or 0):
+            _ORDERS_FILTER_COUNTS_CACHE.pop(cache_key, None)
+            return None
+        snapshot = entry.get("snapshot")
+        return dict(snapshot) if isinstance(snapshot, dict) else None
+
+
+def _store_cached_orders_counts(cache_key: tuple[Any, ...], snapshot: dict[str, int]) -> None:
+    now = time.time()
+    with _ORDERS_FILTER_COUNTS_LOCK:
+        _ORDERS_FILTER_COUNTS_CACHE[cache_key] = {
+            "expires_at": now + ORDERS_FILTER_COUNTS_CACHE_TTL_SECONDS,
+            "snapshot": dict(snapshot),
+        }
+        # Keep cache bounded in case many unique filters are requested.
+        if len(_ORDERS_FILTER_COUNTS_CACHE) > 128:
+            oldest_key = min(
+                _ORDERS_FILTER_COUNTS_CACHE.items(),
+                key=lambda item: float(item[1].get("expires_at") or 0),
+            )[0]
+            _ORDERS_FILTER_COUNTS_CACHE.pop(oldest_key, None)
 
 
 def _get_order_index() -> list[dict[str, Any]]:
@@ -360,14 +367,11 @@ def _get_order_index() -> list[dict[str, Any]]:
         if now - float(_ORDER_INDEX_CACHE["checked_at"]) < API_INDEX_CACHE_TTL_SECONDS:
             return list(_ORDER_INDEX_CACHE["orders"])
 
-        signature = _build_output_signature(OUTPUT_DIR)
-        if signature == _ORDER_INDEX_CACHE["signature"]:
-            _ORDER_INDEX_CACHE["checked_at"] = now
-            return list(_ORDER_INDEX_CACHE["orders"])
-
-        orders = _list_orders(OUTPUT_DIR)
+        try:
+            orders = order_store.list_order_summaries()
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Failed to load order summaries from DB: {exc}") from exc
         _ORDER_INDEX_CACHE["checked_at"] = now
-        _ORDER_INDEX_CACHE["signature"] = signature
         _ORDER_INDEX_CACHE["orders"] = orders
         return list(orders)
 
@@ -397,6 +401,7 @@ def _serialize_order_summary(order: dict[str, Any]) -> dict[str, Any]:
         "store_name": order.get("store_name", ""),
         "store_address": order.get("store_address", ""),
         "iln": order.get("iln", ""),
+        "extraction_branch": _normalize_extraction_branch(order.get("extraction_branch")),
         "human_review_needed": bool(order.get("human_review_needed")),
         "reply_needed": bool(order.get("reply_needed")),
         "post_case": bool(order.get("post_case")),
@@ -429,6 +434,20 @@ def _parse_date_query(value: str | None) -> date | None:
 
 def _api_error(status_code: int, code: str, message: str):
     return jsonify({"error": {"code": code, "message": message}}), status_code
+
+
+def _order_store_error_response(exc: order_store.OrderStoreError):
+    return _api_error(exc.status_code, exc.code, exc.message)
+
+
+def _response_status_code(error_response: Any, default: int = 500) -> int:
+    if isinstance(error_response, tuple) and len(error_response) >= 2:
+        code = error_response[1]
+        if isinstance(code, int):
+            return code
+    if isinstance(error_response, Response):
+        return int(error_response.status_code or default)
+    return default
 
 
 def _require_admin() -> Any:
@@ -483,6 +502,7 @@ def _filter_orders(
     reply_needed: bool | None,
     human_review_needed: bool | None,
     post_case: bool | None,
+    client_branches: set[str] | None,
 ) -> list[dict[str, Any]]:
     query = q.strip().lower()
     result: list[dict[str, Any]] = []
@@ -507,6 +527,10 @@ def _filter_orders(
         if post_case is not None and bool(order.get("post_case")) != post_case:
             continue
 
+        extraction_branch = _normalize_extraction_branch(order.get("extraction_branch"))
+        if client_branches and extraction_branch not in client_branches:
+            continue
+
         if query:
             searchable = " ".join(
                 [
@@ -521,6 +545,7 @@ def _filter_orders(
                 continue
 
         cloned = dict(order)
+        cloned["extraction_branch"] = extraction_branch
         cloned["_effective_dt"] = effective_dt
         result.append(cloned)
 
@@ -588,6 +613,15 @@ def _parse_orders_query(allow_default_pagination: bool = True):
     if raw_post_case not in (None, "") and post_case is None:
         return None, _api_error(400, "invalid_flag", "Invalid post_case flag. Use true or false.")
 
+    raw_client = (request.args.get("client") or "").strip()
+    client_branches: set[str] | None = None
+    if raw_client:
+        parsed_client_branches = {item.strip().lower() for item in raw_client.split(",") if item.strip()}
+        invalid = sorted(branch for branch in parsed_client_branches if branch not in ALLOWED_CLIENT_FILTER_IDS)
+        if invalid:
+            return None, _api_error(400, "invalid_client", f"Invalid client values: {', '.join(invalid)}")
+        client_branches = parsed_client_branches
+
     sort_key = (request.args.get("sort") or "received_at_desc").strip().lower()
     if sort_key not in ALLOWED_SORTS:
         return None, _api_error(
@@ -626,6 +660,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         "reply_needed": reply_needed,
         "human_review_needed": human_review_needed,
         "post_case": post_case,
+        "client_branches": client_branches,
         "sort_key": sort_key,
         "page": page,
         "page_size": page_size,
@@ -639,54 +674,64 @@ def _query_orders(allow_default_pagination: bool = True) -> tuple[dict[str, Any]
     if parse_error is not None:
         return None, parse_error
 
-    orders = _get_order_index()
-    filtered = _filter_orders(
-        orders,
+    local_tz = datetime.now().astimezone().tzinfo
+    today_local = datetime.now().astimezone().date()
+    today_start = datetime.combine(today_local, datetime.min.time(), tzinfo=local_tz)
+    today_end = today_start + timedelta(days=1)
+
+    received_from = None
+    if parsed["date_from"] is not None:
+        received_from = datetime.combine(parsed["date_from"], datetime.min.time(), tzinfo=local_tz)
+
+    received_to = None
+    if parsed["date_to"] is not None:
+        received_to = datetime.combine(parsed["date_to"] + timedelta(days=1), datetime.min.time(), tzinfo=local_tz)
+
+    counts_cache_key = _orders_counts_cache_key(
         q=parsed["q"],
-        date_from=parsed["date_from"],
-        date_to=parsed["date_to"],
+        received_from=received_from,
+        received_to=received_to,
         statuses=parsed["statuses"],
         reply_needed=parsed["reply_needed"],
         human_review_needed=parsed["human_review_needed"],
         post_case=parsed["post_case"],
+        client_branches=parsed["client_branches"],
+        today_start=today_start,
     )
-    sorted_orders = _sort_orders(filtered, parsed["sort_key"])
+    cached_counts = _get_cached_orders_counts(counts_cache_key)
 
-    counts = _tab_counts(filtered)
-    status_counts = _status_counts(filtered)
-    total = len(sorted_orders)
+    try:
+        query_result = order_store.query_order_summaries(
+            q=parsed["q"],
+            received_from=received_from,
+            received_to=received_to,
+            statuses=parsed["statuses"],
+            reply_needed=parsed["reply_needed"],
+            human_review_needed=parsed["human_review_needed"],
+            post_case=parsed["post_case"],
+            client_branches=parsed["client_branches"],
+            sort_key=parsed["sort_key"],
+            page=parsed["page"],
+            page_size=parsed["page_size"],
+            paginate=parsed["paginate"],
+            today_start=today_start,
+            today_end=today_end,
+            counts_override=cached_counts,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, _api_error(500, "db_error", f"Failed to query orders: {exc}")
 
-    if parsed["paginate"]:
-        page = parsed["page"]
-        page_size = parsed["page_size"]
-        total_pages = max(1, (total + page_size - 1) // page_size)
-        page = min(page, total_pages)
-        start = (page - 1) * page_size
-        end = start + page_size
-        rows = sorted_orders[start:end]
-    else:
-        page = 1
-        page_size = total if total > 0 else 1
-        total_pages = 1
-        rows = sorted_orders
+    count_snapshot = query_result.get("count_snapshot")
+    if isinstance(count_snapshot, dict):
+        _store_cached_orders_counts(counts_cache_key, count_snapshot)
 
+    rows = query_result["orders"]
     return (
         {
             "orders": rows,
             "orders_serialized": [_serialize_order_summary(order) for order in rows],
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": total_pages,
-            },
-            "counts": {
-                "all": counts["all"],
-                "today": counts["today"],
-                "needs_reply": counts["needs_reply"],
-                "manual_review": counts["manual_review"],
-                "status": status_counts,
-            },
+            "pagination": query_result["pagination"],
+            "counts": query_result["counts"],
         },
         None,
     )
@@ -725,83 +770,33 @@ def _resolve_xml_files(order_id: str, header: dict[str, Any]) -> list[dict[str, 
     return xml_files
 
 
-def _delete_order_files(order_id: str, header: dict[str, Any]) -> None:
-    (OUTPUT_DIR / f"{order_id}.json").unlink(missing_ok=True)
-
-    file_candidates = {
-        f"OrderInfo_{order_id}.xml",
-        f"OrderArticleInfo_{order_id}.xml",
-    }
-
-    effective_base = (
-        _sanitize_xml_base(_header_val(header, "ticket_number"))
-        or _sanitize_xml_base(_header_val(header, "kom_nr"))
-        or _sanitize_xml_base(_header_val(header, "kom_name"))
-    )
-    if effective_base:
-        file_candidates.add(f"OrderInfo_{effective_base}.xml")
-        file_candidates.add(f"OrderArticleInfo_{effective_base}.xml")
-
-    for filename in file_candidates:
-        (OUTPUT_DIR / filename).unlink(missing_ok=True)
-
-
 def _load_order(order_id: str) -> tuple[dict[str, Any] | None, Any]:
     safe_id = _safe_id(order_id)
     if not safe_id:
         return None, _api_error(404, "not_found", "Order not found")
 
-    path = OUTPUT_DIR / f"{safe_id}.json"
-    if not path.exists():
+    try:
+        uuid.UUID(safe_id)
+    except ValueError:
         return None, _api_error(404, "not_found", "Order not found")
-
-    data, parse_error = _read_json(path)
-    data = data or {}
-    if not isinstance(data, dict):
-        data = {}
-
-    header = data.get("header") if isinstance(data.get("header"), dict) else {}
-    items = data.get("items") if isinstance(data.get("items"), list) else []
-    warnings = data.get("warnings", [])
-    errors = data.get("errors", [])
-    if not isinstance(warnings, list):
-        warnings = [str(warnings)]
-    warnings = [str(item) for item in warnings]
-    if not isinstance(errors, list):
-        errors = [str(errors)]
-    errors = [str(item) for item in errors]
-
-    human_review_needed = _is_truthy_flag(header.get("human_review_needed"))
-    reply_needed = _is_truthy_flag(header.get("reply_needed"))
-    post_case = _is_truthy_flag(header.get("post_case"))
-    reply_case = _reply_case_from_warnings(warnings)
-
-    payload = {
-        "safe_id": safe_id,
-        "path": path,
-        "data": data,
-        "parse_error": parse_error,
-        "header": header,
-        "items": items,
-        "warnings": warnings,
-        "errors": errors,
-        "human_review_needed": human_review_needed,
-        "reply_needed": reply_needed,
-        "post_case": post_case,
-        "reply_mailto": _reply_mailto(
-            str(data.get("message_id") or safe_id),
-            safe_id,
-            reply_case,
-        )
-        if reply_needed
-        else "",
-    }
-    return payload, None
+    try:
+        order = order_store.get_order_detail(safe_id)
+    except Exception as exc:  # noqa: BLE001
+        return None, _api_error(500, "db_error", f"Failed to load order: {exc}")
+    if not order:
+        return None, _api_error(404, "not_found", "Order not found")
+    order["reply_mailto"] = (
+        _reply_mailto(order.get("message_id") or safe_id, safe_id, _reply_case_from_warnings(order.get("warnings", [])))
+        if order.get("reply_needed")
+        else ""
+    )
+    return order, None
 
 
 def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     data = order["data"]
     response = dict(data)
+    response["extraction_branch"] = _normalize_extraction_branch(response.get("extraction_branch"))
     response["order_id"] = order["safe_id"]
     response["header"] = order["header"]
     response["items"] = order["items"]
@@ -809,10 +804,16 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     response["errors"] = order["errors"]
     response["parse_error"] = order["parse_error"]
     response["xml_files"] = _resolve_xml_files(order["safe_id"], order["header"])
-    response["is_editable"] = bool(order["human_review_needed"] and not order["parse_error"])
+    response["is_editable"] = bool(order.get("is_editable", order["human_review_needed"] and not order["parse_error"]))
     response["reply_mailto"] = order["reply_mailto"]
     response["reply_needed"] = order["reply_needed"]
     response["post_case"] = order["post_case"]
+    response["review_task_id"] = order.get("review_task_id")
+    response["review_state"] = order.get("review_state")
+    response["assigned_user"] = order.get("assigned_user")
+    response["claim_expires_at"] = order.get("claim_expires_at")
+    response["sla_due_at"] = order.get("sla_due_at")
+    response["last_event_at"] = order.get("last_event_at")
     response["editable_header_fields"] = EDITABLE_HEADER_FIELDS
     response["editable_item_fields"] = EDITABLE_ITEM_FIELDS
     return response
@@ -835,19 +836,25 @@ def _ensure_string_list(value: Any) -> list[str]:
     return [str(value)]
 
 
-def _load_order_export_data(order: dict[str, Any]) -> dict[str, Any]:
+def _load_order_export_data(
+    order: dict[str, Any],
+    *,
+    payload_map: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     order_id = str(order.get("id") or "")
-    fallback_file_name = f"{order_id}.json" if order_id else ""
-    file_name = str(order.get("file_name") or fallback_file_name)
+    if not order_id:
+        raise ValueError("Missing order ID for export payload")
 
-    data: dict[str, Any] = {}
-    parse_error = ""
-    if file_name:
-        parsed_data, parse_error = _read_json(OUTPUT_DIR / file_name)
-        if isinstance(parsed_data, dict):
-            data = parsed_data
-    else:
-        parse_error = "Missing file_name"
+    file_name = str(order.get("file_name") or "")
+    detail = (payload_map or {}).get(order_id)
+    if detail is None:
+        detail = order_store.get_order_detail(order_id)
+    if not detail:
+        raise ValueError(f"Order not found for export payload: {order_id}")
+
+    payload = detail.get("data")
+    data = payload if isinstance(payload, dict) else {}
+    parse_error = str(detail.get("parse_error") or "")
 
     header = data.get("header") if isinstance(data.get("header"), dict) else {}
     items = data.get("items") if isinstance(data.get("items"), list) else []
@@ -876,13 +883,22 @@ def _load_order_export_data(order: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _preload_order_export_payloads(orders: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    order_ids = [str(order.get("id") or "").strip() for order in orders]
+    order_ids = [order_id for order_id in order_ids if order_id]
+    if not order_ids:
+        return {}
+    return order_store.get_order_payload_map(order_ids)
+
+
 def _as_orders_xlsx_bytes(
     orders: list[dict[str, Any]],
     *,
     title: str = "Orders",
     initials: str = "",
 ) -> bytes:
-    parsed_orders = [_load_order_export_data(order) for order in orders]
+    payload_map = _preload_order_export_payloads(orders)
+    parsed_orders = [_load_order_export_data(order, payload_map=payload_map) for order in orders]
 
     fixed_header_columns = [
         "order_id",
@@ -1155,34 +1171,38 @@ def _as_csv_text(orders: list[dict[str, Any]]) -> str:
         "order_id",
     ]
 
+    payload_map = _preload_order_export_payloads(orders)
+    parsed_orders = [_load_order_export_data(order, payload_map=payload_map) for order in orders]
+
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
-    for order in orders:
+    for parsed in parsed_orders:
+        header = parsed.get("header", {}) if isinstance(parsed.get("header"), dict) else {}
         writer.writerow(
             {
-                "received_at": order.get("received_at", ""),
-                "status": _normalize_status(order.get("status")),
-                "ticket_number": order.get("ticket_number", ""),
-                "kom_nr": order.get("kom_nr", ""),
-                "kom_name": order.get("kom_name", ""),
-                "message_id": order.get("message_id", ""),
-                "kundennummer": order.get("kundennummer", ""),
-                "store_name": order.get("store_name", ""),
-                "store_address": order.get("store_address", ""),
-                "delivery_week": order.get("delivery_week", ""),
-                "liefertermin": order.get("liefertermin", ""),
-                "wunschtermin": order.get("wunschtermin", ""),
-                "item_count": order.get("item_count", 0),
-                "warnings_count": order.get("warnings_count", 0),
-                "errors_count": order.get("errors_count", 0),
-                "reply_needed": bool(order.get("reply_needed")),
-                "human_review_needed": bool(order.get("human_review_needed")),
-                "post_case": bool(order.get("post_case")),
-                "warnings": " | ".join([str(item) for item in order.get("warnings", [])]),
-                "errors": " | ".join([str(item) for item in order.get("errors", [])]),
-                "file_name": order.get("file_name", ""),
-                "order_id": order.get("id", ""),
+                "received_at": parsed.get("received_at", ""),
+                "status": _normalize_status(parsed.get("status")),
+                "ticket_number": _export_entry_value(header.get("ticket_number", "")),
+                "kom_nr": _export_entry_value(header.get("kom_nr", "")),
+                "kom_name": _export_entry_value(header.get("kom_name", "")),
+                "message_id": parsed.get("message_id", ""),
+                "kundennummer": _export_entry_value(header.get("kundennummer", "")),
+                "store_name": _export_entry_value(header.get("store_name", "")),
+                "store_address": _export_entry_value(header.get("store_address", "")),
+                "delivery_week": _export_entry_value(header.get("delivery_week", "")),
+                "liefertermin": _export_entry_value(header.get("liefertermin", "")),
+                "wunschtermin": _export_entry_value(header.get("wunschtermin", "")),
+                "item_count": parsed.get("item_count", 0),
+                "warnings_count": parsed.get("warnings_count", 0),
+                "errors_count": parsed.get("errors_count", 0),
+                "reply_needed": bool(parsed.get("reply_needed")),
+                "human_review_needed": bool(parsed.get("human_review_needed")),
+                "post_case": bool(parsed.get("post_case")),
+                "warnings": " | ".join([str(item) for item in parsed.get("warnings", [])]),
+                "errors": " | ".join([str(item) for item in parsed.get("errors", [])]),
+                "file_name": parsed.get("file_name", ""),
+                "order_id": parsed.get("order_id", ""),
             }
         )
     return output.getvalue()
@@ -1462,85 +1482,209 @@ def api_user_update(user_id: str):
     return jsonify({"user": updated})
 
 
+@app.route("/api/review/tasks", methods=["GET"])
+def api_review_tasks():
+    user = getattr(g, "user", {}) or {}
+    is_admin = user.get("role") == "admin"
+    raw_states = (request.args.get("state") or "").strip()
+    states: set[str] | None = None
+    if raw_states:
+        states = {item.strip().lower() for item in raw_states.split(",") if item.strip()}
+
+    mine_only = _parse_bool_query(request.args.get("mine")) is True
+    assigned_user_id: str | None = None
+    if mine_only:
+        assigned_user_id = str(user.get("id") or "")
+    elif is_admin:
+        requested_user_id = (request.args.get("assigned_user_id") or "").strip()
+        if requested_user_id:
+            assigned_user_id = requested_user_id
+
+    try:
+        tasks = order_store.list_review_tasks(
+            states=states,
+            assigned_user_id=assigned_user_id,
+            include_unassigned=not mine_only,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to load review tasks: {exc}")
+    return jsonify({"tasks": tasks})
+
+
+@app.route("/api/review/tasks/<task_id>/claim", methods=["POST"])
+def api_review_task_claim(task_id: str):
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        return _api_error(404, "not_found", "Review task not found")
+    user = getattr(g, "user", {}) or {}
+    body = request.get_json(silent=True) or {}
+    lease_seconds = body.get("lease_seconds", 300)
+    try:
+        task = order_store.claim_task(
+            task_id=task_id,
+            user_id=str(user.get("id") or ""),
+            lease_seconds=int(lease_seconds),
+        )
+    except order_store.OrderStoreError as exc:
+        return _order_store_error_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to claim task: {exc}")
+    return jsonify({"task": task})
+
+
+@app.route("/api/review/tasks/<task_id>/heartbeat", methods=["POST"])
+def api_review_task_heartbeat(task_id: str):
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        return _api_error(404, "not_found", "Review task not found")
+    user = getattr(g, "user", {}) or {}
+    body = request.get_json(silent=True) or {}
+    lease_seconds = body.get("lease_seconds", 300)
+    try:
+        task = order_store.heartbeat_task(
+            task_id=task_id,
+            user_id=str(user.get("id") or ""),
+            lease_seconds=int(lease_seconds),
+        )
+    except order_store.OrderStoreError as exc:
+        return _order_store_error_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to heartbeat task: {exc}")
+    return jsonify({"task": task})
+
+
+@app.route("/api/review/tasks/<task_id>/resolve", methods=["POST"])
+def api_review_task_resolve(task_id: str):
+    try:
+        uuid.UUID(task_id)
+    except ValueError:
+        return _api_error(404, "not_found", "Review task not found")
+    user = getattr(g, "user", {}) or {}
+    body = request.get_json(silent=True) or {}
+    try:
+        task = order_store.resolve_task(
+            task_id=task_id,
+            user_id=str(user.get("id") or ""),
+            is_admin=user.get("role") == "admin",
+            outcome=str(body.get("outcome") or "resolved"),
+            note=str(body.get("note") or ""),
+            force=bool(body.get("force")),
+        )
+    except order_store.OrderStoreError as exc:
+        return _order_store_error_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to resolve task: {exc}")
+    return jsonify({"task": task})
+
+
 @app.route("/api/overview")
 def api_overview():
-    orders = _get_order_index()
     now = datetime.now().astimezone()
     today = now.date()
     last_24h_start = now - timedelta(hours=24)
+    local_tz = now.tzinfo
+    today_start = datetime.combine(today, datetime.min.time(), tzinfo=local_tz)
+    today_end = today_start + timedelta(days=1)
+    seven_day_start = today_start - timedelta(days=6)
     queue_velocity_hours = 72
-
-    today_orders: list[dict[str, Any]] = []
-    last_24h_orders: list[dict[str, Any]] = []
-
-    queue_counts = {
-        "reply": 0,
-        "human_in_the_loop": 0,
-        "post": 0,
-    }
-
-    day_buckets: dict[date, dict[str, Any]] = {}
-    seven_days: list[date] = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
-    for bucket_day in seven_days:
-        day_buckets[bucket_day] = {
-            "date": bucket_day.isoformat(),
-            "label": bucket_day.strftime("%a"),
-            "ok": 0,
-            "reply": 0,
-            "human_in_the_loop": 0,
-            "post": 0,
-            "failed": 0,
-            "total": 0,
-        }
-
     current_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly_keys: list[datetime] = [
-        current_hour - timedelta(hours=offset) for offset in range(queue_velocity_hours - 1, -1, -1)
-    ]
-    hourly_counts: dict[datetime, int] = {key: 0 for key in hourly_keys}
+    hourly_start = current_hour - timedelta(hours=queue_velocity_hours - 1)
 
-    for order in orders:
-        status = _normalize_status(order.get("status"))
-        effective_dt = _effective_received_at(order)
+    try:
+        overview = order_store.query_overview_snapshot(
+            now=now,
+            today_start=today_start,
+            today_end=today_end,
+            seven_day_start=seven_day_start,
+            last_24h_start=last_24h_start,
+            current_hour=current_hour,
+            hourly_start=hourly_start,
+            latest_limit=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to load overview metrics: {exc}")
 
-        if status in queue_counts:
-            queue_counts[status] += 1
+    summary = overview.get("summary", {})
+    status_by_day_rows = overview.get("status_by_day", [])
+    processed_by_hour_rows = overview.get("processed_by_hour", [])
+    latest_orders = overview.get("latest_orders", [])
 
-        if effective_dt.date() == today:
-            today_orders.append(order)
-        if effective_dt >= last_24h_start:
-            last_24h_orders.append(order)
+    status_by_day = []
+    for row in status_by_day_rows:
+        bucket_start = row.get("bucket_start")
+        if isinstance(bucket_start, datetime):
+            bucket_date = bucket_start.astimezone().date()
+        else:
+            bucket_date = today
+        status_by_day.append(
+            {
+                "date": bucket_date.isoformat(),
+                "label": bucket_date.strftime("%a"),
+                "ok": int(row.get("ok") or 0),
+                "reply": int(row.get("reply") or 0),
+                "human_in_the_loop": int(row.get("human_in_the_loop") or 0),
+                "post": int(row.get("post") or 0),
+                "failed": int(row.get("failed") or 0),
+                "total": int(row.get("total") or 0),
+            }
+        )
 
-        bucket = day_buckets.get(effective_dt.date())
-        if bucket is not None:
-            bucket[status] += 1
-            bucket["total"] += 1
-
-        hour_bucket = effective_dt.replace(minute=0, second=0, microsecond=0)
-        if hour_bucket in hourly_counts:
-            hourly_counts[hour_bucket] += 1
-
-    latest_orders = sorted(orders, key=_effective_received_at, reverse=True)[:20]
-    processed_by_hour = [
-        {
-            "hour": bucket.isoformat(),
-            "label": bucket.strftime("%H:%M"),
-            "processed": hourly_counts[bucket],
-        }
-        for bucket in hourly_keys
-    ]
+    processed_by_hour = []
+    for row in processed_by_hour_rows:
+        bucket_start = row.get("bucket_start")
+        if isinstance(bucket_start, datetime):
+            bucket = bucket_start.astimezone()
+        else:
+            bucket = current_hour
+        processed_by_hour.append(
+            {
+                "hour": bucket.isoformat(),
+                "label": bucket.strftime("%H:%M"),
+                "processed": int(row.get("processed") or 0),
+            }
+        )
 
     return jsonify(
         {
             "generated_at": now.isoformat(),
-            "today": _status_breakdown(today_orders),
-            "last_24h": _status_breakdown(last_24h_orders),
-            "queue_counts": queue_counts,
-            "status_by_day": [day_buckets[bucket_day] for bucket_day in seven_days],
+            "today": _status_breakdown_from_counts(
+                total=int(summary.get("today_total") or 0),
+                ok=int(summary.get("today_ok") or 0),
+                reply=int(summary.get("today_reply") or 0),
+                human_in_the_loop=int(summary.get("today_human") or 0),
+                post=int(summary.get("today_post") or 0),
+                failed=int(summary.get("today_failed") or 0),
+            ),
+            "last_24h": _status_breakdown_from_counts(
+                total=int(summary.get("last24_total") or 0),
+                ok=int(summary.get("last24_ok") or 0),
+                reply=int(summary.get("last24_reply") or 0),
+                human_in_the_loop=int(summary.get("last24_human") or 0),
+                post=int(summary.get("last24_post") or 0),
+                failed=int(summary.get("last24_failed") or 0),
+            ),
+            "queue_counts": {
+                "reply": int(summary.get("queue_reply") or 0),
+                "human_in_the_loop": int(summary.get("queue_human") or 0),
+                "post": int(summary.get("queue_post") or 0),
+            },
+            "status_by_day": status_by_day,
             "processed_by_hour": processed_by_hour,
             "latest_orders": [_serialize_order_summary(order) for order in latest_orders],
         }
     )
+
+
+@app.route("/api/clients/counts")
+def api_clients_counts():
+    try:
+        counts = order_store.list_client_branch_counts()
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to load client counts: {exc}")
+    total = sum(int(value or 0) for value in counts.values())
+    return jsonify({"counts": counts, "total": total})
 
 
 @app.route("/api/orders")
@@ -1564,7 +1708,10 @@ def api_orders_csv():
     if error is not None:
         return error
 
-    csv_text = _as_csv_text(result["orders"])
+    try:
+        csv_text = _as_csv_text(result["orders"])
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to build CSV export: {exc}")
     response = Response(csv_text, mimetype="text/csv")
     response.headers["Content-Disposition"] = "attachment; filename=orders.csv"
     return response
@@ -1585,11 +1732,14 @@ def api_orders_xlsx():
         filename_parts.append(initials)
     filename = "_".join(filename_parts) + ".xlsx"
 
-    xlsx_bytes = _as_orders_xlsx_bytes(
-        result["orders"],
-        title=raw_title,
-        initials=initials,
-    )
+    try:
+        xlsx_bytes = _as_orders_xlsx_bytes(
+            result["orders"],
+            title=raw_title,
+            initials=initials,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to build XLSX export: {exc}")
     response = Response(
         xlsx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1603,38 +1753,33 @@ def api_order_detail(order_id: str):
     if load_error is not None:
         return load_error
 
+    current_user = getattr(g, "user", {}) or {}
+    current_user_id = str(current_user.get("id") or "")
+    is_admin = current_user.get("role") == "admin"
+    can_edit, _edit_reason = (False, "Order is not editable")
+    if current_user_id:
+        can_edit, _edit_reason = order_store.is_order_editable_for_detail(
+            order=order,
+            user_id=current_user_id,
+            is_admin=is_admin,
+        )
+    order["is_editable"] = bool(can_edit)
+
     if request.method == "GET":
         return jsonify(_order_api_payload(order))
 
     if request.method == "DELETE":
-        delete_errors: list[str] = []
         try:
-            order["path"].unlink()
-        except FileNotFoundError:
-            pass
+            deleted = order_store.soft_delete_order(order_id=order["safe_id"], actor_user_id=current_user_id or None)
         except Exception as exc:  # noqa: BLE001
-            delete_errors.append(f"json:{exc}")
-
-        for xml_file in _resolve_xml_files(order["safe_id"], order["header"]):
-            try:
-                (OUTPUT_DIR / xml_file["filename"]).unlink()
-            except FileNotFoundError:
-                continue
-            except Exception as exc:  # noqa: BLE001
-                delete_errors.append(f"{xml_file['filename']}:{exc}")
-
+            return _api_error(500, "db_error", f"Failed to delete order: {exc}")
+        if not deleted:
+            return _api_error(404, "not_found", "Order not found")
         _invalidate_order_index_cache()
-        if delete_errors:
-            return _api_error(500, "delete_failed", "Failed to delete order files")
         return jsonify({"deleted": True, "order_id": order["safe_id"]})
 
-    if request.method == "DELETE":
-        _delete_order_files(order["safe_id"], order["header"])
-        _invalidate_order_index_cache()
-        return ("", 204)
-
-    if not (order["human_review_needed"] and not order["parse_error"]):
-        return _api_error(403, "forbidden", "Order is not editable")
+    if not can_edit:
+        return _api_error(403, "forbidden", _edit_reason or "Order is not editable")
 
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -1673,14 +1818,55 @@ def api_order_detail(order_id: str):
     order["data"]["header"] = order["header"]
     order["data"]["items"] = order["items"]
     refresh_missing_warnings(order["data"])
-    order["path"].write_text(json.dumps(order["data"], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    revision_id: str | None = None
+    try:
+        persisted = order_store.save_manual_revision(
+            order_id=order["safe_id"],
+            payload=order["data"],
+            actor_user_id=current_user_id,
+            diff_json={"header": header_updates, "items": item_updates},
+        )
+        revision_id = persisted.get("revision_id")
+    except order_store.OrderStoreError as exc:
+        return _order_store_error_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to save manual revision: {exc}")
 
     xml_regenerated = False
+    xml_paths: list[str] = []
     try:
-        xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)
+        xml_paths = [str(path) for path in xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)]
         xml_regenerated = True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         xml_regenerated = False
+        try:
+            order_store.record_order_event(
+                order_id=order["safe_id"],
+                revision_id=revision_id,
+                event_type="xml_regeneration_failed",
+                actor_user_id=current_user_id or None,
+                event_data={"error": str(exc)},
+            )
+        except Exception as db_exc:  # noqa: BLE001
+            return _api_error(500, "db_error", f"Failed to record XML regeneration failure metadata: {db_exc}")
+    if xml_regenerated:
+        try:
+            order_store.register_order_files(
+                order_id=order["safe_id"],
+                revision_id=revision_id,
+                file_type="xml",
+                storage_paths=xml_paths,
+            )
+            order_store.record_order_event(
+                order_id=order["safe_id"],
+                revision_id=revision_id,
+                event_type="xml_regenerated",
+                actor_user_id=current_user_id or None,
+                event_data={"files": xml_paths},
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _api_error(500, "db_error", f"Failed to record XML regeneration metadata: {exc}")
 
     _invalidate_order_index_cache()
     updated_order, updated_error = _load_order(order["safe_id"])
@@ -1698,12 +1884,30 @@ def api_export_order_xml(order_id: str):
     if load_error is not None:
         return load_error
     if order["parse_error"]:
-        return _api_error(400, "invalid_order", "Order JSON could not be parsed")
+        return _api_error(400, "invalid_order", "Order payload could not be parsed")
+
+    current_user = getattr(g, "user", {}) or {}
+    actor_user_id = str(current_user.get("id") or "") or None
 
     try:
-        xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)
+        xml_paths = [str(path) for path in xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)]
     except Exception:  # noqa: BLE001
         return _api_error(500, "xml_export_failed", "Failed to regenerate XML files")
+    try:
+        order_store.register_order_files(
+            order_id=order["safe_id"],
+            revision_id=None,
+            file_type="xml",
+            storage_paths=xml_paths,
+        )
+        order_store.record_order_event(
+            order_id=order["safe_id"],
+            event_type="xml_regenerated",
+            actor_user_id=actor_user_id,
+            event_data={"files": xml_paths},
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to record XML export metadata: {exc}")
 
     files = _resolve_xml_files(order["safe_id"], order["header"])
     return jsonify({"xml_files": files})
@@ -1727,7 +1931,10 @@ def api_download_file(filename: str):
 
 @app.route("/")
 def index() -> str:
-    orders = _list_orders(OUTPUT_DIR)
+    try:
+        orders = _get_order_index()
+    except Exception:  # noqa: BLE001
+        abort(500)
 
     date_scope = (request.args.get("date_scope") or "").lower().strip()
     if date_scope not in {"today", "all"}:
@@ -1785,41 +1992,51 @@ def download_file(filename: str):
     safe_filename = _safe_id(filename)
     if not safe_filename:
         abort(404)
+    extension = Path(safe_filename).suffix.lower()
+    if extension not in ALLOWED_DOWNLOAD_EXTENSIONS:
+        abort(403)
     return send_from_directory(OUTPUT_DIR, safe_filename, as_attachment=True)
 
 
 @app.route("/order/<order_id>/export-xml", methods=["POST"])
 def export_order_xml(order_id: str):
-    safe_id = _safe_id(order_id)
-    if not safe_id:
-        abort(404)
-    path = OUTPUT_DIR / f"{safe_id}.json"
-    if not path.exists():
-        abort(404)
-    data, error = _read_json(path)
-    if error or not data or not isinstance(data, dict):
-        abort(404)
+    order, load_error = _load_order(order_id)
+    if load_error is not None:
+        abort(_response_status_code(load_error, 500))
+    if order["parse_error"]:
+        abort(400)
+    actor_user_id = str((getattr(g, "user", {}) or {}).get("id") or "") or None
     try:
-        xml_exporter.export_xmls(data, safe_id, config, OUTPUT_DIR)
+        xml_paths = [str(path) for path in xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)]
+        order_store.register_order_files(
+            order_id=order["safe_id"],
+            revision_id=None,
+            file_type="xml",
+            storage_paths=xml_paths,
+        )
+        order_store.record_order_event(
+            order_id=order["safe_id"],
+            event_type="xml_regenerated",
+            actor_user_id=actor_user_id,
+            event_data={"files": xml_paths},
+        )
     except Exception:  # noqa: BLE001
         abort(500)
     _invalidate_order_index_cache()
-    return redirect(url_for("order_detail", order_id=safe_id, exported="1"))
+    return redirect(url_for("order_detail", order_id=order["safe_id"], exported="1"))
 
 
 @app.route("/order/<order_id>/delete", methods=["POST"])
 def delete_order(order_id: str):
-    safe_id = _safe_id(order_id)
-    if not safe_id:
+    order, load_error = _load_order(order_id)
+    if load_error is not None:
+        abort(_response_status_code(load_error, 500))
+    try:
+        deleted = order_store.soft_delete_order(order_id=order["safe_id"], actor_user_id=None)
+    except Exception:  # noqa: BLE001
+        abort(500)
+    if not deleted:
         abort(404)
-
-    path = OUTPUT_DIR / f"{safe_id}.json"
-    if not path.exists():
-        abort(404)
-
-    data, _ = _read_json(path)
-    header = data.get("header") if isinstance(data, dict) and isinstance(data.get("header"), dict) else {}
-    _delete_order_files(safe_id, header)
     _invalidate_order_index_cache()
 
     date_scope = (request.args.get("date_scope") or "").lower().strip()
@@ -1829,24 +2046,21 @@ def delete_order(order_id: str):
 
 @app.route("/order/<order_id>", methods=["GET", "POST"])
 def order_detail(order_id: str) -> str:
-    safe_id = _safe_id(order_id)
-    if not safe_id:
-        abort(404)
+    order, load_error = _load_order(order_id)
+    if load_error is not None:
+        abort(_response_status_code(load_error, 500))
 
-    path = OUTPUT_DIR / f"{safe_id}.json"
-    if not path.exists():
-        abort(404)
-
-    data, error = _read_json(path)
-    data = data or {}
-    header = data.get("header") if isinstance(data.get("header"), dict) else {}
-    items = data.get("items") if isinstance(data.get("items"), list) else []
-    human_review_needed = _is_truthy_flag(header.get("human_review_needed"))
-    reply_needed = _is_truthy_flag(header.get("reply_needed"))
-    post_case = _is_truthy_flag(header.get("post_case"))
+    safe_id = order["safe_id"]
+    data = order["data"]
+    header = order["header"]
+    items = order["items"]
+    parse_error = str(order.get("parse_error") or "")
+    human_review_needed = bool(order.get("human_review_needed"))
+    reply_needed = bool(order.get("reply_needed"))
+    post_case = bool(order.get("post_case"))
 
     if request.method == "POST":
-        if error or not human_review_needed:
+        if parse_error or not human_review_needed:
             abort(403)
 
         for field in EDITABLE_HEADER_FIELDS:
@@ -1865,14 +2079,54 @@ def order_detail(order_id: str) -> str:
         data["header"] = header
         data["items"] = items
         refresh_missing_warnings(data)
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        actor_user_id = str((getattr(g, "user", {}) or {}).get("id") or "legacy_ui")
+        revision_id: str | None = None
+        try:
+            persisted = order_store.save_manual_revision(
+                order_id=safe_id,
+                payload=data,
+                actor_user_id=actor_user_id,
+            )
+            revision_id = persisted.get("revision_id")
+        except order_store.OrderStoreError as exc:
+            abort(exc.status_code)
+        except Exception:  # noqa: BLE001
+            abort(500)
 
         xml_regenerated = False
+        xml_paths: list[str] = []
         try:
-            xml_exporter.export_xmls(data, safe_id, config, OUTPUT_DIR)
+            xml_paths = [str(path) for path in xml_exporter.export_xmls(data, safe_id, config, OUTPUT_DIR)]
             xml_regenerated = True
         except Exception:  # noqa: BLE001
             xml_regenerated = False
+            try:
+                order_store.record_order_event(
+                    order_id=safe_id,
+                    revision_id=revision_id,
+                    event_type="xml_regeneration_failed",
+                    actor_user_id=actor_user_id,
+                    event_data={"error": "Failed to regenerate XML files from legacy detail route"},
+                )
+            except Exception:  # noqa: BLE001
+                abort(500)
+        if xml_regenerated:
+            try:
+                order_store.register_order_files(
+                    order_id=safe_id,
+                    revision_id=revision_id,
+                    file_type="xml",
+                    storage_paths=xml_paths,
+                )
+                order_store.record_order_event(
+                    order_id=safe_id,
+                    revision_id=revision_id,
+                    event_type="xml_regenerated",
+                    actor_user_id=actor_user_id,
+                    event_data={"files": xml_paths},
+                )
+            except Exception:  # noqa: BLE001
+                abort(500)
 
         _invalidate_order_index_cache()
         return redirect(
@@ -1941,10 +2195,10 @@ def order_detail(order_id: str) -> str:
         warnings=warnings,
         errors=errors,
         raw_json=raw_json,
-        parse_error=error,
+        parse_error=parse_error,
         xml_files=xml_files,
         ab_files=[],
-        is_editable=human_review_needed and not error,
+        is_editable=human_review_needed and not parse_error,
         reply_needed=reply_needed,
         post_case=post_case,
         reply_mailto=_reply_mailto(data.get("message_id") or safe_id, safe_id, reply_case) if reply_needed else "",

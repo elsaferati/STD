@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from threading import local
 from typing import Any, Iterable
 
 import psycopg
@@ -10,6 +11,7 @@ from psycopg.rows import dict_row
 
 _BASE_DIR = Path(__file__).resolve().parent
 _MIGRATIONS_DIR = _BASE_DIR / "migrations"
+_THREAD_LOCAL = local()
 
 
 def _get_database_url() -> str:
@@ -19,36 +21,82 @@ def _get_database_url() -> str:
     return url
 
 
+def _open_connection(*, autocommit: bool) -> psycopg.Connection:
+    return psycopg.connect(
+        _get_database_url(),
+        row_factory=dict_row,
+        autocommit=autocommit,
+    )
+
+
+def _thread_connection() -> psycopg.Connection:
+    conn = getattr(_THREAD_LOCAL, "conn", None)
+    if conn is None or conn.closed:
+        conn = _open_connection(autocommit=True)
+        _THREAD_LOCAL.conn = conn
+    return conn
+
+
+def _drop_thread_connection() -> None:
+    conn = getattr(_THREAD_LOCAL, "conn", None)
+    if conn is None:
+        return
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+    _THREAD_LOCAL.conn = None
+
+
 @contextmanager
 def get_connection():
-    conn = psycopg.connect(_get_database_url(), row_factory=dict_row)
+    conn = _thread_connection()
     try:
         yield conn
-    finally:
-        conn.close()
+    except (psycopg.InterfaceError, psycopg.OperationalError):
+        _drop_thread_connection()
+        raise
+
+
+def _execute_with_retry(
+    query: str,
+    params: Iterable[Any] | None = None,
+    *,
+    fetch: str | None = None,
+) -> Any:
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(query, params or ())
+                    if fetch == "one":
+                        row = cursor.fetchone()
+                        return dict(row) if row else None
+                    if fetch == "all":
+                        rows = cursor.fetchall()
+                        return [dict(row) for row in rows]
+                    return None
+        except (psycopg.InterfaceError, psycopg.OperationalError) as exc:
+            last_error = exc
+            _drop_thread_connection()
+            if attempt == 1:
+                raise
+    if last_error is not None:
+        raise last_error
 
 
 def execute(query: str, params: Iterable[Any] | None = None) -> None:
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params or ())
-            conn.commit()
+    _execute_with_retry(query, params)
 
 
 def fetch_one(query: str, params: Iterable[Any] | None = None) -> dict[str, Any] | None:
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params or ())
-            row = cursor.fetchone()
-            return dict(row) if row else None
+    return _execute_with_retry(query, params, fetch="one")
 
 
 def fetch_all(query: str, params: Iterable[Any] | None = None) -> list[dict[str, Any]]:
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params or ())
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+    rows = _execute_with_retry(query, params, fetch="all")
+    return rows if isinstance(rows, list) else []
 
 
 def init_db() -> None:
@@ -56,12 +104,13 @@ def init_db() -> None:
     if not auto_init:
         return
 
-    migration_file = _MIGRATIONS_DIR / "001_create_users_sessions.sql"
-    if not migration_file.exists():
-        raise RuntimeError("Missing migration file: migrations/001_create_users_sessions.sql")
+    migration_files = sorted(_MIGRATIONS_DIR.glob("*.sql"), key=lambda item: item.name)
+    if not migration_files:
+        raise RuntimeError("No migration files found in migrations/")
 
-    sql = migration_file.read_text(encoding="utf-8")
-    with get_connection() as conn:
+    with _open_connection(autocommit=False) as conn:
         with conn.cursor() as cursor:
-            cursor.execute(sql)
-            conn.commit()
+            for migration_file in migration_files:
+                sql = migration_file.read_text(encoding="utf-8")
+                cursor.execute(sql)
+        conn.commit()
