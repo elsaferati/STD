@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="hero">
+  <div>
+    <h1>Excel → XML Generator</h1>
+    <p class="subtitle">Upload an Excel file to generate OrderInfo &amp; OrderArticleInfo XML files as a ZIP.</p>
+  </div>
+  <a href="/" class="cta secondary">← Dashboard</a>
+</div>
+
+{% if error %}
+<div class="alert" style="margin-bottom: 20px;">
+  <strong>Error:</strong> {{ error }}
+</div>
+{% endif %}
+
+<div class="section animate">
+  <h2 style="font-size:16px; margin-bottom:16px;">Upload Excel File</h2>
+  <form method="post" action="/excel-to-xml/generate" enctype="multipart/form-data">
+    <div style="display:flex; flex-direction:column; gap:14px; max-width:480px;">
+      <div>
+        <label style="font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); display:block; margin-bottom:6px;">
+          Excel File (.xlsx / .xlsb / .xls)
+        </label>
+        <input
+          class="input"
+          type="file"
+          name="excel_file"
+          accept=".xlsx,.xlsb,.xls"
+          required
+          style="padding:8px;"
+        />
+      </div>
+      <div>
+        <button type="submit" class="button">
+          Generate XMLs &amp; Download ZIP
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="section" style="font-size:13px; color:var(--muted);">
+  <h3 style="font-size:14px; margin-bottom:10px;">Expected Column Layout</h3>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Col</th><th>Header</th><th>Usage</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td>EPKDNR</td><td>Kundennummer for Primex lookup</td></tr>
+        <tr><td>B</td><td>Menge</td><td>Quantity of first article</td></tr>
+        <tr><td>C</td><td>Artikel</td><td>First article, e.g. "SI00 44001"</td></tr>
+        <tr><td>D</td><td>Menge</td><td>Quantity of second article (optional)</td></tr>
+        <tr><td>E</td><td>Artikel</td><td>Second article (optional)</td></tr>
+        <tr><td>F</td><td>Adressnummer</td><td>Adressnummer filter for Primex</td></tr>
+        <tr><td>G</td><td>Liefertermin</td><td>e.g. "Woche 12" → 202612WO</td></tr>
+        <tr><td>H</td><td>Ticketnummer</td><td>Used as OrderID and filename base</td></tr>
+        <tr><td>I</td><td>Kom. Name</td><td>CommissionName</td></tr>
+        <tr><td>J</td><td>Kom.-Nr.</td><td>CommissionNumber</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

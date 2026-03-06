@@ -7,6 +7,7 @@ import { I18nProvider } from "./i18n/I18nContext";
 import "./index.css";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DataExportPage } from "./pages/DataExportPage";
+import { ExcelOrdersPage } from "./pages/ExcelOrdersPage";
 import { LoginPage } from "./pages/LoginPage";
 import { OrderDetailPage } from "./pages/OrderDetailPage";
 import { OrdersPage } from "./pages/OrdersPage";
@@ -26,6 +27,7 @@ createRoot(document.getElementById("root")).render(
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/:orderId" element={<OrderDetailPage />} />
               <Route path="/data-export" element={<DataExportPage />} />
+              <Route path="/excel-orders" element={<ExcelOrdersPage />} />
               <Route path="/clients" element={<ClientsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/users" element={<UsersPage />} />
