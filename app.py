@@ -110,6 +110,37 @@ ALLOWED_DATA_EXPORT_TABLES = frozenset(
         "wochen_import_stage",
     }
 )
+ALLOWED_DATA_IMPORT_TABLES = frozenset({
+    "filialen_import_stage",
+    "kunden_import_stage",
+})
+IMPORT_COLUMN_MAP: dict[str, dict[str, str]] = {
+    "kunden_import_stage": {
+        "Kundennummer": "kundennummer",
+        "Kundenbetrieb": "kundenbetrieb",
+        "Name1": "name1",
+        "Name2": "name2",
+        "Name3": "name3",
+        "Strasse": "strasse",
+        "Ort": "ort",
+        "Postleitzahl": "postleitzahl",
+        "Adressnummer": "adressnummer",
+        "Tour": "tour",
+        "Verband": "verband",
+    },
+    "filialen_import_stage": {
+        "Filial-/Lagerkürzel": "filial_lagerkuerzel",
+        "ILN": "iln",
+        "Schiene": "schiene",
+        "Filiale/Lager": "filiale_lager",
+        "Straße": "strasse",
+        "PLZ": "plz",
+        "Ort": "ort",
+        "Rechnungsregulierer (NAD+IV)": "rechnungsregulierer",
+        "Gesellschaft": "gesellschaft",
+        "Datenempfänger": "datenempfaenger",
+    },
+}
 DATA_EXPORT_TABLE_ALIASES = {
     "fillalen_import_stage": "filialen_import_stage",
 }
@@ -2066,6 +2097,68 @@ def api_data_export_table_xlsx(table_name: str):
     )
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
+
+
+def _import_table_from_xlsx(table_name: str, file_stream: Any) -> int:
+    from openpyxl import load_workbook
+
+    col_map = IMPORT_COLUMN_MAP[table_name]
+    wb = load_workbook(filename=file_stream, read_only=True, data_only=True)
+    ws = wb.worksheets[0]
+    rows_iter = ws.iter_rows(values_only=True)
+    header_row = next(rows_iter, None)
+    if header_row is None:
+        return 0
+
+    # Map positional index -> db column name (skip unrecognized headers)
+    index_to_col: dict[int, str] = {}
+    for idx, cell_val in enumerate(header_row):
+        if cell_val is None:
+            continue
+        header = str(cell_val).strip()
+        if header in col_map:
+            index_to_col[idx] = col_map[header]
+
+    data_rows: list[dict[str, Any]] = []
+    for row in rows_iter:
+        record: dict[str, Any] = {}
+        for idx, db_col in index_to_col.items():
+            cell_val = row[idx] if idx < len(row) else None
+            record[db_col] = str(cell_val) if cell_val is not None else None
+        if any(v is not None for v in record.values()):
+            data_rows.append(record)
+
+    if not data_rows:
+        execute(f'DELETE FROM "{table_name}"')
+        return 0
+
+    db_cols = list(data_rows[0].keys())
+    cols_sql = ", ".join(f'"{c}"' for c in db_cols)
+    placeholders = ", ".join(["%s"] * len(db_cols))
+
+    execute(f'DELETE FROM "{table_name}"')
+    for record in data_rows:
+        values = [record.get(c) for c in db_cols]
+        execute(
+            f'INSERT INTO "{table_name}" ({cols_sql}) VALUES ({placeholders})',
+            values,
+        )
+    return len(data_rows)
+
+
+@app.route("/api/data-import/<table_name>", methods=["POST"])
+def api_data_import_table(table_name: str):
+    normalized = str(table_name or "").strip()
+    if normalized not in ALLOWED_DATA_IMPORT_TABLES:
+        return _api_error(400, "invalid_table", f"Unsupported import table '{normalized}'")
+    if "file" not in request.files:
+        return _api_error(400, "missing_file", "No file uploaded")
+    file = request.files["file"]
+    try:
+        count = _import_table_from_xlsx(normalized, file.stream)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "import_error", f"Import failed: {exc}")
+    return jsonify({"imported": count})
 
 
 @app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
