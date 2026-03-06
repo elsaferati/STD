@@ -25,6 +25,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     url_for,
 )
@@ -49,13 +50,19 @@ from auth import (
     session_cookie_name,
     session_cookie_options,
 )
-from db import execute, fetch_all, fetch_one, init_db
+from db import _drop_thread_connection, execute, fetch_all, fetch_one, init_db
 
 load_dotenv()
 config = Config.from_env()
 OUTPUT_DIR = config.output_dir
 
 app = Flask(__name__)
+
+
+@app.teardown_appcontext
+def _close_db_connection(exc):
+    _drop_thread_connection()
+
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 REPLY_EMAIL_TO = (os.getenv("REPLY_EMAIL_TO") or "").strip() or "00primex.eu@gmail.com"
@@ -2406,6 +2413,63 @@ def index() -> str:
         date_scope=date_scope,
         body_class="dashboard",
     )
+
+
+@app.route("/excel-to-xml")
+def excel_to_xml_page():
+    return render_template("excel_to_xml.html", title="Excel → XML Generator")
+
+
+@app.route("/excel-to-xml/generate", methods=["POST"])
+def excel_to_xml_generate():
+    import io
+    import tempfile
+    import zipfile
+
+    from excel_xml_generator import generate_xmls_from_excel
+
+    uploaded = request.files.get("excel_file")
+    if not uploaded or not uploaded.filename:
+        return render_template(
+            "excel_to_xml.html",
+            title="Excel → XML Generator",
+            error="No file uploaded.",
+        )
+
+    filename_lower = uploaded.filename.lower()
+    if not any(filename_lower.endswith(ext) for ext in (".xlsx", ".xlsb", ".xls")):
+        return render_template(
+            "excel_to_xml.html",
+            title="Excel → XML Generator",
+            error="Unsupported file type. Please upload .xlsx, .xlsb, or .xls.",
+        )
+
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xml_paths = generate_xmls_from_excel(uploaded.stream, Path(tmpdir))
+            if not xml_paths:
+                return render_template(
+                    "excel_to_xml.html",
+                    title="Excel → XML Generator",
+                    error="No rows found in the Excel file.",
+                )
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for p in xml_paths:
+                    zf.write(p, arcname=p.name)
+            zip_buffer.seek(0)
+            return send_file(
+                zip_buffer,
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name="orders_xml.zip",
+            )
+    except Exception as exc:  # noqa: BLE001
+        return render_template(
+            "excel_to_xml.html",
+            title="Excel → XML Generator",
+            error=f"Failed to generate XMLs: {exc}",
+        )
 
 
 @app.route("/download/<filename>")
