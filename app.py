@@ -260,6 +260,18 @@ def _normalize_status(value: Any) -> str:
     return status
 
 
+def _status_label(value: Any) -> str:
+    status = _normalize_status(value)
+    labels = {
+        "ok": "OK",
+        "reply": "Reply",
+        "human_in_the_loop": "Human in the Loop",
+        "post": "Post",
+        "failed": "Failed",
+    }
+    return labels.get(status, "OK")
+
+
 def _normalize_extraction_branch(value: Any) -> str:
     branch_id = str(value or "").strip().lower()
     if branch_id in ALLOWED_CLIENT_FILTER_IDS:
@@ -991,6 +1003,7 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     response["parse_error"] = order["parse_error"]
     response["xml_files"] = _resolve_xml_files(order["safe_id"], order["header"])
     response["is_editable"] = bool(order.get("is_editable", order["human_review_needed"] and not order["parse_error"]))
+    response["editability_reason"] = str(order.get("editability_reason") or "")
     response["reply_mailto"] = order["reply_mailto"]
     response["reply_needed"] = order["reply_needed"]
     response["post_case"] = order["post_case"]
@@ -2183,6 +2196,7 @@ def api_order_detail(order_id: str):
             is_admin=is_admin,
         )
     order["is_editable"] = bool(can_edit)
+    order["editability_reason"] = "" if can_edit else str(_edit_reason or "Order is not editable")
 
     if request.method == "GET":
         return jsonify(_order_api_payload(order))
@@ -2206,16 +2220,40 @@ def api_order_detail(order_id: str):
 
     header_updates = body.get("header", {})
     item_updates = body.get("items", {})
+    deleted_item_indexes = body.get("deleted_item_indexes", [])
+    new_items = body.get("new_items", [])
     if not isinstance(header_updates, dict):
         return _api_error(400, "invalid_body", "'header' must be an object")
     if not isinstance(item_updates, dict):
         return _api_error(400, "invalid_body", "'items' must be an object keyed by item index")
+    if deleted_item_indexes is None:
+        deleted_item_indexes = []
+    if not isinstance(deleted_item_indexes, list):
+        return _api_error(400, "invalid_body", "'deleted_item_indexes' must be an array")
+    if new_items is None:
+        new_items = []
+    if not isinstance(new_items, list):
+        return _api_error(400, "invalid_body", "'new_items' must be an array")
 
     for field, value in header_updates.items():
         if field not in EDITABLE_HEADER_FIELDS:
             return _api_error(400, "invalid_field", f"Header field '{field}' is not editable")
         _set_manual_entry(order["header"], field, _clean_form_value(str(value) if value is not None else ""))
 
+    deleted_index_set: set[int] = set()
+    item_count = len(order["items"])
+    for raw_deleted_index in deleted_item_indexes:
+        if isinstance(raw_deleted_index, bool):
+            return _api_error(400, "invalid_body", f"Invalid deleted item index '{raw_deleted_index}'")
+        try:
+            deleted_index = int(raw_deleted_index)
+        except (TypeError, ValueError):
+            return _api_error(400, "invalid_body", f"Invalid deleted item index '{raw_deleted_index}'")
+        if deleted_index < 0 or deleted_index >= item_count:
+            return _api_error(400, "invalid_body", f"Deleted item index '{raw_deleted_index}' is out of range")
+        deleted_index_set.add(deleted_index)
+
+    parsed_item_updates: dict[int, dict[str, Any]] = {}
     for raw_index, fields in item_updates.items():
         if not isinstance(fields, dict):
             return _api_error(400, "invalid_body", f"Item patch for index '{raw_index}' must be an object")
@@ -2223,16 +2261,59 @@ def api_order_detail(order_id: str):
             index = int(raw_index)
         except (TypeError, ValueError):
             return _api_error(400, "invalid_body", f"Invalid item index '{raw_index}'")
-        if index < 0 or index >= len(order["items"]):
+        if index < 0 or index >= item_count:
             return _api_error(400, "invalid_body", f"Item index '{raw_index}' is out of range")
+        if index in deleted_index_set:
+            return _api_error(400, "invalid_body", f"Item index '{raw_index}' cannot be patched and deleted")
+        parsed_item_updates[index] = fields
+
+    for index, fields in parsed_item_updates.items():
         item = order["items"][index]
         if not isinstance(item, dict):
-            return _api_error(400, "invalid_body", f"Item '{raw_index}' is not editable")
+            return _api_error(400, "invalid_body", f"Item '{index}' is not editable")
 
         for field, value in fields.items():
             if field not in EDITABLE_ITEM_FIELDS:
                 return _api_error(400, "invalid_field", f"Item field '{field}' is not editable")
             _set_manual_entry(item, field, _clean_form_value(str(value) if value is not None else ""))
+    if deleted_index_set:
+        order["items"] = [item for idx, item in enumerate(order["items"]) if idx not in deleted_index_set]
+
+    appended_new_items: list[dict[str, Any]] = []
+    appended_item_refs: list[tuple[dict[str, Any], dict[str, str]]] = []
+    for index, raw_new_item in enumerate(new_items):
+        if not isinstance(raw_new_item, dict):
+            return _api_error(400, "invalid_body", f"new_items[{index}] must be an object")
+
+        invalid_fields = [field for field in raw_new_item.keys() if field not in EDITABLE_ITEM_FIELDS]
+        if invalid_fields:
+            return _api_error(400, "invalid_field", f"Item field '{invalid_fields[0]}' is not editable")
+
+        normalized_values: dict[str, str] = {}
+        for field in EDITABLE_ITEM_FIELDS:
+            value = raw_new_item.get(field, "")
+            normalized_values[field] = _clean_form_value(str(value) if value is not None else "")
+
+        if not any(normalized_values.values()):
+            continue
+
+        appended_item: dict[str, Any] = {}
+        for field, value in normalized_values.items():
+            _set_manual_entry(appended_item, field, value)
+        order["items"].append(appended_item)
+        appended_item_refs.append((appended_item, normalized_values))
+
+    for line_no, existing_item in enumerate(order["items"], start=1):
+        if isinstance(existing_item, dict):
+            existing_item["line_no"] = line_no
+
+    for appended_item, normalized_values in appended_item_refs:
+        appended_new_items.append(
+            {
+                "line_no": appended_item.get("line_no"),
+                **normalized_values,
+            }
+        )
 
     order["data"]["header"] = order["header"]
     order["data"]["items"] = order["items"]
@@ -2244,7 +2325,12 @@ def api_order_detail(order_id: str):
             order_id=order["safe_id"],
             payload=order["data"],
             actor_user_id=current_user_id,
-            diff_json={"header": header_updates, "items": item_updates},
+            diff_json={
+                "header": header_updates,
+                "items": item_updates,
+                "deleted_item_indexes": sorted(deleted_index_set),
+                "new_items": appended_new_items,
+            },
         )
         revision_id = persisted.get("revision_id")
     except order_store.OrderStoreError as exc:
@@ -2295,6 +2381,13 @@ def api_order_detail(order_id: str):
     )
     if updated_error is not None:
         return updated_error
+    updated_can_edit, updated_reason = order_store.is_order_editable_for_detail(
+        order=updated_order,
+        user_id=current_user_id,
+        is_admin=is_admin,
+    )
+    updated_order["is_editable"] = bool(updated_can_edit)
+    updated_order["editability_reason"] = "" if updated_can_edit else str(updated_reason or "Order is not editable")
 
     payload = _order_api_payload(updated_order)
     payload["xml_regenerated"] = xml_regenerated
@@ -2669,12 +2762,14 @@ def order_detail(order_id: str) -> str:
     saved = (request.args.get("saved") or "") == "1"
     exported = (request.args.get("exported") or "") == "1"
     xml_regenerated = (request.args.get("xml_regenerated") or "") == "1"
+    status = _normalize_status(data.get("status"))
     return render_template(
         "detail.html",
         order_id=safe_id,
         message_id=data.get("message_id") or safe_id,
         received_at=data.get("received_at") or "",
-        status=_normalize_status(data.get("status")),
+        status=status,
+        status_label=_status_label(status),
         header_rows=header_rows,
         item_rows=item_rows,
         warnings=warnings,

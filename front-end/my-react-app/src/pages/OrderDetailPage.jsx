@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { StatusBadge } from "../components/StatusBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 import {
@@ -23,12 +24,19 @@ function buildHeaderDraft(order) {
 }
 
 function buildItemDraft(order) {
-  return (order?.items || []).map((item) => ({
-    artikelnummer: entryValue(item.artikelnummer),
-    modellnummer: entryValue(item.modellnummer),
-    menge: entryValue(item.menge),
-    furncloud_id: entryValue(item.furncloud_id),
-  }));
+  return (order?.items || []).map((item, index) => {
+    const parsedLineNo = Number.parseInt(String(item?.line_no ?? ""), 10);
+    return {
+      line_no: Number.isFinite(parsedLineNo) && parsedLineNo > 0 ? parsedLineNo : index + 1,
+      artikelnummer: entryValue(item.artikelnummer),
+      modellnummer: entryValue(item.modellnummer),
+      menge: entryValue(item.menge),
+      furncloud_id: entryValue(item.furncloud_id),
+      __isNew: false,
+      __sourceIndex: index,
+      __draftId: `existing-${item?.line_no ?? index + 1}-${index}`,
+    };
+  });
 }
 
 function levelClass(level) {
@@ -65,6 +73,9 @@ export function OrderDetailPage() {
   const [searchInput, setSearchInput] = useState("");
 
   const [isEditing, setIsEditing] = useState(false);
+  const [startingEdit, setStartingEdit] = useState(false);
+  const [editBaselineItemCount, setEditBaselineItemCount] = useState(0);
+  const [deletedPersistedIndexes, setDeletedPersistedIndexes] = useState([]);
   const [highlightLowConfidence, setHighlightLowConfidence] = useState(false);
   const [headerDraft, setHeaderDraft] = useState({});
   const [itemDraft, setItemDraft] = useState([]);
@@ -131,21 +142,82 @@ export function OrderDetailPage() {
     return ordered;
   }, [order]);
 
-  const startEditing = () => {
-    if (!order?.is_editable) {
+  const startEditing = async () => {
+    if (!orderId || !order?.is_editable || startingEdit) {
       return;
     }
-    setIsEditing(true);
-    setHeaderDraft(buildHeaderDraft(order));
-    setItemDraft(buildItemDraft(order));
-    setNotice("");
+    setStartingEdit(true);
+    setError("");
+    try {
+      const fresh = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}`);
+      setOrder(fresh);
+      setHeaderDraft(buildHeaderDraft(fresh));
+      setItemDraft(buildItemDraft(fresh));
+      setEditBaselineItemCount((fresh.items || []).length);
+      setDeletedPersistedIndexes([]);
+      setIsEditing(true);
+      setNotice("");
+    } catch (requestError) {
+      setError(requestError.message || t("orderDetail.loadError"));
+    } finally {
+      setStartingEdit(false);
+    }
   };
 
   const discardChanges = () => {
     setIsEditing(false);
     setHeaderDraft(buildHeaderDraft(order));
     setItemDraft(buildItemDraft(order));
+    setEditBaselineItemCount(0);
+    setDeletedPersistedIndexes([]);
     setNotice(t("orderDetail.changesDiscarded"));
+  };
+
+  const addItemRow = () => {
+    const draftId = `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setItemDraft((current) => {
+      const maxLineNo = current.reduce((maxValue, item, index) => {
+        const parsed = Number.parseInt(String(item?.line_no ?? ""), 10);
+        const fallback = index + 1;
+        return Math.max(maxValue, Number.isFinite(parsed) && parsed > 0 ? parsed : fallback);
+      }, 0);
+      return [
+        ...current,
+        {
+          line_no: maxLineNo + 1,
+          artikelnummer: "",
+          modellnummer: "",
+          menge: "",
+          furncloud_id: "",
+          __isNew: true,
+          __draftId: draftId,
+        },
+      ];
+    });
+  };
+
+  const removeNewItemRow = (draftId) => {
+    setItemDraft((current) => current.filter((item) => item.__draftId !== draftId));
+  };
+
+  const removePersistedItemRow = (draftId) => {
+    const target = itemDraft.find((item) => item.__draftId === draftId);
+    if (!target) {
+      return;
+    }
+    const lineNo = target?.line_no ?? "?";
+    const confirmed = window.confirm(t("orderDetail.deleteItemConfirm", { line_no: lineNo }));
+    if (!confirmed) {
+      return;
+    }
+    const sourceIndex = Number.parseInt(String(target?.__sourceIndex ?? ""), 10);
+    if (Number.isFinite(sourceIndex) && sourceIndex >= 0) {
+      setDeletedPersistedIndexes((existing) => (
+        existing.includes(sourceIndex) ? existing : [...existing, sourceIndex]
+      ));
+    }
+    setItemDraft((current) => current.filter((item) => item.__draftId !== draftId));
+    setNotice(t("orderDetail.itemDeletedNotice"));
   };
 
   const regenerateXml = async () => {
@@ -192,6 +264,8 @@ export function OrderDetailPage() {
       return;
     }
 
+    const persistedCount = (order.items || []).length;
+    const deletedSet = new Set(deletedPersistedIndexes);
     const headerPatch = {};
     (order.editable_header_fields || []).forEach((field) => {
       const before = entryValue(order.header?.[field]);
@@ -202,22 +276,60 @@ export function OrderDetailPage() {
     });
 
     const itemPatch = {};
-    (order.items || []).forEach((item, index) => {
+    const persistedRows = itemDraft.filter((item) => !item?.__isNew);
+    persistedRows.forEach((draftItem) => {
+      const sourceIndex = Number.parseInt(String(draftItem?.__sourceIndex ?? ""), 10);
+      if (!Number.isFinite(sourceIndex) || sourceIndex < 0 || sourceIndex >= persistedCount) {
+        return;
+      }
+      if (deletedSet.has(sourceIndex)) {
+        return;
+      }
+      const item = order.items?.[sourceIndex] || {};
       const changes = {};
       (order.editable_item_fields || []).forEach((field) => {
         const before = entryValue(item?.[field]);
-        const after = String(itemDraft[index]?.[field] || "");
+        const after = String(draftItem?.[field] || "");
         if (after !== before) {
           changes[field] = after;
         }
       });
       if (Object.keys(changes).length) {
-        itemPatch[index] = changes;
+        itemPatch[sourceIndex] = changes;
       }
     });
 
-    if (!Object.keys(headerPatch).length && !Object.keys(itemPatch).length) {
+    const newItems = itemDraft
+      .filter((item) => Boolean(item?.__isNew))
+      .map((item) => {
+        const payload = {};
+        (order.editable_item_fields || []).forEach((field) => {
+          payload[field] = String(item?.[field] || "");
+        });
+        return payload;
+      })
+      .filter((item) => Object.values(item).some((value) => String(value || "").trim() !== ""));
+
+    if (import.meta.env.DEV) {
+      console.debug("[OrderDetail] save classification", {
+        baseline: editBaselineItemCount,
+        persistedCount,
+        draftCount: itemDraft.length,
+        itemPatchCount: Object.keys(itemPatch).length,
+        deletedPersistedCount: deletedPersistedIndexes.length,
+        newItemsCount: newItems.length,
+      });
+    }
+
+    if (
+      !Object.keys(headerPatch).length
+      && !Object.keys(itemPatch).length
+      && deletedPersistedIndexes.length === 0
+      && newItems.length === 0
+    ) {
       setIsEditing(false);
+      setEditBaselineItemCount(0);
+      setDeletedPersistedIndexes([]);
       setNotice(t("orderDetail.noChanges"));
       return;
     }
@@ -230,12 +342,16 @@ export function OrderDetailPage() {
         body: {
           header: headerPatch,
           items: itemPatch,
+          ...(deletedPersistedIndexes.length ? { deleted_item_indexes: deletedPersistedIndexes } : {}),
+          ...(newItems.length ? { new_items: newItems } : {}),
         },
       });
       setOrder(updated);
       setHeaderDraft(buildHeaderDraft(updated));
       setItemDraft(buildItemDraft(updated));
       setIsEditing(false);
+      setEditBaselineItemCount(0);
+      setDeletedPersistedIndexes([]);
       setNotice(updated.xml_regenerated ? t("orderDetail.savedAndRegenerated") : t("orderDetail.savedNoRegen"));
     } catch (requestError) {
       setError(requestError.message || t("orderDetail.saveFailed"));
@@ -280,6 +396,11 @@ export function OrderDetailPage() {
   ]
     .map((value) => String(value || "").trim())
     .find((value) => value.length > 0) || order.order_id;
+  const editButtonDisabled = !order.is_editable || isEditing || startingEdit;
+  const editDisabledReason = !order.is_editable
+    ? String(order.editability_reason || t("orderDetail.editUnavailableFallback"))
+    : "";
+  const editDisabledHelpId = editButtonDisabled && editDisabledReason ? "edit-fields-helptext" : undefined;
 
   return (
     <AppShell active="orders">
@@ -301,7 +422,7 @@ export function OrderDetailPage() {
           </header>
         </div>
 
-        <div className="px-6 py-6 space-y-6">
+        <div className={`px-6 py-6 space-y-6 ${isEditing ? "pb-44 md:pb-40" : ""}`}>
           <header className="bg-surface-light border-b border-slate-200 rounded-xl">
             <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -314,12 +435,7 @@ export function OrderDetailPage() {
             </nav>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: displayOrderRef })}</h1>
-              {order.is_editable ? (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning/20 text-warning border border-warning/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />
-                  {t("common.humanReview")}
-                </span>
-              ) : null}
+              <StatusBadge status={order.status} />
               <span className="text-xs text-slate-500">{t("orderDetail.received", { date: formatDateTime(order.received_at, lang) })}</span>
             </div>
           </div>
@@ -410,9 +526,21 @@ export function OrderDetailPage() {
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
                 <h2 className="font-bold text-lg text-slate-800">{t("orderDetail.lineItems")}</h2>
-                <span className="text-xs text-slate-500">
-                  {(order.items || []).length} {t("common.items")}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-500">
+                    {(isEditing ? itemDraft.length : (order.items || []).length)} {t("common.items")}
+                  </span>
+                  {isEditing ? (
+                    <button
+                      type="button"
+                      onClick={addItemRow}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-primary bg-primary/10 border border-primary/20 rounded-md hover:bg-primary/15 transition-colors"
+                    >
+                      <span className="material-icons text-sm">add</span>
+                      {t("orderDetail.addItem")}
+                    </button>
+                  ) : null}
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left">
@@ -423,13 +551,14 @@ export function OrderDetailPage() {
                       <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.modellnummer")}</th>
                       <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.menge")}</th>
                       <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.furncloud_id")}</th>
+                      {isEditing ? <th className="px-6 py-3 sticky top-0 bg-slate-50 text-right">{t("common.actions")}</th> : null}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {(order.items || []).map((item, index) => (
-                      <tr key={`${order.order_id}-${index}`}>
+                    {(isEditing ? itemDraft : (order.items || [])).map((item, index) => (
+                      <tr key={item?.__draftId || `${order.order_id}-${index}`}>
                         <td className="px-6 py-4 text-slate-500 sticky left-0 z-10 bg-white border-r border-slate-200">
-                          {item.line_no ?? index + 1}
+                          {isEditing ? index + 1 : (item?.line_no ?? index + 1)}
                         </td>
                         {["artikelnummer", "modellnummer", "menge", "furncloud_id"].map((field) => (
                           <td key={field} className="px-6 py-4">
@@ -447,10 +576,35 @@ export function OrderDetailPage() {
                                 className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
                               />
                             ) : (
-                              <span>{entryValue(item[field]) || "-"}</span>
+                              <span>{isEditing ? (item?.[field] || "-") : (entryValue(item[field]) || "-")}</span>
                             )}
                           </td>
                         ))}
+                        {isEditing ? (
+                          <td className="px-6 py-4 text-right">
+                            {item?.__isNew ? (
+                              <button
+                                type="button"
+                                onClick={() => removeNewItemRow(item.__draftId)}
+                                aria-label={t("orderDetail.deleteItemAriaLabel", { line_no: index + 1 })}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/10 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                              >
+                                <span className="material-icons text-sm">delete</span>
+                                {t("orderDetail.deleteItem")}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => removePersistedItemRow(item.__draftId)}
+                                aria-label={t("orderDetail.deleteItemAriaLabel", { line_no: index + 1 })}
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/10 rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/60"
+                              >
+                                <span className="material-icons text-sm">delete</span>
+                                {t("orderDetail.deleteItem")}
+                              </button>
+                            )}
+                          </td>
+                        ) : null}
                       </tr>
                     ))}
                   </tbody>
@@ -475,12 +629,20 @@ export function OrderDetailPage() {
                 <button
                   type="button"
                   onClick={startEditing}
-                  disabled={!order.is_editable || isEditing}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-slate-900 bg-primary rounded-md shadow-sm shadow-primary/20 disabled:opacity-50"
+                  disabled={editButtonDisabled}
+                  aria-disabled={editButtonDisabled}
+                  aria-describedby={editDisabledHelpId}
+                  title={editButtonDisabled && editDisabledReason ? editDisabledReason : ""}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-slate-900 bg-primary rounded-md shadow-sm shadow-primary/20 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
                 >
                   <span className="material-icons text-base">edit</span>
-                  {t("common.editFields")}
+                  {startingEdit ? t("common.loadingOrder") : t("common.editFields")}
                 </button>
+                {editButtonDisabled && editDisabledReason ? (
+                  <p id={editDisabledHelpId} className="text-xs text-slate-600 px-1">
+                    {t("orderDetail.editUnavailable", { reason: editDisabledReason })}
+                  </p>
+                ) : null}
                 {order.reply_mailto ? (
                   <a
                     href={order.reply_mailto}
@@ -554,7 +716,7 @@ export function OrderDetailPage() {
         </div>
 
       {isEditing ? (
-        <div className="fixed bottom-0 left-72 right-0 bg-white border-t border-primary/50 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] py-4 px-6 z-40">
+        <div className="fixed bottom-0 left-0 right-0 lg:left-72 bg-white border-t border-primary/50 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] py-4 px-4 md:px-6 z-40">
           <div className="max-w-[1920px] mx-auto flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="material-icons text-primary animate-pulse">edit_note</span>

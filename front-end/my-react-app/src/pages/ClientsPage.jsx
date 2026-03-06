@@ -4,12 +4,12 @@ import { fetchJson } from "../api/http";
 import {
   ALL_CLIENT_FILTER,
   CLIENT_BRANCHES,
-  KNOWN_CLIENT_BRANCH_IDS,
   UNKNOWN_CLIENT_BRANCH_ID,
 } from "../constants/clientBranches";
 import { AppShell } from "../components/AppShell";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { StatusBadge } from "../components/StatusBadge";
+import { useAuth } from "../auth/useAuth";
 import { useI18n } from "../i18n/I18nContext";
 import { formatDateTime } from "../utils/format";
 import { normalizeBranchId } from "../utils/clientClassifier";
@@ -21,20 +21,64 @@ function isAbortError(error) {
   return error?.name === "AbortError";
 }
 
-function buildInitialClientCounts() {
-  const counts = {
-    [ALL_CLIENT_FILTER]: 0,
-    [UNKNOWN_CLIENT_BRANCH_ID]: 0,
-  };
-  CLIENT_BRANCHES.forEach((branch) => {
-    counts[branch.id] = 0;
+function buildInitialClientCounts({ visibleKnownBranchIds = [], includeUnknownBranch = false, includeAll = true } = {}) {
+  const counts = {};
+  if (includeAll) {
+    counts[ALL_CLIENT_FILTER] = 0;
+  }
+  visibleKnownBranchIds.forEach((branchId) => {
+    counts[branchId] = 0;
   });
+  if (includeUnknownBranch) {
+    counts[UNKNOWN_CLIENT_BRANCH_ID] = 0;
+  }
   return counts;
 }
 
 export function ClientsPage() {
   const { t, lang } = useI18n();
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const isAdmin = user?.role === "admin";
+  const assignedClientBranchIds = useMemo(() => {
+    const assigned = Array.isArray(user?.client_branches) ? user.client_branches : [];
+    return new Set(
+      assigned
+        .map((branchId) => String(branchId || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+  }, [user?.client_branches]);
+  const visibleKnownBranches = useMemo(() => {
+    if (isAdmin) return CLIENT_BRANCHES;
+    return CLIENT_BRANCHES.filter((branch) => assignedClientBranchIds.has(branch.id));
+  }, [assignedClientBranchIds, isAdmin]);
+  const visibleKnownBranchIds = useMemo(
+    () => visibleKnownBranches.map((branch) => branch.id),
+    [visibleKnownBranches],
+  );
+  const includeUnknownBranch = isAdmin || assignedClientBranchIds.has(UNKNOWN_CLIENT_BRANCH_ID);
+  const visibleBranchCount = visibleKnownBranchIds.length + (includeUnknownBranch ? 1 : 0);
+  const showAllFilter = isAdmin || visibleBranchCount > 1;
+  const defaultNonAllFilterId = useMemo(() => {
+    if (visibleKnownBranchIds.length > 0) {
+      return visibleKnownBranchIds[0];
+    }
+    if (includeUnknownBranch) {
+      return UNKNOWN_CLIENT_BRANCH_ID;
+    }
+    return ALL_CLIENT_FILTER;
+  }, [includeUnknownBranch, visibleKnownBranchIds]);
+  const allowedFilterIds = useMemo(() => {
+    const ids = new Set(visibleKnownBranchIds);
+    if (includeUnknownBranch) {
+      ids.add(UNKNOWN_CLIENT_BRANCH_ID);
+    }
+    if (showAllFilter) {
+      ids.add(ALL_CLIENT_FILTER);
+    }
+    return ids;
+  }, [includeUnknownBranch, showAllFilter, visibleKnownBranchIds]);
 
   const [orders, setOrders] = useState([]);
   const [pagination, setPagination] = useState({
@@ -43,7 +87,9 @@ export function ClientsPage() {
     total: 0,
     total_pages: 1,
   });
-  const [clientCounts, setClientCounts] = useState(buildInitialClientCounts);
+  const [clientCounts, setClientCounts] = useState(() =>
+    buildInitialClientCounts({ visibleKnownBranchIds, includeUnknownBranch, includeAll: showAllFilter }),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState(searchParams.get("q") || "");
@@ -60,10 +106,38 @@ export function ClientsPage() {
 
   const selectedClient = useMemo(() => {
     const normalized = String(selectedClientParam || "").trim().toLowerCase();
-    if (!normalized || normalized === ALL_CLIENT_FILTER) return ALL_CLIENT_FILTER;
-    if (normalized === UNKNOWN_CLIENT_BRANCH_ID) return UNKNOWN_CLIENT_BRANCH_ID;
-    return KNOWN_CLIENT_BRANCH_IDS.has(normalized) ? normalized : ALL_CLIENT_FILTER;
-  }, [selectedClientParam]);
+    if (!normalized) {
+      return showAllFilter ? ALL_CLIENT_FILTER : defaultNonAllFilterId;
+    }
+    if (allowedFilterIds.has(normalized)) {
+      return normalized;
+    }
+    return showAllFilter ? ALL_CLIENT_FILTER : defaultNonAllFilterId;
+  }, [allowedFilterIds, defaultNonAllFilterId, selectedClientParam, showAllFilter]);
+
+  useEffect(() => {
+    const rawClient = searchParams.get("client");
+    if (!showAllFilter && defaultNonAllFilterId !== ALL_CLIENT_FILTER && rawClient !== defaultNonAllFilterId) {
+      const next = new URLSearchParams(searchParams);
+      next.set("client", defaultNonAllFilterId);
+      next.delete("page");
+      setSearchParams(next);
+      return;
+    }
+    if (!rawClient) return;
+    const normalized = String(rawClient).trim().toLowerCase();
+    if (allowedFilterIds.has(normalized)) {
+      return;
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("client");
+    next.delete("page");
+    setSearchParams(next);
+  }, [allowedFilterIds, defaultNonAllFilterId, searchParams, setSearchParams, showAllFilter]);
+
+  useEffect(() => {
+    setClientCounts(buildInitialClientCounts({ visibleKnownBranchIds, includeUnknownBranch, includeAll: showAllFilter }));
+  }, [includeUnknownBranch, showAllFilter, visibleKnownBranchIds]);
 
   const updateParams = useCallback(
     (updates, options = {}) => {
@@ -98,7 +172,7 @@ export function ClientsPage() {
       if (qParam.trim()) {
         ordersQuery.set("q", qParam.trim());
       }
-      if (selectedClient !== ALL_CLIENT_FILTER) {
+      if (selectedClient !== ALL_CLIENT_FILTER && selectedClient) {
         ordersQuery.set("client", selectedClient);
       }
       ordersQuery.set("page", String(pageParam));
@@ -126,14 +200,19 @@ export function ClientsPage() {
         total_pages: Number(apiPagination.total_pages || 1),
       });
 
-      const nextCounts = buildInitialClientCounts();
+      const nextCounts = buildInitialClientCounts({ visibleKnownBranchIds, includeUnknownBranch, includeAll: showAllFilter });
       const rawCounts = countsPayload?.counts && typeof countsPayload.counts === "object" ? countsPayload.counts : {};
       Object.entries(rawCounts).forEach(([branch, value]) => {
         const normalizedBranch = normalizeBranchId(branch);
+        if (!Object.prototype.hasOwnProperty.call(nextCounts, normalizedBranch)) {
+          return;
+        }
         nextCounts[normalizedBranch] = Number(value || 0);
       });
-      nextCounts[ALL_CLIENT_FILTER] =
-        Number(countsPayload?.total || 0) || Object.values(nextCounts).reduce((sum, value) => sum + Number(value || 0), 0);
+      if (showAllFilter) {
+        nextCounts[ALL_CLIENT_FILTER] =
+          Number(countsPayload?.total || 0) || Object.values(nextCounts).reduce((sum, value) => sum + Number(value || 0), 0);
+      }
       setClientCounts(nextCounts);
 
       setError("");
@@ -148,7 +227,7 @@ export function ClientsPage() {
         setLoading(false);
       }
     }
-  }, [pageParam, qParam, selectedClient, t]);
+  }, [includeUnknownBranch, pageParam, qParam, selectedClient, showAllFilter, t, visibleKnownBranchIds]);
 
   useEffect(() => {
     loadOrders();
@@ -172,28 +251,34 @@ export function ClientsPage() {
   }, [t]);
 
   const filterOptions = useMemo(() => {
-    return [
-      {
+    const options = [];
+    if (showAllFilter) {
+      options.push({
         id: ALL_CLIENT_FILTER,
         label: t("clients.filterAll"),
         count: clientCounts[ALL_CLIENT_FILTER] || 0,
-      },
-      ...CLIENT_BRANCHES.map((branch) => ({
+      });
+    }
+    options.push(
+      ...visibleKnownBranches.map((branch) => ({
         id: branch.id,
         label: branchLabels[branch.id],
         count: clientCounts[branch.id] || 0,
       })),
-      {
+    );
+    if (includeUnknownBranch) {
+      options.push({
         id: UNKNOWN_CLIENT_BRANCH_ID,
         label: branchLabels[UNKNOWN_CLIENT_BRANCH_ID],
         count: clientCounts[UNKNOWN_CLIENT_BRANCH_ID] || 0,
-      },
-    ];
-  }, [branchLabels, clientCounts, t]);
+      });
+    }
+    return options;
+  }, [branchLabels, clientCounts, includeUnknownBranch, showAllFilter, t, visibleKnownBranches]);
 
   const hasPrev = pagination.page > 1;
   const hasNext = pagination.page < pagination.total_pages;
-  const hasActiveFilters = qParam.trim().length > 0 || selectedClient !== ALL_CLIENT_FILTER;
+  const hasActiveFilters = qParam.trim().length > 0 || (showAllFilter && selectedClient !== ALL_CLIENT_FILTER);
 
   const handleSearchSubmit = (event) => {
     event.preventDefault();
@@ -224,7 +309,6 @@ export function ClientsPage() {
         <div className="w-full px-6 py-6 space-y-6">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-bold text-slate-900">{t("clients.title")}</h1>
-            <p className="text-sm text-slate-500">{t("clients.pageSubtitle", null, t("clients.subtitle"))}</p>
             <p className="text-sm text-slate-500">{t("clients.showingCount", { count: pagination.total || 0 })}</p>
           </div>
 
