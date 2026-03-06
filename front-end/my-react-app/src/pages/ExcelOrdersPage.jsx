@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AppShell } from "../components/AppShell";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 
@@ -8,6 +9,7 @@ export function ExcelOrdersPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [file, setFile] = useState(null);
+  const [searchInput, setSearchInput] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -46,72 +48,95 @@ export function ExcelOrdersPage() {
     }
   };
 
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+  };
+
   return (
     <AppShell active="excelOrders">
-      <div className="max-w-2xl space-y-4 py-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{t("excelOrders.title")}</h1>
-          <p className="text-sm text-slate-500">{t("excelOrders.subtitle")}</p>
+      <main className="flex-1 flex flex-col min-w-0">
+        <div className="sticky top-0 z-30">
+          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
+            <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+              <input
+                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+                placeholder={t("clients.searchPlaceholder")}
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+            </form>
+            <div className="flex items-center gap-3 ml-4">
+              <LanguageSwitcher compact className="hidden md:flex" />
+            </div>
+          </header>
         </div>
 
-        {error ? (
-          <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div>
-        ) : null}
-
-        <form onSubmit={handleSubmit} className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-slate-700" htmlFor="excel-file">
-              {t("excelOrders.selectFile")}
-            </label>
-            <input
-              id="excel-file"
-              type="file"
-              accept=".xlsx,.xlsb,.xls"
-              required
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
-            />
+        <div className="w-full px-6 py-6 max-w-2xl space-y-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">{t("excelOrders.title")}</h1>
+            <p className="text-sm text-slate-500">{t("excelOrders.subtitle")}</p>
           </div>
 
-          <button
-            type="submit"
-            disabled={busy}
-            className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60"
-          >
-            <span className="material-icons text-base">{busy ? "hourglass_top" : "download"}</span>
-            {busy ? t("excelOrders.generating") : t("excelOrders.generate")}
-          </button>
-        </form>
+          {error ? (
+            <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div>
+          ) : null}
 
-        <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
-          <h2 className="text-base font-semibold text-slate-900">{t("excelOrders.columnsTitle")}</h2>
-          <table className="w-full text-sm text-slate-700 border-collapse">
-            <thead>
-              <tr className="bg-slate-100 text-left">
-                <th className="px-3 py-2 font-semibold border border-slate-200">Column</th>
-                <th className="px-3 py-2 font-semibold border border-slate-200">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ["Kommission", "Commission / order reference number"],
-                ["Artikelnummer", "Article number"],
-                ["Modellnummer", "Model number"],
-                ["Menge", "Quantity"],
-                ["Furncloud_ID", "Furncloud product ID"],
-                ["Kunde", "Customer name"],
-                ["Filiale", "Store / branch"],
-                ["Lieferwoche", "Delivery week"],
-              ].map(([col, desc]) => (
-                <tr key={col} className="even:bg-slate-50">
-                  <td className="px-3 py-1.5 border border-slate-200 font-mono">{col}</td>
-                  <td className="px-3 py-1.5 border border-slate-200">{desc}</td>
+          <form onSubmit={handleSubmit} className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700" htmlFor="excel-file">
+                {t("excelOrders.selectFile")}
+              </label>
+              <input
+                id="excel-file"
+                type="file"
+                accept=".xlsx,.xlsb,.xls"
+                required
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="flex items-center gap-2 bg-primary text-white px-5 py-2.5 rounded text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60"
+            >
+              <span className="material-icons text-base">{busy ? "hourglass_top" : "download"}</span>
+              {busy ? t("excelOrders.generating") : t("excelOrders.generate")}
+            </button>
+          </form>
+
+          <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-3">
+            <h2 className="text-base font-semibold text-slate-900">{t("excelOrders.columnsTitle")}</h2>
+            <table className="w-full text-sm text-slate-700 border-collapse">
+              <thead>
+                <tr className="bg-slate-100 text-left">
+                  <th className="px-3 py-2 font-semibold border border-slate-200">Column</th>
+                  <th className="px-3 py-2 font-semibold border border-slate-200">Description</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[
+                  ["Kommission", "Commission / order reference number"],
+                  ["Artikelnummer", "Article number"],
+                  ["Modellnummer", "Model number"],
+                  ["Menge", "Quantity"],
+                  ["Furncloud_ID", "Furncloud product ID"],
+                  ["Kunde", "Customer name"],
+                  ["Filiale", "Store / branch"],
+                  ["Lieferwoche", "Delivery week"],
+                ].map(([col, desc]) => (
+                  <tr key={col} className="even:bg-slate-50">
+                    <td className="px-3 py-1.5 border border-slate-200 font-mono">{col}</td>
+                    <td className="px-3 py-1.5 border border-slate-200">{desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      </main>
     </AppShell>
   );
 }

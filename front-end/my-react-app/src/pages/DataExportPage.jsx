@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { fetchBlob } from "../api/http";
 import { AppShell } from "../components/AppShell";
+import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 
@@ -96,6 +97,7 @@ export function DataExportPage() {
   const { t } = useI18n();
   const [actionBusy, setActionBusy] = useState("");
   const [actionError, setActionError] = useState("");
+  const [searchInput, setSearchInput] = useState("");
 
   const handleExport = async (tableName) => {
     setActionBusy(tableName);
@@ -110,51 +112,74 @@ export function DataExportPage() {
     }
   };
 
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+  };
+
   return (
     <AppShell active="dataExport">
-      <div className="max-w-5xl space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">{t("dataExport.title")}</h1>
-          <p className="text-sm text-slate-500">{t("dataExport.subtitle")}</p>
+      <main className="flex-1 flex flex-col min-w-0">
+        <div className="sticky top-0 z-30">
+          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
+            <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+              <input
+                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+                placeholder={t("clients.searchPlaceholder")}
+                value={searchInput}
+                onChange={(event) => setSearchInput(event.target.value)}
+              />
+            </form>
+            <div className="flex items-center gap-3 ml-4">
+              <LanguageSwitcher compact className="hidden md:flex" />
+            </div>
+          </header>
         </div>
 
-        {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
-
-        <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
+        <div className="w-full px-6 py-6 max-w-5xl space-y-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">{t("dataExport.exportsTitle")}</h2>
-            <p className="text-sm text-slate-500 mt-1">{t("dataExport.exportsSubtitle")}</p>
+            <h1 className="text-2xl font-bold text-slate-900">{t("dataExport.title")}</h1>
+            <p className="text-sm text-slate-500">{t("dataExport.subtitle")}</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {TABLE_EXPORTS.map((item) => (
-              <button
-                key={item.tableName}
-                type="button"
-                onClick={() => handleExport(item.tableName)}
-                disabled={actionBusy === item.tableName}
-                className="bg-white border border-slate-200 text-slate-700 px-4 py-3 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                <span className="material-icons text-base">file_download</span>
-                {actionBusy === item.tableName ? t("dataExport.exporting") : t(`dataExport.${item.labelKey}`)}
-              </button>
-            ))}
+          {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
+
+          <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">{t("dataExport.exportsTitle")}</h2>
+              <p className="text-sm text-slate-500 mt-1">{t("dataExport.exportsSubtitle")}</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {TABLE_EXPORTS.map((item) => (
+                <button
+                  key={item.tableName}
+                  type="button"
+                  onClick={() => handleExport(item.tableName)}
+                  disabled={actionBusy === item.tableName}
+                  className="bg-white border border-slate-200 text-slate-700 px-4 py-3 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">file_download</span>
+                  {actionBusy === item.tableName ? t("dataExport.exporting") : t(`dataExport.${item.labelKey}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">{t("dataExport.importsTitle")}</h2>
+              <p className="text-sm text-slate-500 mt-1">{t("dataExport.importsSubtitle")}</p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {TABLE_IMPORTS.map((item) => (
+                <ImportRow key={item.tableName} tableName={item.tableName} labelKey={item.labelKey} />
+              ))}
+            </div>
           </div>
         </div>
-
-        <div className="bg-surface-light border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">{t("dataExport.importsTitle")}</h2>
-            <p className="text-sm text-slate-500 mt-1">{t("dataExport.importsSubtitle")}</p>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            {TABLE_IMPORTS.map((item) => (
-              <ImportRow key={item.tableName} tableName={item.tableName} labelKey={item.labelKey} />
-            ))}
-          </div>
-        </div>
-      </div>
+      </main>
     </AppShell>
   );
 }
