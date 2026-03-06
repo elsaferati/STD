@@ -49,13 +49,19 @@ from auth import (
     session_cookie_name,
     session_cookie_options,
 )
-from db import execute, fetch_all, fetch_one, init_db
+from db import _drop_thread_connection, execute, fetch_all, fetch_one, init_db
 
 load_dotenv()
 config = Config.from_env()
 OUTPUT_DIR = config.output_dir
 
 app = Flask(__name__)
+
+
+@app.teardown_appcontext
+def _close_db_connection(exc):
+    _drop_thread_connection()
+
 
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 REPLY_EMAIL_TO = (os.getenv("REPLY_EMAIL_TO") or "").strip() or "00primex.eu@gmail.com"
