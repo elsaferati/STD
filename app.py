@@ -96,6 +96,16 @@ EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"
 VALID_STATUSES = {"ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown"}
 ALLOWED_SORTS = {"received_at_desc", "received_at_asc"}
 ALLOWED_DOWNLOAD_EXTENSIONS = {".xml"}
+ALLOWED_DATA_EXPORT_TABLES = frozenset(
+    {
+        "filialen_import_stage",
+        "kunden_import_stage",
+        "wochen_import_stage",
+    }
+)
+DATA_EXPORT_TABLE_ALIASES = {
+    "fillalen_import_stage": "filialen_import_stage",
+}
 UNKNOWN_EXTRACTION_BRANCH = "unknown"
 KNOWN_EXTRACTION_BRANCH_IDS = frozenset(BRANCHES.keys())
 ALLOWED_CLIENT_FILTER_IDS = KNOWN_EXTRACTION_BRANCH_IDS | {UNKNOWN_EXTRACTION_BRANCH}
@@ -1345,6 +1355,77 @@ def _as_csv_text(orders: list[dict[str, Any]]) -> str:
         )
     return output.getvalue()
 
+
+def _data_export_columns(table_name: str, rows: list[dict[str, Any]]) -> list[str]:
+    if rows:
+        return [str(column) for column in rows[0].keys()]
+
+    schema_rows = fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        (table_name,),
+    )
+    return [str(row.get("column_name") or "").strip() for row in schema_rows if str(row.get("column_name") or "").strip()]
+
+
+def _load_data_export_rows(table_name: str) -> tuple[list[str], list[dict[str, Any]]]:
+    if table_name not in ALLOWED_DATA_EXPORT_TABLES:
+        raise ValueError(f"Unsupported export table: {table_name}")
+    rows = fetch_all(f'SELECT * FROM "{table_name}"')
+    columns = _data_export_columns(table_name, rows)
+    return columns, rows
+
+
+def _export_table_cell_value(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.hex()
+    return value
+
+
+def _as_table_xlsx_bytes(*, table_name: str, columns: list[str], rows: list[dict[str, Any]]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = table_name[:31] or "Export"
+
+    for column_index, column_name in enumerate(columns, start=1):
+        header_cell = sheet.cell(row=1, column=column_index, value=column_name)
+        header_cell.font = Font(bold=True)
+        header_cell.alignment = Alignment(horizontal="left", vertical="bottom")
+
+    for row_index, row in enumerate(rows, start=2):
+        for column_index, column_name in enumerate(columns, start=1):
+            value = _export_table_cell_value(row.get(column_name))
+            cell = sheet.cell(row=row_index, column=column_index, value=value)
+            cell.alignment = Alignment(horizontal="left", vertical="bottom", wrap_text=True)
+
+    sheet.freeze_panes = "A2"
+
+    min_width = 10
+    max_width = 60
+    padding = 2
+    for column_index, column_name in enumerate(columns, start=1):
+        width = len(str(column_name))
+        for row in rows:
+            text = "" if row.get(column_name) is None else str(_export_table_cell_value(row.get(column_name)))
+            width = max(width, len(text))
+        sheet.column_dimensions[get_column_letter(column_index)].width = max(min_width, min(max_width, width + padding))
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
 @app.before_request
 def _api_auth_guard():
     if not request.path.startswith("/api/"):
@@ -1947,6 +2028,38 @@ def api_orders_xlsx():
     )
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
+
+
+@app.route("/api/data-export/<table_name>.xlsx")
+def api_data_export_table_xlsx(table_name: str):
+    normalized_table_name = str(table_name or "").strip()
+    target_table_name = DATA_EXPORT_TABLE_ALIASES.get(normalized_table_name, normalized_table_name)
+    if target_table_name not in ALLOWED_DATA_EXPORT_TABLES:
+        return _api_error(
+            400,
+            "invalid_table",
+            f"Unsupported export table '{normalized_table_name}'",
+        )
+
+    try:
+        columns, rows = _load_data_export_rows(target_table_name)
+        xlsx_bytes = _as_table_xlsx_bytes(
+            table_name=target_table_name,
+            columns=columns,
+            rows=rows,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to build XLSX export: {exc}")
+
+    date_stamp = datetime.now().astimezone().strftime("%Y-%m-%d")
+    filename = f"{target_table_name}_{date_stamp}.xlsx"
+    response = Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
 
 @app.route("/api/orders/<order_id>", methods=["GET", "PATCH", "DELETE"])
 def api_order_detail(order_id: str):
