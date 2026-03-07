@@ -56,6 +56,9 @@ export function AppShell({
                 <NavLink to="/data-export" active={active === "dataExport"} icon="file_download" label={t("common.dataExport")} />
                 <NavLink to="/excel-orders" active={active === "excelOrders"} icon="table_view" label={t("common.excelOrders")} />
                 {isAdmin ? (
+                  <NavLink to="/settings" active={active === "settings"} icon="settings" label={t("common.settings")} />
+                ) : null}
+                {isAdmin ? (
                   <NavLink to="/users" active={active === "users"} icon="manage_accounts" label={t("common.users")} />
                 ) : null}
               </div>

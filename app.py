@@ -36,6 +36,10 @@ from openpyxl.worksheet.page import PageMargins
 from werkzeug.exceptions import HTTPException
 
 from config import Config
+from delivery_preparation_settings import (
+    get_delivery_preparation_settings,
+    replace_delivery_preparation_settings,
+)
 from extraction_branches import BRANCHES
 from normalize import refresh_missing_warnings
 import xml_exporter
@@ -1506,7 +1510,7 @@ def _api_cors_headers(response: Response):
             response.headers["Access-Control-Allow-Origin"] = "*"
 
     response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
@@ -1598,6 +1602,31 @@ def api_auth_logout():
     flask_response = app.make_response(response)
     flask_response.set_cookie(session_cookie_name(), "", max_age=0, path="/")
     return flask_response
+
+
+@app.route("/api/settings/delivery-preparation", methods=["GET", "PUT", "POST"])
+def api_delivery_preparation_settings():
+    admin_error = _require_admin()
+    if admin_error:
+        return admin_error
+
+    if request.method == "GET":
+        try:
+            return jsonify(get_delivery_preparation_settings())
+        except Exception as exc:  # noqa: BLE001
+            return _api_error(500, "db_error", f"Failed to load delivery preparation settings: {exc}")
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return _api_error(400, "bad_request", "Request body must be valid JSON")
+
+    try:
+        settings = replace_delivery_preparation_settings(payload)
+    except ValueError as exc:
+        return _api_error(400, "bad_request", str(exc))
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to save delivery preparation settings: {exc}")
+    return jsonify(settings)
 
 
 @app.route("/api/users", methods=["GET", "POST"])

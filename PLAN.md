@@ -1,133 +1,81 @@
-# DB-Only Storage Cutover (Remove JSON Completely)
+# Add Configurable Preparation-Week Rules For Delivery Scheduling
 
 ## Summary
-Migrate the app to a strict database-only model for order payloads and metadata, with no JSON file reads/writes/fallbacks. Keep legacy Flask HTML routes, but rewrite them to use DB APIs internally. Disable JSON file downloads. Use fail-fast behavior if DB is unavailable. Delete existing `output/*.json` immediately after cutover.
+Replace the fixed earliest-week matrix with a true preparation-time model driven by dashboard settings. The system will compute the earliest possible delivery week as `current ISO week + applicable prep weeks`, then choose the first valid tour week on or after that candidate. Rules will be global, repeat every year, allow multiple non-overlapping week ranges, and use a default baseline of `2` prep weeks outside custom ranges.
 
-## Public API / Interface Changes
-1. `GET /api/files/<filename>`
-- Change allowed extensions from `{".xml", ".json"}` to `{".xml"}` only.
-- `.json` requests return `403 forbidden` (or `404` if preferred for concealment; use `403` consistently with current style).
+## Implementation Changes
+- Add a new persistent settings table for delivery preparation rules:
+  - global scope only for v1
+  - fields: `id`, `week_from`, `week_to`, `prep_weeks`, `is_default`, timestamps
+  - enforce one default rule and non-overlapping custom ranges
+  - rules repeat every year and use ISO week numbers `1-52`
+- Add backend API endpoints in [`app.py`](C:/Users/Lili/Documents/GitHub/STD/app.py) for admin-only management:
+  - `GET /api/settings/delivery-preparation`
+  - `PUT /api/settings/delivery-preparation`
+  - response shape includes the default prep weeks plus the ordered list of custom ranges
+  - validate ranges server-side: `week_from <= week_to`, `prep_weeks >= 0`, no overlaps, no duplicate default
+- Add a small data-access layer for these settings using the existing DB helpers in [`db.py`](C:/Users/Lili/Documents/GitHub/STD/db.py).
+- Update [`delivery_logic.py`](C:/Users/Lili/Documents/GitHub/STD/delivery_logic.py):
+  - keep `TOUR_TO_SCHEDULE_CODE` and `VALID_WEEKS_BY_CODE`
+  - remove `EARLIEST_WEEK_BY_TOUR` as the runtime source of truth
+  - add rule lookup for the current ISO week:
+    - if current week falls inside a configured custom range, use that `prep_weeks`
+    - otherwise use the default `2` weeks
+  - compute earliest candidate week by real calendar math, including correct next-year rollover
+  - select the first valid tour week on or after that candidate, rolling into the next year when needed
+  - preserve current requested-week logic after earliest-week determination, except that year rollover should now be calendar-correct
+  - preserve current public API and debug logging keys
+- Add a real settings UI in [`front-end/my-react-app/src/pages/SettingsPage.jsx`](C:/Users/Lili/Documents/GitHub/STD/front-end/my-react-app/src/pages/SettingsPage.jsx):
+  - admin-only editor
+  - one default prep-weeks input
+  - editable list of custom ranges with `week_from`, `week_to`, `prep_weeks`
+  - add/remove rows
+  - client-side validation for obvious overlap/input errors
+  - save via `PUT /api/settings/delivery-preparation`
+  - read-only or hidden state for non-admin users
 
-2. Legacy HTML routes remain same paths:
-- `/`
-- `/order/<order_id>`
-- `/order/<order_id>/export-xml`
-- `/order/<order_id>/delete`
-- Internal implementation changes to DB-backed logic.
+## Behavior Rules
+- Earliest possible delivery is no longer taken from a hardcoded week-by-tour table.
+- New algorithm:
+  - determine today’s ISO year/week
+  - resolve the applicable prep-weeks rule for that week
+  - add prep weeks to the current ISO week using real calendar rollover
+  - for the resolved tour rhythm, find the first valid service week on or after the candidate week
+  - if that valid week lands in the next ISO year, return the next year in `delivery_week`
+- Example:
+  - default prep = `2`
+  - custom range `7-17 => 4`
+  - today = week `8`
+  - candidate = week `12`
+  - `D2` (`2.3` rhythm) returns week `14`
+- Requested-week behavior remains layered on top of the earliest possible week; this change only replaces how earliest possible week is computed.
 
-3. Runtime config behavior
-- Remove runtime JSON fallback behavior from code paths.
-- Treat DB as mandatory data source for dashboard and legacy pages.
-- Keep `ORDER_DB_ENABLED` in env only if needed for boot compatibility, but code should no longer branch to file-backed mode.
+## Test Plan
+- Add backend tests for rule validation:
+  - default rule required
+  - invalid week bounds rejected
+  - overlapping ranges rejected
+  - adjacent ranges accepted
+- Add delivery-logic tests for:
+  - default prep weeks outside custom ranges
+  - custom prep weeks inside configured ranges
+  - tour-specific next valid week selection for all six tours
+  - year rollover from late weeks into next ISO year
+  - requested-week calculations still respecting the new earliest possible week
+  - Braun vs non-Braun requested-week offsets unchanged
+- Add API tests for:
+  - admin can read/write settings
+  - non-admin cannot modify settings
+  - malformed payloads return `400`
+- Add UI tests or at minimum manual verification scenarios:
+  - load current settings
+  - add/edit/delete non-overlapping ranges
+  - block overlap before save
+  - save and reload persists correctly
 
-## Implementation Plan
-
-### 1. Make ingestion DB-only (stop JSON file creation)
-1. Update `main.py` ingestion loop:
-- Remove JSON file write (`json.dump` to `output/*.json`).
-- Keep `order_store.upsert_order_payload(...)` as the source of truth.
-- Keep XML generation (`xml_exporter.export_xmls(...)`) and XML file registration in `order_files`.
-- Remove registration of `file_type="json"` entries.
-
-2. Keep XML artifacts on disk for downstream download/export workflows.
-
-### 2. Remove JSON fallback from API/backend core
-1. In `app.py`, refactor `_get_order_index()`:
-- Remove `_list_orders(OUTPUT_DIR)` fallback.
-- Always fetch summaries from `order_store.list_order_summaries()`.
-- Keep in-memory cache TTL if desired for performance, but cache DB results only.
-
-2. Refactor `_load_order(order_id)`:
-- Remove file-path branch (`OUTPUT_DIR/<id>.json`).
-- Always load via `order_store.get_order_detail()` with UUID validation.
-
-3. Refactor export helpers:
-- `_load_order_export_data()` must always source payload from DB (`order_store.get_order_detail` / `get_order_payload_map`).
-- Remove file read branch for payload export.
-
-4. Keep fail-fast policy:
-- DB errors should return API errors (`500 db_error`) with no filesystem fallback.
-
-### 3. Rewrite legacy Flask HTML routes to DB-backed behavior
-1. `index()`:
-- Replace `_list_orders(OUTPUT_DIR)` with `_get_order_index()`.
-
-2. `order_detail()`:
-- Replace direct JSON file open/write with `_load_order()` and `order_store.save_manual_revision(...)`.
-- Maintain existing template context shape (`header_rows`, `item_rows`, `warnings`, `errors`, `raw_json`), where `raw_json` comes from DB payload serialization.
-- Preserve editability checks and reply/post flags from DB-backed payload/status.
-
-3. `export_order_xml()`:
-- Load payload from DB, generate XML from payload, register resulting XML files in DB events/files metadata.
-
-4. `delete_order()`:
-- Use `order_store.soft_delete_order(...)` consistently (no JSON unlink/delete path).
-
-### 4. Tighten download policy
-1. Update `ALLOWED_DOWNLOAD_EXTENSIONS` to XML only.
-2. Keep current file-serving behavior for XML files in `output/`.
-3. Ensure order detail and API surfaces never advertise JSON files as downloadable artifacts.
-
-### 5. Clean up file-based order code paths
-1. Remove or isolate unused file-order helpers once references are gone:
-- `_list_orders(...)`
-- `_build_output_signature(...)` if no longer needed
-- Any direct `path.write_text(...json...)` branches for order persistence
-2. Keep non-order file serving for XML only.
-
-### 6. Data cutover and cleanup
-1. Pre-cutover:
-- Run `backfill_orders_db.py` to ensure DB has all historical payloads.
-- Validate parity: total order count and spot-check random order payloads.
-2. Cutover deploy:
-- Deploy DB-only code.
-3. Immediate cleanup (per chosen policy):
-- Delete `output/*.json` files after successful deploy validation.
-- Keep XML files intact.
-
-## Test Cases and Scenarios
-
-1. Ingestion
-- New incoming email creates/updates DB order and revision.
-- No `output/<something>.json` is created.
-- XML files are still generated and downloadable.
-
-2. API list/detail
-- `GET /api/orders`, `GET /api/overview`, `GET /api/orders/<id>` return expected data with DB-only mode.
-- Behavior remains correct with filters/search/sort/pagination.
-
-3. Mutations
-- `PATCH /api/orders/<id>` persists edits in DB and regenerates XML.
-- `DELETE /api/orders/<id>` soft-deletes in DB and disappears from list APIs.
-
-4. Export/download
-- `GET /api/orders.csv` and `GET /api/orders.xlsx` export from DB payloads.
-- `GET /api/files/<xml>` works.
-- `GET /api/files/<json>` is rejected.
-
-5. Legacy pages
-- `/` loads from DB data.
-- `/order/<id>` displays and edits DB payload.
-- Legacy XML export/delete actions operate correctly without JSON files.
-
-6. Failure mode
-- Simulated DB outage returns server errors; no silent fallback to files.
-
-## Rollout and Monitoring
-1. Deploy during low-traffic window.
-2. Monitor:
-- API 5xx rate
-- DB query latency for order list/detail/overview
-- XML generation failures
-3. Keep DB backup before cutover.
-4. Post-cutover verification checklist:
-- No new JSON files created.
-- No code paths reference JSON order files.
-- All UI pages (React + legacy) function with DB-only data.
-
-## Assumptions and Defaults (Locked)
-1. Keep legacy Flask pages and make them DB-backed.
-2. Ingestion switches to immediate DB-only writes (no dual-write period).
-3. JSON downloads are disabled.
-4. DB outage policy is fail-fast (no JSON fallback).
-5. Existing `output/*.json` files are deleted immediately after successful cutover validation.
+## Assumptions
+- V1 is global only; no per-branch overrides.
+- Rules repeat every year by ISO week number.
+- Outside custom ranges, the baseline is always `2` prep weeks.
+- Year-end behavior should become calendar-correct rather than preserving the current same-year wrap quirk.
+- Existing callers of `delivery_logic.calculate_delivery_week()` and `is_tour_valid()` remain unchanged.
