@@ -1,95 +1,106 @@
-import pandas as pd
 import datetime
-from dateutil.parser import parse
-import os
-import re
 import json
+import re
+from dateutil.parser import parse
 from typing import Optional, Any
 
-_cache_df: Optional[pd.DataFrame] = None
-_cache_schedule_df: Optional[pd.DataFrame] = None
-_cache_tour_map: Optional[dict] = None
-_cache_tour_code_map: Optional[dict] = None
-# The file is in the same directory
 EXCEL_PATH = "Lieferlogik_V2.xlsx"
 SHEET_NAME = "Kapa Base"
 
-def _load_schedule():
-    global _cache_df
-    global _cache_schedule_df
-    global _cache_tour_map
-    global _cache_tour_code_map
+TOUR_TO_SCHEDULE_CODE: dict[str, str] = {
+    "W1": "1.1",
+    "U2": "1.2",
+    "D1": "1.3",
+    "G2": "2.2",
+    "D2": "2.3",
+    "D3": "3.3",
+}
 
-    if (
-        _cache_df is not None
-        and _cache_schedule_df is not None
-        and _cache_tour_map is not None
-        and _cache_tour_code_map is not None
-    ):
-        return _cache_df
+VALID_WEEKS_BY_CODE: dict[str, tuple[int, ...]] = {
+    "1.1": (
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+        14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+        27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+        40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+    ),
+    "1.2": (
+        1, 3, 5, 7, 9, 11, 13,
+        15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39,
+        41, 43, 45, 47, 49, 51,
+    ),
+    "1.3": (
+        1, 4, 7, 10, 13, 16, 19, 22, 25,
+        28, 31, 34, 37, 40, 43, 46, 49,
+    ),
+    "2.2": (
+        2, 4, 6, 8, 10, 12, 14,
+        16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40,
+        42, 44, 46, 48, 50,
+    ),
+    "2.3": (
+        2, 5, 8, 11, 14, 17, 20, 23, 26,
+        29, 32, 35, 38, 41, 44, 47, 50,
+    ),
+    "3.3": (
+        3, 6, 9, 12, 15, 18, 21, 24,
+        27, 30, 33, 36, 39, 42, 45, 48,
+    ),
+}
 
-    if not os.path.exists(EXCEL_PATH):
-        print(f"Warning: {EXCEL_PATH} not found.")
-        return None
+EARLIEST_WEEK_BY_TOUR: dict[str, dict[int, int]] = {
+    "W1": {
+        1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8, 7: 9, 8: 10, 9: 11, 10: 12,
+        11: 13, 12: 14, 13: 15, 14: 16, 15: 17, 16: 18, 17: 19, 18: 20, 19: 21, 20: 22,
+        21: 23, 22: 24, 23: 25, 24: 26, 25: 27, 26: 28, 27: 29, 28: 30, 29: 31, 30: 32,
+        31: 33, 32: 34, 33: 35, 34: 36, 35: 37, 36: 38, 37: 39, 38: 40, 39: 41, 40: 42,
+        41: 43, 42: 44, 43: 45, 44: 46, 45: 47, 46: 48, 47: 49, 48: 50, 49: 3, 50: 3,
+        51: 4, 52: 5,
+    },
+    "U2": {
+        1: 3, 2: 5, 3: 5, 4: 7, 5: 7, 6: 9, 7: 9, 8: 11, 9: 11, 10: 13,
+        11: 13, 12: 15, 13: 15, 14: 17, 15: 17, 16: 19, 17: 19, 18: 21, 19: 21, 20: 23,
+        21: 23, 22: 25, 23: 25, 24: 27, 25: 27, 26: 29, 27: 29, 28: 31, 29: 31, 30: 33,
+        31: 33, 32: 35, 33: 35, 34: 37, 35: 37, 36: 39, 37: 39, 38: 41, 39: 41, 40: 43,
+        41: 43, 42: 45, 43: 45, 44: 47, 45: 47, 46: 49, 47: 49, 48: 2, 49: 3, 50: 3,
+        51: 5, 52: 5,
+    },
+    "D1": {
+        1: 4, 2: 7, 3: 7, 4: 7, 5: 7, 6: 10, 7: 10, 8: 13, 9: 13, 10: 13,
+        11: 13, 12: 16, 13: 16, 14: 19, 15: 19, 16: 19, 17: 19, 18: 22, 19: 22, 20: 25,
+        21: 25, 22: 25, 23: 25, 24: 28, 25: 28, 26: 31, 27: 31, 28: 31, 29: 31, 30: 34,
+        31: 34, 32: 37, 33: 37, 34: 37, 35: 37, 36: 40, 37: 40, 38: 43, 39: 43, 40: 43,
+        41: 43, 42: 46, 43: 46, 44: 49, 45: 49, 46: 49, 47: 49, 48: 4, 49: 4, 50: 4,
+        51: 4, 52: 4,
+    },
+    "G2": {
+        1: 4, 2: 6, 3: 6, 4: 6, 5: 8, 6: 8, 7: 10, 8: 12, 9: 12, 10: 12,
+        11: 14, 12: 14, 13: 16, 14: 18, 15: 18, 16: 18, 17: 20, 18: 20, 19: 22, 20: 24,
+        21: 24, 22: 24, 23: 26, 24: 26, 25: 28, 26: 30, 27: 30, 28: 30, 29: 32, 30: 32,
+        31: 34, 32: 36, 33: 36, 34: 36, 35: 38, 36: 38, 37: 40, 38: 42, 39: 42, 40: 42,
+        41: 44, 42: 44, 43: 46, 44: 48, 45: 48, 46: 48, 47: 50, 48: 50, 49: 4, 50: 4,
+        51: 4, 52: 4,
+    },
+    "D2": {
+        1: 5, 2: 5, 3: 5, 4: 8, 5: 8, 6: 8, 7: 11, 8: 11, 9: 11, 10: 14,
+        11: 14, 12: 14, 13: 17, 14: 17, 15: 17, 16: 20, 17: 20, 18: 20, 19: 23, 20: 23,
+        21: 23, 22: 26, 23: 26, 24: 26, 25: 29, 26: 29, 27: 29, 28: 32, 29: 32, 30: 32,
+        31: 35, 32: 35, 33: 35, 34: 38, 35: 38, 36: 38, 37: 41, 38: 41, 39: 41, 40: 44,
+        41: 44, 42: 44, 43: 47, 44: 47, 45: 47, 46: 50, 47: 50, 48: 50, 49: 5, 50: 5,
+        51: 5, 52: 5,
+    },
+    "D3": {
+        1: 6, 2: 6, 3: 6, 4: 6, 5: 9, 6: 9, 7: 12, 8: 12, 9: 12, 10: 12,
+        11: 15, 12: 15, 13: 18, 14: 18, 15: 18, 16: 18, 17: 21, 18: 21, 19: 24, 20: 24,
+        21: 24, 22: 24, 23: 27, 24: 27, 25: 30, 26: 30, 27: 30, 28: 30, 29: 33, 30: 33,
+        31: 36, 32: 36, 33: 36, 34: 36, 35: 39, 36: 39, 37: 42, 38: 42, 39: 42, 40: 42,
+        41: 45, 42: 45, 43: 48, 44: 48, 45: 48, 46: 48, 47: 51, 48: 3, 49: 3, 50: 3,
+        51: 3, 52: 3,
+    },
+}
 
-    try:
-        # Load header rows for the right table (J:P)
-        # Row 0 contains tour names (W1, U2, ...)
-        # Row 1 contains schedule codes (1.1, 1.2, ...)
-        df_headers = pd.read_excel(EXCEL_PATH, sheet_name=SHEET_NAME, header=None, usecols="J:P", nrows=2)
+CANONICAL_TOUR_KEYS = frozenset(TOUR_TO_SCHEDULE_CODE)
+SCHEDULE_CODE_KEYS = frozenset(VALID_WEEKS_BY_CODE)
 
-        # Load right table data (earliest possible weeks)
-        df_data = pd.read_excel(EXCEL_PATH, sheet_name=SHEET_NAME, header=1, usecols="J:P")
-        if "Woche" not in df_data.columns:
-            df_data = df_data.rename(columns={df_data.columns[0]: "Woche"})
-
-        actual_cols = list(df_data.columns)
-        real_tour_map = {}
-        tour_code_map = {}
-
-        for i in range(len(actual_cols)):
-            col_name_in_df = actual_cols[i]
-            val0 = str(df_headers.iloc[0, i]).strip()
-            val1 = str(df_headers.iloc[1, i]).strip()
-
-            if val0 and val0.lower() != "nan" and "woche" not in val0.lower():
-                real_tour_map[val0] = col_name_in_df
-                if val1 and val1.lower() != "nan" and "woche" not in val1.lower():
-                    tour_code_map[val0] = val1
-
-            if val1 and val1.lower() != "nan" and "woche" not in val1.lower():
-                real_tour_map[val1] = col_name_in_df
-
-        df_data = df_data.set_index("Woche")
-        df_data = df_data[pd.to_numeric(df_data.index, errors='coerce').notnull()]
-        df_data.index = df_data.index.astype(int)
-
-        # Load left table data (weekly tour schedule)
-        df_schedule = pd.read_excel(EXCEL_PATH, sheet_name=SHEET_NAME, header=1, usecols="A:H")
-        if "Woche" not in df_schedule.columns:
-            df_schedule = df_schedule.rename(columns={df_schedule.columns[0]: "Woche"})
-        df_schedule = df_schedule.set_index("Woche")
-        df_schedule = df_schedule[pd.to_numeric(df_schedule.index, errors='coerce').notnull()]
-        df_schedule.index = df_schedule.index.astype(int)
-
-        _cache_df = df_data
-        _cache_schedule_df = df_schedule
-        _cache_tour_map = real_tour_map
-        _cache_tour_code_map = tour_code_map
-        return _cache_df
-
-    except Exception as e:
-        print(f"Error loading: {e}")
-        return None
-
-def _add_weeks(year: int, week: int, n: int) -> tuple[int, int]:
-    try:
-        dt = datetime.date.fromisocalendar(year, week, 1)
-        dt_plus = dt + datetime.timedelta(weeks=n)
-        y, w, _ = dt_plus.isocalendar()
-        return y, w
-    except:
-        return year, week + n # Fallback if for some reason date logic fails
 
 def _extract_week_year(text: str, default_year: Optional[int] = None) -> Optional[tuple[int, int]]:
     if not text:
@@ -118,7 +129,6 @@ def _extract_week_year(text: str, default_year: Optional[int] = None) -> Optiona
                 week = int(match.group(1))
                 if 1 <= week <= 53:
                     return week, default_year
-    # Try date parsing as fallback
     try:
         dt = parse(text, dayfirst=True, fuzzy=True)
         y, w, _ = dt.isocalendar()
@@ -126,97 +136,49 @@ def _extract_week_year(text: str, default_year: Optional[int] = None) -> Optiona
     except Exception:
         return None
 
-def _is_xxlutz_client(client_name: str) -> bool:
-    """Check if the client is XXLUTZ (case-insensitive)."""
-    if not client_name:
-        return False
-    return "xxlutz" in client_name.lower() or "xxxlutz" in client_name.lower()
+
+def _normalize_tour_key(tour: Any) -> Optional[str]:
+    candidate = str(tour or "").strip()
+    if not candidate:
+        return None
+
+    while candidate:
+        if candidate in CANONICAL_TOUR_KEYS or candidate in SCHEDULE_CODE_KEYS:
+            return candidate
+        stripped = re.sub(r"\.\d+$", "", candidate)
+        if stripped == candidate:
+            break
+        candidate = stripped
+    return None
 
 
-def _get_schedule_code_for_tour(tour: str) -> Optional[str]:
-    """Map a tour name (e.g. G2) to its schedule code (e.g. 2.2)."""
-    tour_clean = str(tour).strip()
-    if _cache_tour_code_map and tour_clean in _cache_tour_code_map:
-        return _cache_tour_code_map[tour_clean]
-    if _cache_schedule_df is not None and tour_clean in _cache_schedule_df.columns:
-        return tour_clean
+def _get_schedule_code_for_tour(tour: Any) -> Optional[str]:
+    tour_key = _normalize_tour_key(tour)
+    if not tour_key:
+        return None
+    if tour_key in SCHEDULE_CODE_KEYS:
+        return tour_key
+    return TOUR_TO_SCHEDULE_CODE.get(tour_key)
+
+
+def _get_canonical_tour(tour: Any) -> Optional[str]:
+    tour_key = _normalize_tour_key(tour)
+    if not tour_key:
+        return None
+    if tour_key in CANONICAL_TOUR_KEYS:
+        return tour_key
+    for canonical_tour, code in TOUR_TO_SCHEDULE_CODE.items():
+        if code == tour_key:
+            return canonical_tour
     return None
 
 
 def is_tour_valid(tour: str) -> bool:
-    """Return True if the tour exists in Lieferlogik (schedule / tour map)."""
-    schedule = _load_schedule()
-    if schedule is None:
-        return False
-    tour_clean = str(tour).strip()
-    if _cache_tour_map and tour_clean in _cache_tour_map:
-        return True
-    if tour_clean in schedule.columns:
-        return True
-    for col in schedule.columns:
-        if re.sub(r"\.\d+$", "", str(col)) == tour_clean:
-            return True
-    if _get_schedule_code_for_tour(tour_clean):
-        return True
-    return False
+    return _normalize_tour_key(tour) is not None
 
 
-def _get_valid_tour_weeks(schedule_df: pd.DataFrame, schedule_col: str) -> list[int]:
-    """Return sorted weeks where the tour runs (value is non-empty/positive)."""
-    if schedule_df is None or schedule_col not in schedule_df.columns:
-        return []
-    weeks: list[int] = []
-    series = schedule_df[schedule_col]
-    for week, val in series.items():
-        try:
-            if pd.isna(val):
-                continue
-        except Exception:
-            pass
-        try:
-            if float(val) <= 0:
-                continue
-        except Exception:
-            continue
-        try:
-            weeks.append(int(week))
-        except Exception:
-            continue
-    return sorted(set(weeks))
-
-
-def _find_tour_earliest_week(schedule: pd.DataFrame, target_col: Any, start_week: int) -> Optional[int]:
-    """
-    Find the earliest possible delivery week for a tour starting from the
-    given order week.
-
-    It scans the schedule index from `start_week` upwards and returns the first
-    non-empty numeric value in the specified tour column.
-    """
-    if schedule is None or target_col is None:
-        return None
-
-    try:
-        weeks = sorted(int(w) for w in schedule.index)
-    except Exception:
-        return None
-
-    for week in weeks:
-        if week < start_week:
-            continue
-        try:
-            val = schedule.at[week, target_col]
-        except Exception:
-            continue
-        if pd.isna(val):
-            continue
-        try:
-            week_int = int(float(val))
-        except (ValueError, TypeError):
-            continue
-        return week_int
-
-    return None
+def _get_valid_tour_weeks(schedule_col: str) -> list[int]:
+    return list(VALID_WEEKS_BY_CODE.get(schedule_col, ()))
 
 
 def _log_delivery_debug(info: dict[str, Any]) -> None:
@@ -227,28 +189,6 @@ def _log_delivery_debug(info: dict[str, Any]) -> None:
 
 
 def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: str = None, client_name: str = None) -> str:
-    """
-    Calculate the delivery week based on:
-      - the calendar week of today's date (system date),
-      - the tour matrix from the Excel schedule (right table J:P),
-      - the tour weekly run schedule (left table A:H),
-      - an optional requested delivery week.
-
-    Rules:
-      1. Determine current week from today's date.
-      2. From the row for that week, read the earliest possible delivery week
-         for the selected tour (right table J:P).
-      3. Valid delivery weeks are those where the tour runs (left table A:H).
-      4. If a requested week is provided:
-           - Compute min_allowed = max(earliest possible, requested week - 5).
-           - If requested week is a valid tour week and >= min_allowed, use it.
-           - Otherwise, try the previous valid tour week >= min_allowed.
-           - If none, move to the next valid tour week.
-      5. If no requested week is provided:
-           - Use the earliest valid tour week >= earliest possible.
-
-    Returns a string like "2026 Week - 08" or "" if no week can be determined.
-    """
     debug_info: dict[str, Any] = {
         "current_week": None,
         "input_order_date": order_date_str if order_date_str else None,
@@ -269,11 +209,6 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
     if not tour:
         return _return_with_debug("")
 
-    schedule = _load_schedule()
-    if schedule is None or _cache_schedule_df is None:
-        return _return_with_debug("")
-
-    # 1. Always use today's date as effective order date
     try:
         dt_order = datetime.date.today()
         y_order, w_order, _ = dt_order.isocalendar()
@@ -282,44 +217,25 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
     debug_info["effective_order_date"] = dt_order.isoformat()
     debug_info["current_week"] = w_order
 
-    # 2. Resolve Tour Column (right table)
-    target_col = None
-    tour_clean = str(tour).strip()
-    if _cache_tour_map:
-        target_col = _cache_tour_map.get(tour_clean)
-    if not target_col and tour_clean in schedule.columns:
-        target_col = tour_clean
-    if not target_col:
-        for col in schedule.columns:
-            if re.sub(r'\.\d+$', '', str(col)) == tour_clean:
-                target_col = col
-                break
-    if not target_col:
+    canonical_tour = _get_canonical_tour(tour)
+    if not canonical_tour:
         return _return_with_debug("")
 
-    # 3. Earliest possible week from the right table (same row as order week)
-    earliest_possible = None
-    try:
-        val = schedule.at[w_order, target_col]
-        if not pd.isna(val):
-            earliest_possible = int(float(val))
-    except Exception:
-        earliest_possible = None
+    earliest_possible = EARLIEST_WEEK_BY_TOUR.get(canonical_tour, {}).get(w_order)
     debug_info["earliest_possible_week"] = earliest_possible
     if earliest_possible is None:
         return _return_with_debug("")
 
-    # 4. Valid tour weeks from the left table
-    schedule_code = _get_schedule_code_for_tour(tour_clean)
+    schedule_code = _get_schedule_code_for_tour(tour)
     if not schedule_code:
         return _return_with_debug("")
 
-    valid_weeks = _get_valid_tour_weeks(_cache_schedule_df, schedule_code)
+    valid_weeks = _get_valid_tour_weeks(schedule_code)
     if not valid_weeks:
         return _return_with_debug("")
 
     min_allowed = earliest_possible
-    max_allowed = None  # no cap when no requested week
+    max_allowed = None
     requested_year = None
     if requested_week_str:
         req = _extract_week_year(requested_week_str, default_year=y_order)
@@ -330,7 +246,6 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
             is_braun = isinstance(client_name, str) and "braun" in client_name.lower()
             early_offset = 2 if is_braun else 5
             debug_info["earliest_allowed_by_request"] = req_w - early_offset
-            # Per-client early offset: Braun uses -2, all others use -5.
             min_allowed = max(earliest_possible, req_w - early_offset)
             max_allowed = req_w + 1
     else:
@@ -339,21 +254,18 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
 
     debug_info["final_min_week"] = min_allowed
     if max_allowed is not None:
-        candidate_weeks = [w for w in valid_weeks if min_allowed <= w <= max_allowed]
+        candidate_weeks = [week for week in valid_weeks if min_allowed <= week <= max_allowed]
         if not candidate_weeks:
-            # Tour does not run in window [min_allowed, max_allowed]: send next week when tour runs (first valid week after max_allowed)
-            candidate_weeks = [w for w in valid_weeks if w > max_allowed]
+            candidate_weeks = [week for week in valid_weeks if week > max_allowed]
     else:
-        candidate_weeks = [w for w in valid_weeks if w >= min_allowed]
+        candidate_weeks = [week for week in valid_weeks if week >= min_allowed]
     debug_info["valid_tour_weeks_checked"] = candidate_weeks
 
     if not candidate_weeks:
         return _return_with_debug("")
+
     final_w = min(candidate_weeks)
     final_y = requested_year if requested_year is not None else y_order
-
     if final_w is not None and final_y is not None:
         return _return_with_debug(f"{final_y} Week - {final_w:02d}")
-
     return _return_with_debug("")
-
