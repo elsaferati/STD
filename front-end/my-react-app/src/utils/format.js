@@ -72,24 +72,20 @@ export function statusLabel(status, t) {
     if (normalized === "post") return t("status.post", null, "Post");
     if (normalized === "ok") return t("status.ok", null, "OK");
     if (normalized === "failed") return t("status.failed", null, "Failed");
-    return t("status.ok", null, "OK");
+    if (normalized === "waiting_for_reply") return t("status.waiting_for_reply", null, "Waiting for Reply");
+    if (normalized === "client_replied") return t("status.client_replied", null, "Client Replied");
+    if (normalized === "updated_after_reply") return t("status.updated_after_reply", null, "Updated After Reply");
+    return t(`status.${normalized}`, null, normalized);
   }
-  if (normalized === "ok") {
-    return "OK";
-  }
-  if (normalized === "reply") {
-    return "Reply";
-  }
-  if (normalized === "human_in_the_loop") {
-    return "Human in the Loop";
-  }
-  if (normalized === "post") {
-    return "Post";
-  }
-  if (normalized === "failed") {
-    return "Failed";
-  }
-  return "OK";
+  if (normalized === "ok") return "OK";
+  if (normalized === "reply") return "Reply";
+  if (normalized === "human_in_the_loop") return "Human in the Loop";
+  if (normalized === "post") return "Post";
+  if (normalized === "failed") return "Failed";
+  if (normalized === "waiting_for_reply") return "Waiting for Reply";
+  if (normalized === "client_replied") return "Client Replied";
+  if (normalized === "updated_after_reply") return "Updated After Reply";
+  return normalized;
 }
 
 export function fieldLabel(field, t) {

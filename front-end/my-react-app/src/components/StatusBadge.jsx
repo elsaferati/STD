@@ -9,6 +9,9 @@ const STYLES = {
   failed: "bg-danger/10 text-danger border-danger/20",
   partial: "bg-red-50 text-red-700 border-red-200",
   unknown: "bg-slate-100 text-slate-600 border-slate-200",
+  waiting_for_reply: "bg-amber-50 text-amber-700 border-amber-200",
+  client_replied: "bg-blue-50 text-blue-700 border-blue-200",
+  updated_after_reply: "bg-teal-50 text-teal-700 border-teal-200",
 };
 
 export function StatusBadge({ status }) {

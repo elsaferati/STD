@@ -11,6 +11,7 @@ from email_ingest import EmailClient
 from openai_extract import OpenAIExtractor
 import order_store
 from pipeline import process_message
+from reply_tracker import is_client_reply, process_client_reply
 import xml_exporter
 
 
@@ -95,6 +96,12 @@ def main() -> int:
             continue
 
         for message in new_messages:
+            if is_client_reply(message):
+                handled = process_client_reply(message, config, extractor)
+                if handled:
+                    seen_message_ids.add(message.message_id)
+                    continue
+
             result = process_message(message, config, extractor)
 
             try:
@@ -107,6 +114,14 @@ def main() -> int:
                     "DB upsert complete: "
                     f"order_id={persisted['order_id']} revision_no={persisted.get('revision_no')}"
                 )
+                if result.reply_email_sent:
+                    try:
+                        order_store.mark_reply_email_sent(
+                            persisted["order_id"], result.missing_fields_snapshot
+                        )
+                        print(f"Marked order {persisted['order_id']} as waiting_for_reply.")
+                    except Exception as mark_exc:
+                        print(f"Failed to mark reply email sent for {persisted['order_id']}: {mark_exc}")
             except Exception as exc:
                 print(f"DB upsert failed for {message.message_id}: {exc}")
                 return 1

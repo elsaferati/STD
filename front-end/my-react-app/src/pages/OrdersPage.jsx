@@ -9,7 +9,10 @@ import { downloadBlob } from "../utils/download";
 import { formatDateTime, statusLabel } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
-const STATUS_OPTIONS = ["ok", "reply", "human_in_the_loop", "post", "failed"];
+const STATUS_OPTIONS = [
+  "ok", "reply", "human_in_the_loop", "post", "failed",
+  "waiting_for_reply", "client_replied", "updated_after_reply",
+];
 const EXPORT_INITIALS_STORAGE_KEY = "orders_export_initials";
 
 function buildExportFilename(title, initials) {
@@ -60,6 +63,15 @@ export function OrdersPage() {
     }
     if (statusParam === "human_in_the_loop") {
       return "manual_review";
+    }
+    if (statusParam === "waiting_for_reply") {
+      return "waiting_for_reply";
+    }
+    if (statusParam === "client_replied") {
+      return "client_replied";
+    }
+    if (statusParam === "updated_after_reply") {
+      return "updated_after_reply";
     }
     if (fromDate === todayIso && toDate === todayIso) {
       return "today";
@@ -125,6 +137,18 @@ export function OrdersPage() {
     }
     if (tab === "manual_review") {
       updateParams({ status: "human_in_the_loop", reply_needed: null, human_review_needed: null, post_case: null });
+      return;
+    }
+    if (tab === "waiting_for_reply") {
+      updateParams({ status: "waiting_for_reply", reply_needed: null, human_review_needed: null, post_case: null });
+      return;
+    }
+    if (tab === "client_replied") {
+      updateParams({ status: "client_replied", reply_needed: null, human_review_needed: null, post_case: null });
+      return;
+    }
+    if (tab === "updated_after_reply") {
+      updateParams({ status: "updated_after_reply", reply_needed: null, human_review_needed: null, post_case: null });
       return;
     }
     updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null });
@@ -208,7 +232,7 @@ export function OrdersPage() {
   };
 
   const orders = payload?.orders || [];
-  const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0 };
+  const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0, waiting_for_reply: 0, client_replied: 0, updated_after_reply: 0 };
   const pagination = payload?.pagination || { page: 1, total_pages: 1, total: 0 };
 
   const hasPrev = pagination.page > 1;
@@ -413,6 +437,27 @@ export function OrdersPage() {
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "manual_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
                 {t("orders.manualReview")} <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("waiting_for_reply")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "waiting_for_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.waiting_for_reply")} <span className="bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.waiting_for_reply || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("client_replied")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "client_replied" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.client_replied")} <span className="bg-blue-100 text-blue-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.client_replied || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("updated_after_reply")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "updated_after_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
               </button>
             </div>
           </div>

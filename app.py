@@ -104,7 +104,10 @@ EDITABLE_HEADER_FIELDS = [
 ]
 EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"]
 
-VALID_STATUSES = {"ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown"}
+VALID_STATUSES = {
+    "ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown",
+    "waiting_for_reply", "client_replied", "updated_after_reply",
+}
 ALLOWED_SORTS = {"received_at_desc", "received_at_asc"}
 ALLOWED_DOWNLOAD_EXTENSIONS = {".xml"}
 ALLOWED_DATA_EXPORT_TABLES = frozenset(
@@ -419,10 +422,13 @@ def _effective_received_at(order: dict[str, Any]) -> datetime:
     return datetime.fromtimestamp(0).astimezone()
 
 def _status_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"ok": 0, "reply": 0, "human_in_the_loop": 0, "post": 0, "failed": 0}
+    counts = {
+        "ok": 0, "reply": 0, "human_in_the_loop": 0, "post": 0, "failed": 0,
+        "waiting_for_reply": 0, "client_replied": 0, "updated_after_reply": 0,
+    }
     for order in orders:
         status = _normalize_status(order.get("status"))
-        counts[status] += 1
+        counts[status] = counts.get(status, 0) + 1
     counts["total"] = len(orders)
     return counts
 
@@ -748,6 +754,15 @@ def _tab_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
         "needs_reply": sum(1 for order in orders if _normalize_status(order.get("status")) == "reply"),
         "manual_review": sum(
             1 for order in orders if _normalize_status(order.get("status")) == "human_in_the_loop"
+        ),
+        "waiting_for_reply": sum(
+            1 for order in orders if order.get("status") == "waiting_for_reply"
+        ),
+        "client_replied": sum(
+            1 for order in orders if order.get("status") == "client_replied"
+        ),
+        "updated_after_reply": sum(
+            1 for order in orders if order.get("status") == "updated_after_reply"
         ),
     }
 

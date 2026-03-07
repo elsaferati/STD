@@ -91,6 +91,9 @@ export const translations = {
       human_in_the_loop: "Human in the Loop",
       post: "Post",
       failed: "Failed",
+      waiting_for_reply: "Waiting for Reply",
+      client_replied: "Client Replied",
+      updated_after_reply: "Updated After Reply",
     },
     fields: {
       artikelnummer: "Article Number",
@@ -402,6 +405,9 @@ export const translations = {
       human_in_the_loop: "Menschliche Überprüfung",
       post: "Post",
       failed: "Fehlgeschlagen",
+      waiting_for_reply: "Warte auf Antwort",
+      client_replied: "Kunde hat geantwortet",
+      updated_after_reply: "Nach Antwort aktualisiert",
     },
     fields: {
       artikelnummer: "Artikelnummer",

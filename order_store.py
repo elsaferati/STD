@@ -17,6 +17,9 @@ STATUS_POST = "post"
 STATUS_FAILED = "failed"
 STATUS_PARTIAL = "partial"
 STATUS_UNKNOWN = "unknown"
+STATUS_WAITING_REPLY = "waiting_for_reply"
+STATUS_CLIENT_REPLIED = "client_replied"
+STATUS_UPDATED_AFTER_REPLY = "updated_after_reply"
 
 VALID_STATUSES = {
     STATUS_OK,
@@ -26,6 +29,9 @@ VALID_STATUSES = {
     STATUS_FAILED,
     STATUS_PARTIAL,
     STATUS_UNKNOWN,
+    STATUS_WAITING_REPLY,
+    STATUS_CLIENT_REPLIED,
+    STATUS_UPDATED_AFTER_REPLY,
 }
 REVIEWABLE_STATUSES = {STATUS_REPLY, STATUS_HUMAN, STATUS_POST}
 TASK_DONE_STATES = {"resolved", "cancelled"}
@@ -37,7 +43,10 @@ _STATUS_SQL = """
 CASE
     WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'partial' THEN 'reply'
     WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'unknown' THEN 'ok'
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) IN ('ok', 'reply', 'human_in_the_loop', 'post', 'failed')
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) IN (
+        'ok', 'reply', 'human_in_the_loop', 'post', 'failed',
+        'waiting_for_reply', 'client_replied', 'updated_after_reply'
+    )
         THEN LOWER(BTRIM(COALESCE(o.status, '')))
     ELSE 'ok'
 END
@@ -555,6 +564,96 @@ def upsert_order_payload(
         )
         conn.commit()
     return result
+
+
+def mark_reply_email_sent(order_id: str, missing_fields: list[str]) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET reply_email_sent_at = %s,
+                    waiting_for_client_reply = TRUE,
+                    missing_fields_snapshot = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (now, missing_fields, STATUS_WAITING_REPLY, now, order_id),
+            )
+        conn.commit()
+
+
+def find_order_awaiting_reply_by_kom(kom_number: str) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT id, status, missing_fields_snapshot, external_message_id
+        FROM orders
+        WHERE waiting_for_client_reply = TRUE
+          AND (kom_nr = %s OR ticket_number = %s)
+        LIMIT 1
+        """,
+        (kom_number, kom_number),
+    )
+    return dict(row) if row else None
+
+
+def get_order_current_payload(order_id: str) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT r.payload_json
+        FROM order_revisions r
+        WHERE r.order_id = %s
+        ORDER BY r.revision_no DESC
+        LIMIT 1
+        """,
+        (order_id,),
+    )
+    if not row:
+        return None
+    payload = row.get("payload_json")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def mark_client_replied(order_id: str, reply_message_id: str) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET waiting_for_client_reply = FALSE,
+                    client_replied_at = %s,
+                    client_reply_message_id = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (now, reply_message_id, STATUS_CLIENT_REPLIED, now, order_id),
+            )
+        conn.commit()
+
+
+def mark_order_updated_after_reply(order_id: str) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (STATUS_UPDATED_AFTER_REPLY, now, order_id),
+            )
+        conn.commit()
 
 
 def list_order_summaries() -> list[dict[str, Any]]:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 import base64
@@ -242,6 +242,8 @@ def _porta_has_verkaufshaus_block(
 class ProcessedResult:
     data: dict[str, Any]
     output_name: str
+    reply_email_sent: bool = False
+    missing_fields_snapshot: list = field(default_factory=list)
 
 
 def _safe_name(value: str) -> str:
@@ -2850,6 +2852,8 @@ def process_message(
     refresh_missing_warnings(normalized)
 
     # Auto-send reply-needed email (swap/substitution cases)
+    _reply_email_sent = False
+    _missing_fields_snapshot: list = []
     try:
         header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
         reply_entry = header.get("reply_needed", {})
@@ -2867,6 +2871,10 @@ def process_message(
             if isinstance(w, list):
                 w.append(f"Auto-reply email sent to {config.reply_email_to}.")
             print(f"Auto-reply email sent to {config.reply_email_to} for {message.message_id}.")
+            _reply_email_sent = True
+            _missing_fields_snapshot = reply_email.detect_missing_fields(
+                normalized, normalized.get("warnings") or []
+            )
     except Exception as exc:
         w = normalized.get("warnings")
         if isinstance(w, list):
@@ -2875,4 +2883,9 @@ def process_message(
 
     output_name = _safe_name(message.message_id)
 
-    return ProcessedResult(data=normalized, output_name=output_name)
+    return ProcessedResult(
+        data=normalized,
+        output_name=output_name,
+        reply_email_sent=_reply_email_sent,
+        missing_fields_snapshot=_missing_fields_snapshot,
+    )
