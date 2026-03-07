@@ -258,7 +258,7 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
         return _return_with_debug("")
 
     settings = _get_delivery_preparation_settings_cached()
-    prep_weeks = resolve_delivery_preparation_weeks(settings, w_order)
+    prep_weeks = resolve_delivery_preparation_weeks(settings, y_order, w_order)
     debug_info["prep_weeks"] = prep_weeks
 
     candidate_year_week = _year_week_from_date(dt_order + datetime.timedelta(weeks=prep_weeks))

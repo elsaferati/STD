@@ -5,10 +5,21 @@ import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { useI18n } from "../i18n/I18nContext";
 
+function currentIsoYear() {
+  const now = new Date();
+  const utc = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const day = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - day);
+  return utc.getUTCFullYear();
+}
+
 function createDraftRange(rowId) {
+  const defaultYear = currentIsoYear();
   return {
     rowId,
+    year_from: String(defaultYear),
     week_from: "",
+    year_to: String(defaultYear),
     week_to: "",
     prep_weeks: "",
   };
@@ -25,6 +36,13 @@ function coerceInteger(value) {
   return Number.parseInt(normalized, 10);
 }
 
+function compareYearWeek(leftYear, leftWeek, rightYear, rightWeek) {
+  if (leftYear !== rightYear) {
+    return leftYear - rightYear;
+  }
+  return leftWeek - rightWeek;
+}
+
 function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
   const errors = [];
   const defaultPrepWeeks = coerceInteger(defaultPrepWeeksInput);
@@ -34,51 +52,67 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
 
   const normalizedRanges = [];
   ranges.forEach((range, index) => {
+    const yearFrom = coerceInteger(range.year_from);
     const weekFrom = coerceInteger(range.week_from);
+    const yearTo = coerceInteger(range.year_to);
     const weekTo = coerceInteger(range.week_to);
     const prepWeeks = coerceInteger(range.prep_weeks);
 
-    if (weekFrom === null || weekFrom < 1 || weekFrom > 52) {
-      errors.push(`Range ${index + 1}: Week from must be between 1 and 52.`);
+    if (yearFrom === null || yearFrom < 1900 || yearFrom > 9999) {
+      errors.push(`Range ${index + 1}: Year from must be between 1900 and 9999.`);
     }
-    if (weekTo === null || weekTo < 1 || weekTo > 52) {
-      errors.push(`Range ${index + 1}: Week to must be between 1 and 52.`);
+    if (weekFrom === null || weekFrom < 1 || weekFrom > 53) {
+      errors.push(`Range ${index + 1}: Week from must be between 1 and 53.`);
+    }
+    if (yearTo === null || yearTo < 1900 || yearTo > 9999) {
+      errors.push(`Range ${index + 1}: Year to must be between 1900 and 9999.`);
+    }
+    if (weekTo === null || weekTo < 1 || weekTo > 53) {
+      errors.push(`Range ${index + 1}: Week to must be between 1 and 53.`);
     }
     if (prepWeeks === null || prepWeeks < 0) {
       errors.push(`Range ${index + 1}: Preparation weeks must be a whole number greater than or equal to 0.`);
     }
-    if (weekFrom !== null && weekTo !== null && weekFrom > weekTo) {
-      errors.push(`Range ${index + 1}: Week from cannot be greater than week to.`);
+    if (
+      yearFrom !== null &&
+      weekFrom !== null &&
+      yearTo !== null &&
+      weekTo !== null &&
+      compareYearWeek(yearFrom, weekFrom, yearTo, weekTo) > 0
+    ) {
+      errors.push(`Range ${index + 1}: The start year/week cannot be after the end year/week.`);
     }
 
     if (
-      weekFrom !== null && weekFrom >= 1 && weekFrom <= 52 &&
-      weekTo !== null && weekTo >= 1 && weekTo <= 52 &&
+      yearFrom !== null && yearFrom >= 1900 && yearFrom <= 9999 &&
+      weekFrom !== null && weekFrom >= 1 && weekFrom <= 53 &&
+      yearTo !== null && yearTo >= 1900 && yearTo <= 9999 &&
+      weekTo !== null && weekTo >= 1 && weekTo <= 53 &&
       prepWeeks !== null && prepWeeks >= 0 &&
-      weekFrom <= weekTo
+      compareYearWeek(yearFrom, weekFrom, yearTo, weekTo) <= 0
     ) {
       normalizedRanges.push({
         rowId: range.rowId,
+        year_from: yearFrom,
         week_from: weekFrom,
+        year_to: yearTo,
         week_to: weekTo,
         prep_weeks: prepWeeks,
       });
     }
   });
 
-  const sortedRanges = [...normalizedRanges].sort((left, right) => {
-    if (left.week_from !== right.week_from) {
-      return left.week_from - right.week_from;
-    }
-    return left.week_to - right.week_to;
-  });
+  const sortedRanges = [...normalizedRanges].sort((left, right) => (
+    compareYearWeek(left.year_from, left.week_from, right.year_from, right.week_from)
+    || compareYearWeek(left.year_to, left.week_to, right.year_to, right.week_to)
+  ));
 
   for (let index = 1; index < sortedRanges.length; index += 1) {
     const previous = sortedRanges[index - 1];
     const current = sortedRanges[index];
-    if (current.week_from <= previous.week_to) {
+    if (compareYearWeek(current.year_from, current.week_from, previous.year_to, previous.week_to) <= 0) {
       errors.push(
-        `Custom ranges overlap between weeks ${previous.week_from}-${previous.week_to} and ${current.week_from}-${current.week_to}.`,
+        `Custom ranges overlap between ${previous.year_from} W${String(previous.week_from).padStart(2, "0")}-${previous.year_to} W${String(previous.week_to).padStart(2, "0")} and ${current.year_from} W${String(current.week_from).padStart(2, "0")}-${current.year_to} W${String(current.week_to).padStart(2, "0")}.`,
       );
     }
   }
@@ -87,8 +121,10 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
     errors,
     payload: {
       default_prep_weeks: defaultPrepWeeks ?? 0,
-      ranges: sortedRanges.map(({ week_from, week_to, prep_weeks }) => ({
+      ranges: sortedRanges.map(({ year_from, week_from, year_to, week_to, prep_weeks }) => ({
+        year_from,
         week_from,
+        year_to,
         week_to,
         prep_weeks,
       })),
@@ -115,7 +151,9 @@ export function SettingsPage() {
       const loadedRanges = Array.isArray(payload?.ranges)
         ? payload.ranges.map((range, index) => ({
           rowId: index + 1,
+          year_from: String(range.year_from ?? ""),
           week_from: String(range.week_from ?? ""),
+          year_to: String(range.year_to ?? ""),
           week_to: String(range.week_to ?? ""),
           prep_weeks: String(range.prep_weeks ?? ""),
         }))
@@ -193,7 +231,9 @@ export function SettingsPage() {
       const savedRanges = Array.isArray(payload?.ranges)
         ? payload.ranges.map((range, index) => ({
           rowId: index + 1,
+          year_from: String(range.year_from ?? ""),
           week_from: String(range.week_from ?? ""),
+          year_to: String(range.year_to ?? ""),
           week_to: String(range.week_to ?? ""),
           prep_weeks: String(range.prep_weeks ?? ""),
         }))
@@ -222,7 +262,7 @@ export function SettingsPage() {
               {t("settings.title", null, "Delivery Preparation Settings")}
             </h1>
             <p className="text-sm text-slate-500">
-              {t("settings.subtitle", null, "Configure the default preparation buffer and week-based overrides.")}
+              {t("settings.subtitle", null, "Configure the default preparation buffer and year-specific ISO week overrides.")}
             </p>
           </div>
 
@@ -236,7 +276,7 @@ export function SettingsPage() {
                   Default preparation weeks
                 </h2>
                 <p className="text-sm text-slate-500">
-                  This applies outside custom week ranges and remains the fallback when no database settings are available.
+                  This applies outside custom year-specific ranges and remains the fallback when no database settings are available.
                 </p>
               </div>
 
@@ -261,9 +301,9 @@ export function SettingsPage() {
             <div className="border-t border-slate-200 pt-5 space-y-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Custom week ranges</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">Custom year ranges</h2>
                   <p className="text-sm text-slate-500">
-                    Add non-overlapping ISO week ranges that override the default preparation time.
+                    Add non-overlapping ISO year and week ranges that override the default preparation time.
                   </p>
                 </div>
                 <button
@@ -283,7 +323,9 @@ export function SettingsPage() {
                     <thead className="bg-slate-50 text-slate-500">
                       <tr>
                         <th className="px-4 py-3 text-left">Range</th>
+                        <th className="px-4 py-3 text-left">Year from</th>
                         <th className="px-4 py-3 text-left">Week from</th>
+                        <th className="px-4 py-3 text-left">Year to</th>
                         <th className="px-4 py-3 text-left">Week to</th>
                         <th className="px-4 py-3 text-left">Prep weeks</th>
                         <th className="px-4 py-3 text-right">{t("common.actions")}</th>
@@ -292,7 +334,7 @@ export function SettingsPage() {
                     <tbody className="divide-y divide-slate-100 bg-white">
                       {loading ? (
                         <tr>
-                          <td className="px-4 py-4 text-slate-500" colSpan={5}>
+                          <td className="px-4 py-4 text-slate-500" colSpan={7}>
                             Loading delivery preparation settings...
                           </td>
                         </tr>
@@ -302,13 +344,13 @@ export function SettingsPage() {
                             <td className="px-4 py-3 font-medium text-slate-900">Range {index + 1}</td>
                             <td className="px-4 py-3">
                               <input
-                                className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
+                                className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
                                 type="number"
-                                min="1"
-                                max="52"
+                                min="1900"
+                                max="9999"
                                 step="1"
-                                value={range.week_from}
-                                onChange={(event) => handleRangeChange(range.rowId, "week_from", event.target.value)}
+                                value={range.year_from}
+                                onChange={(event) => handleRangeChange(range.rowId, "year_from", event.target.value)}
                                 disabled={saving}
                               />
                             </td>
@@ -317,7 +359,31 @@ export function SettingsPage() {
                                 className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
                                 type="number"
                                 min="1"
-                                max="52"
+                                max="53"
+                                step="1"
+                                value={range.week_from}
+                                onChange={(event) => handleRangeChange(range.rowId, "week_from", event.target.value)}
+                                disabled={saving}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
+                                type="number"
+                                min="1900"
+                                max="9999"
+                                step="1"
+                                value={range.year_to}
+                                onChange={(event) => handleRangeChange(range.rowId, "year_to", event.target.value)}
+                                disabled={saving}
+                              />
+                            </td>
+                            <td className="px-4 py-3">
+                              <input
+                                className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
+                                type="number"
+                                min="1"
+                                max="53"
                                 step="1"
                                 value={range.week_to}
                                 onChange={(event) => handleRangeChange(range.rowId, "week_to", event.target.value)}
@@ -349,8 +415,8 @@ export function SettingsPage() {
                         ))
                       ) : (
                         <tr>
-                          <td className="px-4 py-4 text-slate-500" colSpan={5}>
-                            No custom ranges configured. The default value will be used for all weeks.
+                          <td className="px-4 py-4 text-slate-500" colSpan={7}>
+                            No custom ranges configured. The default value will be used for all year/week combinations.
                           </td>
                         </tr>
                       )}
