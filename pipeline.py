@@ -29,6 +29,7 @@ import ai_customer_match
 import delivery_logic
 import lookup
 import momax_bg
+import segmuller_rules
 import zb_lookup
 
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
@@ -113,7 +114,6 @@ _PORTA_STORE_NAME_PREFIX_RE = re.compile(
     r"^\s*(?:verkaufshaus|filiale)\s*[:\-]?\s*",
     re.IGNORECASE,
 )
-
 
 def _clean_porta_kom_name(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -2152,6 +2152,37 @@ def _flag_ab_nr_human_review(
     )
 
 
+def _flag_segmuller_missing_layout_pdf(
+    normalized: dict[str, Any],
+    attachments: list[Attachment],
+) -> None:
+    if segmuller_rules.has_supporting_layout_pdf(attachments, is_pdf=_is_pdf):
+        return
+
+    header = normalized.get("header")
+    if not isinstance(header, dict):
+        header = {}
+        normalized["header"] = header
+
+    entry = header.get("human_review_needed")
+    if not isinstance(entry, dict):
+        entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["human_review_needed"] = entry
+
+    entry["value"] = True
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_missing_furnplan_pdf"
+
+    warnings = _ensure_warning_list(normalized)
+    warning = (
+        "Segmuller order is missing the furnplan/sketch PDF companion; "
+        "forced human_review_needed=true."
+    )
+    if warning not in warnings:
+        warnings.append(warning)
+
+
 def _set_porta_inline_pair_reconciliation_human_review(normalized: dict[str, Any]) -> None:
     header = normalized.get("header")
     if not isinstance(header, dict):
@@ -2371,6 +2402,9 @@ def process_message(
 
     # Universal: flag AB Nr. orders for human review across all clients
     _flag_ab_nr_human_review(normalized, pdf_text_by_image_name, body_text)
+
+    if branch.id == "segmuller":
+        _flag_segmuller_missing_layout_pdf(normalized, message.attachments)
 
     if branch.id == "porta":
         _apply_porta_code_consistency_corrections(normalized, pdf_text_by_image_name)

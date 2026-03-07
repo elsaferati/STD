@@ -565,6 +565,27 @@ def _is_ab_nr_order(header: dict[str, Any]) -> bool:
     return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
 
 
+def _is_segmuller_missing_layout_review_only(
+    header: dict[str, Any],
+    branch_id: str = "",
+) -> bool:
+    if (branch_id or "").strip() != "segmuller":
+        return False
+    review_entry = header.get("human_review_needed")
+    if not isinstance(review_entry, dict):
+        return False
+    if review_entry.get("value") is not True:
+        return False
+    return str(review_entry.get("derived_from") or "").strip() == "segmuller_missing_furnplan_pdf"
+
+
+def _clear_reply_needed(entry_owner: dict[str, Any]) -> None:
+    reply_entry = _ensure_field(entry_owner, "reply_needed")
+    reply_entry["value"] = False
+    reply_entry["source"] = "derived"
+    reply_entry["confidence"] = 1.0
+
+
 def _append_unique_warning(warnings: list[str], message: str) -> None:
     if not message:
         return
@@ -664,6 +685,12 @@ _BG_LEADING_ARTIKEL_SUFFIX_MODEL_RE = re.compile(
     re.IGNORECASE,
 )
 _BG_WARNING_LINE_RE = re.compile(r"\b(?:Position|Line)\s*(\d+)\b", re.IGNORECASE)
+_SEGMULLER_MODEL_ARTICLE_HYPHEN_RE = re.compile(
+    r"^([A-Za-z][A-Za-z0-9]*)-([0-9]{2,}[A-Za-z]?)$"
+)
+_SEGMULLER_REVERSED_HYPHEN_RE = re.compile(
+    r"^([0-9]{2,}[A-Za-z]?)-([A-Za-z][A-Za-z0-9]*)$"
+)
 
 
 def _split_momax_bg_code(raw: Any) -> tuple[str, str] | None:
@@ -995,6 +1022,59 @@ def _normalize_segmuller_kom_name(header: dict[str, Any]) -> None:
     entry["derived_from"] = "segmuller_kom_name_cleanup"
 
 
+def _split_segmuller_code(raw: Any) -> tuple[str, str] | None:
+    text = _clean_text(raw)
+    if not text:
+        return None
+
+    match = _SEGMULLER_MODEL_ARTICLE_HYPHEN_RE.fullmatch(text)
+    if match:
+        return match.group(2), match.group(1)
+
+    match = _SEGMULLER_REVERSED_HYPHEN_RE.fullmatch(text)
+    if match:
+        return match.group(1), match.group(2)
+
+    return None
+
+
+def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_code_split"
+
+
+def _is_blankish_item_code(value: Any) -> bool:
+    text = _clean_text(value)
+    return text in {"", "-"}
+
+
+def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
+    artikel_entry = _ensure_field(item, "artikelnummer")
+    modell_entry = _ensure_field(item, "modellnummer")
+
+    artikel_value = _clean_text(artikel_entry.get("value"))
+    modell_value = _clean_text(modell_entry.get("value"))
+
+    split_result: tuple[str, str] | None = None
+
+    if _is_blankish_item_code(modell_value):
+        split_result = _split_segmuller_code(artikel_value)
+    if not split_result and _is_blankish_item_code(artikel_value):
+        split_result = _split_segmuller_code(modell_value)
+
+    if not split_result:
+        return
+
+    new_artikel, new_modell = split_result
+    if new_artikel != artikel_value:
+        artikel_entry["value"] = new_artikel
+        _mark_segmuller_code_derived(artikel_entry)
+    if new_modell != modell_value:
+        modell_entry["value"] = new_modell
+        _mark_segmuller_code_derived(modell_entry)
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -1063,6 +1143,8 @@ def _normalize_items(
 
         if is_momax_bg:
             _normalize_momax_bg_item_codes(item)
+        elif (branch_id or "").strip() == "segmuller":
+            _normalize_segmuller_item_codes(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
@@ -1620,9 +1702,10 @@ def normalize_output(
         missing_header = [field for field in missing_header if field != "kom_name"]
     if (branch_id or "").strip() == "braun":
         missing_header = [field for field in missing_header if field != "store_address"]
+    segmuller_review_only = _is_segmuller_missing_layout_review_only(header, branch_id)
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
@@ -1637,22 +1720,26 @@ def normalize_output(
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
             _missing_critical_item_reply_warning(missing_critical_item_fields),
         )
 
-    if not items:
+    if not items and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
+    elif segmuller_review_only:
+        _clear_reply_needed(header)
 
     # Status: furncloud_id alone is non-blocking (OK with warning)
     if not had_structure and not items:
         data["status"] = "failed"
-    elif _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+    elif _flag_true(header, "human_review_needed") and (
+        _is_ab_nr_order(header) or segmuller_review_only
+    ):
         data["status"] = "human_in_the_loop"
-        _ensure_field(header, "reply_needed")["value"] = False
+        _clear_reply_needed(header)
     elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
@@ -1708,6 +1795,10 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     )
 
     extraction_branch = str(data.get("extraction_branch") or "").strip()
+    segmuller_review_only = _is_segmuller_missing_layout_review_only(
+        header,
+        extraction_branch,
+    )
 
     missing_header = [f for f in HEADER_FIELDS if _is_missing(header.get(f, {}))]
     if is_momax_bg:
@@ -1716,7 +1807,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
     missing_items: list[tuple[int, str]] = []
     if not items:
@@ -1729,15 +1820,19 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
 
-    if not items:
+    if not items and not segmuller_review_only:
         _set_reply_needed_from_derived(header)
+    elif segmuller_review_only:
+        _clear_reply_needed(header)
 
-    if _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+    if _flag_true(header, "human_review_needed") and (
+        _is_ab_nr_order(header) or segmuller_review_only
+    ):
         data["status"] = "human_in_the_loop"
-        _ensure_field(header, "reply_needed")["value"] = False
+        _clear_reply_needed(header)
     elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
@@ -1811,12 +1906,12 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
 
     if missing_header_no_ticket:
         warnings.append(f"Missing header fields: {', '.join(missing_header_no_ticket)}")
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only:
         _append_unique_warning(
             warnings,
             _missing_critical_reply_warning(missing_critical_fields),
         )
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not segmuller_review_only:
         _append_unique_warning(
             warnings,
             _missing_critical_item_reply_warning(missing_critical_item_fields),
