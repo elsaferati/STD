@@ -7,7 +7,6 @@ import {
   UNKNOWN_CLIENT_BRANCH_ID,
 } from "../constants/clientBranches";
 import { AppShell } from "../components/AppShell";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { StatusBadge } from "../components/StatusBadge";
 import { useAuth } from "../auth/useAuth";
 import { useI18n } from "../i18n/I18nContext";
@@ -287,25 +286,21 @@ export function ClientsPage() {
   };
 
   return (
-    <AppShell active="clients">
+    <AppShell
+      active="clients"
+      headerLeft={(
+        <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+          <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+          <input
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+            placeholder={t("clients.searchPlaceholder")}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
+        </form>
+      )}
+    >
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="sticky top-0 z-30">
-          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
-            <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
-              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-              <input
-                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-                placeholder={t("clients.searchPlaceholder")}
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </form>
-            <div className="flex items-center gap-3 ml-4">
-              <LanguageSwitcher compact className="hidden md:flex" />
-            </div>
-          </header>
-        </div>
-
         <div className="w-full px-6 py-6 space-y-6">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-bold text-slate-900">{t("clients.title")}</h1>

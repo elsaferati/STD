@@ -4,9 +4,9 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
+import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBranches";
 import { downloadBlob } from "../utils/download";
-import { formatDateTime, statusLabel } from "../utils/format";
+import { formatDateTime } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
 const STATUS_OPTIONS = [
@@ -50,14 +50,14 @@ export function OrdersPage() {
 
   const fromDate = searchParams.get("from") || "";
   const toDate = searchParams.get("to") || "";
-  const selectedStatuses = useMemo(
-    () => new Set((searchParams.get("status") || "").split(",").filter(Boolean)),
-    [searchParams],
-  );
-
   const statusParam = searchParams.get("status");
+  const clientParam = searchParams.get("client") || "";
+  const deliveryWeekParam = searchParams.get("delivery_week") || "";
 
   const activeTab = useMemo(() => {
+    if (statusParam === "ok") {
+      return "ok";
+    }
     if (statusParam === "reply") {
       return "needs_reply";
     }
@@ -72,6 +72,12 @@ export function OrdersPage() {
     }
     if (statusParam === "updated_after_reply") {
       return "updated_after_reply";
+    }
+    if (statusParam === "post") {
+      return "post";
+    }
+    if (statusParam === "failed") {
+      return "failed";
     }
     if (fromDate === todayIso && toDate === todayIso) {
       return "today";
@@ -135,6 +141,10 @@ export function OrdersPage() {
       updateParams({ status: "reply", human_review_needed: null, reply_needed: null, post_case: null });
       return;
     }
+    if (tab === "ok") {
+      updateParams({ status: "ok", human_review_needed: null, reply_needed: null, post_case: null });
+      return;
+    }
     if (tab === "manual_review") {
       updateParams({ status: "human_in_the_loop", reply_needed: null, human_review_needed: null, post_case: null });
       return;
@@ -151,17 +161,15 @@ export function OrdersPage() {
       updateParams({ status: "updated_after_reply", reply_needed: null, human_review_needed: null, post_case: null });
       return;
     }
-    updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null });
-  };
-
-  const toggleStatus = (status) => {
-    const next = new Set(selectedStatuses);
-    if (next.has(status)) {
-      next.delete(status);
-    } else {
-      next.add(status);
+    if (tab === "post") {
+      updateParams({ status: "post", reply_needed: null, human_review_needed: null, post_case: null });
+      return;
     }
-    updateParams({ status: next.size ? Array.from(next).join(",") : null });
+    if (tab === "failed") {
+      updateParams({ status: "failed", reply_needed: null, human_review_needed: null, post_case: null });
+      return;
+    }
+    updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null });
   };
 
   const handleSearchSubmit = (event) => {
@@ -234,6 +242,41 @@ export function OrdersPage() {
   const orders = payload?.orders || [];
   const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0, waiting_for_reply: 0, client_replied: 0, updated_after_reply: 0 };
   const pagination = payload?.pagination || { page: 1, total_pages: 1, total: 0 };
+  const clientOptions = useMemo(() => {
+    const options = [...CLIENT_BRANCHES];
+    const hasUnknown = orders.some(
+      (order) =>
+        order.extraction_branch &&
+        !CLIENT_BRANCHES.some((branch) => branch.id === order.extraction_branch),
+    );
+    if (hasUnknown) {
+      options.push({
+        id: UNKNOWN_CLIENT_BRANCH_ID,
+        labelKey: "clients.branch.unknown",
+        defaultLabel: "Unknown",
+      });
+    }
+    return options;
+  }, [orders]);
+  const deliveryWeekOptions = useMemo(() => {
+    const unique = new Set();
+    orders.forEach((order) => {
+      const value = String(order.delivery_week || order.liefertermin || "").trim();
+      if (value) unique.add(value);
+    });
+    return Array.from(unique).sort((a, b) => a.localeCompare(b));
+  }, [orders]);
+  const visibleOrders = useMemo(() => {
+    if (!deliveryWeekParam) return orders;
+    return orders.filter((order) => {
+      const value = String(order.delivery_week || order.liefertermin || "").trim();
+      return value === deliveryWeekParam;
+    });
+  }, [deliveryWeekParam, orders]);
+  const hasActiveFilters = useMemo(
+    () => Boolean(searchParams.get("q") || statusParam || clientParam || fromDate || toDate || deliveryWeekParam),
+    [clientParam, deliveryWeekParam, fromDate, searchParams, statusParam, toDate],
+  );
 
   const hasPrev = pagination.page > 1;
   const hasNext = pagination.page < pagination.total_pages;
@@ -266,149 +309,18 @@ export function OrdersPage() {
     setIsDraggingTable(false);
   };
 
-  const renderFilters = (className = "", idPrefix = "filters", isDark = false) => (
-    <aside
-      className={[
-        "rounded-xl border p-5 space-y-8",
-        isDark
-          ? "bg-slate-900/60 border-slate-800/70 shadow-[0_10px_30px_rgba(15,23,42,0.45)]"
-          : "bg-surface-light border-slate-200 shadow-sm",
-        className,
-      ].join(" ")}
-    >
-      <div>
-        <h3
-          className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center ${
-            isDark ? "text-slate-400" : "text-slate-400"
-          }`}
-        >
-          <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>date_range</span>
-          {t("orders.extractionDate")}
-        </h3>
-        <div className="space-y-3">
-          <div>
-            <label
-              className={`text-xs mb-1 block ${isDark ? "text-slate-400" : "text-slate-500"}`}
-              htmlFor={`${idPrefix}-fromDate`}
-            >
-              {t("common.from")}
-            </label>
-            <input
-              id={`${idPrefix}-fromDate`}
-              type="date"
-              className={`w-full rounded text-sm border ${
-                isDark
-                  ? "bg-slate-950/70 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:ring-primary/60"
-                  : "bg-slate-50 border-slate-200"
-              }`}
-              value={fromDate}
-              onChange={(event) => updateParams({ from: event.target.value || null })}
-            />
-          </div>
-          <div>
-            <label
-              className={`text-xs mb-1 block ${isDark ? "text-slate-400" : "text-slate-500"}`}
-              htmlFor={`${idPrefix}-toDate`}
-            >
-              {t("common.to")}
-            </label>
-            <input
-              id={`${idPrefix}-toDate`}
-              type="date"
-              className={`w-full rounded text-sm border ${
-                isDark
-                  ? "bg-slate-950/70 border-slate-800 text-slate-100 placeholder:text-slate-600 focus:ring-primary/60"
-                  : "bg-slate-50 border-slate-200"
-              }`}
-              value={toDate}
-              onChange={(event) => updateParams({ to: event.target.value || null })}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div>
-        <h3
-          className={`text-xs font-bold uppercase tracking-wider mb-4 flex items-center ${
-            isDark ? "text-slate-400" : "text-slate-400"
-          }`}
-        >
-          <span className={`material-icons text-sm mr-1 ${isDark ? "text-primary/80" : ""}`}>rule</span>
-          {t("orders.extractionStatus")}
-        </h3>
-        <div className="space-y-2">
-          {STATUS_OPTIONS.map((status) => (
-            <label key={status} className="flex items-center group cursor-pointer">
-              <input
-                type="checkbox"
-                checked={selectedStatuses.has(status)}
-                onChange={() => toggleStatus(status)}
-                className={`h-4 w-4 text-primary rounded focus:ring-primary ${
-                  isDark ? "border-slate-700 bg-slate-950/70" : "border-slate-300"
-                }`}
-              />
-              <span
-                className={`ml-3 text-sm transition-colors ${
-                  isDark ? "text-slate-200 group-hover:text-white" : "text-slate-600 group-hover:text-primary"
-                }`}
-              >
-                {statusLabel(status, t)}
-              </span>
-              <span
-                className={`ml-auto text-xs px-1.5 py-0.5 rounded ${
-                  isDark ? "bg-slate-800/70 text-slate-300 border border-slate-700/60" : "bg-slate-100 text-slate-600"
-                }`}
-              >
-                {payload?.counts?.status?.[status] ?? 0}
-              </span>
-            </label>
-          ))}
-        </div>
-      </div>
-    </aside>
-  );
-
   return (
-    <AppShell active="orders" sidebarContent={renderFilters("", "sidebar", false)}>
+    <AppShell active="orders">
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="sticky top-0 z-30">
-          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
-            <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
-              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-              <input
-                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-                placeholder={t("orders.searchPlaceholder")}
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </form>
-            <div className="flex items-center gap-3 ml-4">
-              <LanguageSwitcher compact className="hidden md:flex" />
+        <div className="px-6 py-6 space-y-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">{t("orders.workspaceTitle")}</h1>
+              <p className="text-sm text-slate-500 mt-1">{t("orders.workspaceSubtitle")}</p>
             </div>
-          </header>
+          </div>
 
-          <div className="bg-surface-light px-6 pt-6 pb-0 border-b border-slate-200 shadow-sm">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-2">
-              <div>
-                <h1 className="text-2xl font-bold text-slate-900 mb-1">{t("orders.workspaceTitle")}</h1>
-                <p className="text-sm text-slate-500">{t("orders.workspaceSubtitle")}</p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={handleExportExcel}
-                  disabled={actionBusy === "excel"}
-                  className="bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
-                >
-                  <span className="material-icons text-base">file_download</span>
-                  {actionBusy === "excel" ? t("orders.exporting") : t("common.exportExcel")}
-                </button>
-                <button type="button" disabled className="bg-primary/40 text-white px-4 py-2 rounded text-sm font-medium cursor-not-allowed">
-                  {t("orders.manualOrder")}
-                </button>
-              </div>
-            </div>
-
+          <div className="border-b border-slate-200">
             <div className="flex items-center gap-6 overflow-x-auto">
               <button
                 type="button"
@@ -426,6 +338,13 @@ export function OrdersPage() {
               </button>
               <button
                 type="button"
+                onClick={() => applyTab("ok")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "ok" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.ok")} <span className="bg-emerald-100 text-emerald-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.ok || 0}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => applyTab("needs_reply")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "needs_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
@@ -439,6 +358,113 @@ export function OrdersPage() {
                 {t("orders.manualReview")} <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
               </button>
               <button
+                type="button"
+                onClick={() => applyTab("post")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "post" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.post")} <span className="bg-indigo-100 text-indigo-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.post || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("failed")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "failed" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.failed")} <span className="bg-slate-200 text-slate-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.failed || 0}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-slate-200 bg-surface-light p-3">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <form onSubmit={handleSearchSubmit} className="flex flex-wrap items-center gap-2">
+                <div className="relative min-w-[240px] flex-1 sm:flex-none sm:w-72">
+                  <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[18px]">search</span>
+                  <input
+                    className="w-full bg-slate-50 border border-slate-200 rounded-md pl-9 pr-3 py-2 text-sm focus:ring-2 focus:ring-primary"
+                    placeholder={t("orders.searchPlaceholder")}
+                    value={searchInput}
+                    onChange={(event) => setSearchInput(event.target.value)}
+                  />
+                </div>
+                <select
+                  className="h-9 rounded-md border border-slate-200 bg-white pl-2.5 pr-9 text-sm text-slate-700 focus:ring-2 focus:ring-primary"
+                  value={clientParam}
+                  onChange={(event) => updateParams({ client: event.target.value || null })}
+                >
+                  <option value="">{t("clients.filterLabel")}</option>
+                  {clientOptions.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {t(branch.labelKey, null, branch.defaultLabel)}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 h-9">
+                  <span className="text-xs uppercase tracking-wide text-slate-500">{t("orders.extractionDate")}</span>
+                  <input
+                    type="date"
+                    className="bg-transparent text-sm text-slate-700 focus:outline-none"
+                    value={fromDate}
+                    onChange={(event) => updateParams({ from: event.target.value || null })}
+                    aria-label={t("common.from")}
+                  />
+                  <span className="text-slate-300">-</span>
+                  <input
+                    type="date"
+                    className="bg-transparent text-sm text-slate-700 focus:outline-none"
+                    value={toDate}
+                    onChange={(event) => updateParams({ to: event.target.value || null })}
+                    aria-label={t("common.to")}
+                  />
+                </div>
+                {deliveryWeekOptions.length ? (
+                  <select
+                    className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:ring-2 focus:ring-primary"
+                    value={deliveryWeekParam}
+                    onChange={(event) => updateParams({ delivery_week: event.target.value || null })}
+                  >
+                    <option value="">{t("orders.deliveryWeek")}</option>
+                    {deliveryWeekOptions.map((week) => (
+                      <option key={week} value={week}>
+                        {week}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                {hasActiveFilters ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchInput("");
+                      updateParams({
+                        q: null,
+                        status: null,
+                        client: null,
+                        from: null,
+                        to: null,
+                        delivery_week: null,
+                      });
+                    }}
+                    className="h-9 px-3 rounded-md border border-slate-200 bg-white text-slate-600 text-sm hover:bg-slate-50"
+                  >
+                    {t("orders.clearFilters")}
+                  </button>
+                ) : null}
+              </form>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportExcel}
+                  disabled={actionBusy === "excel"}
+                  className="bg-white border border-slate-200 text-slate-700 px-3.5 py-2 rounded-md text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">file_download</span>
+                  {actionBusy === "excel" ? t("orders.exporting") : t("common.exportExcel")}
+                </button>
+                <button type="button" disabled className="bg-primary/40 text-white px-3.5 py-2 rounded-md text-sm font-medium cursor-not-allowed">
+                  {t("orders.manualOrder")}
+                </button>
+                <button
                 type="button"
                 onClick={() => applyTab("waiting_for_reply")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "waiting_for_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
@@ -460,16 +486,11 @@ export function OrdersPage() {
                 {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
               </button>
             </div>
+            </div>
           </div>
-        </div>
 
-        <div className="px-6 py-6 space-y-6">
-        {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
-        {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
-
-          <div className="lg:hidden mb-6">
-            {renderFilters("", "mobile", false)}
-          </div>
+          {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
+          {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
 
           <div>
             <div
@@ -495,10 +516,10 @@ export function OrdersPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {orders.map((order, index) => (
+                  {visibleOrders.map((order, index) => (
                     <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
                       <td className="px-4 py-3 text-slate-500 border-r border-slate-100 sticky left-0 z-10 bg-surface-light">
-                        {(pagination.page - 1) * (pagination.page_size || orders.length || 0) + index + 1}
+                        {(pagination.page - 1) * (pagination.page_size || visibleOrders.length || 0) + index + 1}
                       </td>
                       <td className="px-4 py-3 w-40 max-w-40">
                         <button
@@ -550,9 +571,14 @@ export function OrdersPage() {
                       </td>
                     </tr>
                   ))}
-                  {!loading && orders.length === 0 ? (
+                  {!loading && visibleOrders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-8 text-center text-slate-500" colSpan={8}>{t("orders.noMatchingOrders")}</td>
+                      <td className="px-4 py-10 text-center text-slate-500" colSpan={8}>
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium text-slate-700">{t("orders.noMatchingOrders")}</p>
+                          <p className="text-xs text-slate-500">{t("orders.workspaceSubtitle")}</p>
+                        </div>
+                      </td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -562,9 +588,9 @@ export function OrdersPage() {
             <div className="mt-4 flex items-center justify-between px-2">
               <div className="text-sm text-slate-500">
                 {t("orders.showing", {
-                  from: orders.length ? (pagination.page - 1) * (pagination.page_size || orders.length) + 1 : 0,
-                  to: (pagination.page - 1) * (pagination.page_size || 0) + orders.length,
-                  total: pagination.total || 0,
+                  from: visibleOrders.length ? (pagination.page - 1) * (pagination.page_size || visibleOrders.length) + 1 : 0,
+                  to: (pagination.page - 1) * (pagination.page_size || 0) + visibleOrders.length,
+                  total: deliveryWeekParam ? visibleOrders.length : pagination.total || 0,
                 })}
               </div>
               <div className="flex items-center gap-2">

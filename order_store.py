@@ -989,7 +989,6 @@ def query_overview_snapshot(
     hourly_start: datetime,
     assigned_user_id: str | None = None,
     allowed_client_branches: set[str] | None = None,
-    latest_limit: int = 20,
 ) -> dict[str, Any]:
     scope_clauses, scope_params = _scope_where_fragments(
         assigned_user_id=assigned_user_id,
@@ -1093,39 +1092,6 @@ def query_overview_snapshot(
         [hourly_start, current_hour, *scope_params],
     )
 
-    latest_rows = fetch_all(
-        f"""
-        SELECT o.id,
-               o.external_message_id,
-               o.received_at,
-               {_STATUS_SQL} AS normalized_status,
-               o.item_count,
-               o.warnings_count,
-               o.errors_count,
-               o.ticket_number,
-               o.kundennummer,
-               o.kom_nr,
-               o.kom_name,
-               o.liefertermin,
-               o.wunschtermin,
-               o.delivery_week,
-               o.store_name,
-               o.store_address,
-               o.iln,
-               {_EXTRACTION_BRANCH_SQL} AS normalized_extraction_branch,
-               o.reply_needed,
-               o.human_review_needed,
-               o.post_case,
-               o.parse_error,
-               o.updated_at AS mtime
-        FROM orders o
-        WHERE {where_sql}
-        ORDER BY {_EFFECTIVE_RECEIVED_SQL} DESC, o.id DESC
-        LIMIT %s
-        """,
-        [*scope_params, max(1, int(latest_limit))],
-    )
-
     return {
         "summary": {
             "today_total": int(summary.get("today_total") or 0),
@@ -1162,10 +1128,6 @@ def query_overview_snapshot(
                 "processed": int(row.get("processed") or 0),
             }
             for row in hour_rows
-        ],
-        "latest_orders": [
-            _summary_row_to_order(row, status_field="normalized_status", branch_field="normalized_extraction_branch")
-            for row in latest_rows
         ],
     }
 
