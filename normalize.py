@@ -7,6 +7,7 @@ from dateutil.parser import parse, ParserError
 import datetime
 
 import lookup
+import segmuller_rules
 
 
 HEADER_FIELDS = [
@@ -576,7 +577,9 @@ def _is_segmuller_missing_layout_review_only(
         return False
     if review_entry.get("value") is not True:
         return False
-    return str(review_entry.get("derived_from") or "").strip() == "segmuller_missing_furnplan_pdf"
+    return segmuller_rules.is_review_only_reason(
+        str(review_entry.get("derived_from") or "").strip()
+    )
 
 
 def _clear_reply_needed(entry_owner: dict[str, Any]) -> None:

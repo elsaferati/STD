@@ -2183,6 +2183,50 @@ def _flag_segmuller_missing_layout_pdf(
         warnings.append(warning)
 
 
+def _apply_segmuller_vendor_section_guard(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    summary = segmuller_rules.summarize_vendor_sections(page_text_by_image_name)
+    if not summary.vendor_sections_found:
+        return
+
+    warnings = _ensure_warning_list(normalized)
+    if summary.non_staud_vendors:
+        vendor_list = ", ".join(summary.non_staud_vendors)
+        warning = (
+            "Segmuller furnplan contains non-Staud vendor sections that were ignored: "
+            f"{vendor_list}."
+        )
+        if warning not in warnings:
+            warnings.append(warning)
+
+    if summary.staud_section_found:
+        return
+
+    header = normalized.get("header")
+    if not isinstance(header, dict):
+        header = {}
+        normalized["header"] = header
+
+    entry = header.get("human_review_needed")
+    if not isinstance(entry, dict):
+        entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["human_review_needed"] = entry
+
+    entry["value"] = True
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_no_staud_section"
+
+    no_staud_warning = (
+        "Segmuller furnplan contains no Staud vendor section in digital PDF text; "
+        "forced human_review_needed=true."
+    )
+    if no_staud_warning not in warnings:
+        warnings.append(no_staud_warning)
+
+
 def _set_porta_inline_pair_reconciliation_human_review(normalized: dict[str, Any]) -> None:
     header = normalized.get("header")
     if not isinstance(header, dict):
@@ -2405,6 +2449,7 @@ def process_message(
 
     if branch.id == "segmuller":
         _flag_segmuller_missing_layout_pdf(normalized, message.attachments)
+        _apply_segmuller_vendor_section_guard(normalized, pdf_text_by_image_name)
 
     if branch.id == "porta":
         _apply_porta_code_consistency_corrections(normalized, pdf_text_by_image_name)
