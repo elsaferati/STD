@@ -94,7 +94,7 @@ def test_delivery_week_uses_custom_prep_range() -> None:
         "delivery_logic._get_delivery_preparation_settings_cached",
         return_value=_settings(
             default_prep_weeks=2,
-            ranges=[{"week_from": 7, "week_to": 17, "prep_weeks": 4}],
+            ranges=[{"year_from": 2026, "week_from": 7, "year_to": 2026, "week_to": 17, "prep_weeks": 4}],
         ),
     ):
         result = delivery_logic.calculate_delivery_week("01.01.1999", "D2")
@@ -162,7 +162,7 @@ def test_requested_week_fallback_never_undercuts_earliest_possible_week() -> Non
         "delivery_logic._get_delivery_preparation_settings_cached",
         return_value=_settings(
             default_prep_weeks=2,
-            ranges=[{"week_from": 10, "week_to": 17, "prep_weeks": 7}],
+            ranges=[{"year_from": 2026, "week_from": 10, "year_to": 2026, "week_to": 17, "prep_weeks": 7}],
         ),
     ):
         result = delivery_logic.calculate_delivery_week("17.02.2026", "G2", "11 KW 2026", client_name="segmuller")
