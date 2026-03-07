@@ -87,12 +87,16 @@
         <tr class="animate">
           <td class="col-idx num nowrap">{{ order.display_index }}</td>
           <td>
-            <span class="badge {{ order.status }}">{{ order.status|upper }}</span>
-            {% if order.human_review_needed and order.status != 'human_in_the_loop' %}
-            <span class="flag flag-review">Human in the Loop</span>
-            {% endif %}
-            {% if order.reply_needed and order.status != 'human_in_the_loop' %}
+            {% if order.human_review_needed %}
+            <span class="badge human_in_the_loop">HUMAN IN THE LOOP</span>
+            {% if order.reply_needed %}
             <span class="flag flag-reply">REPLY</span>
+            {% endif %}
+            {% else %}
+            <span class="badge {{ order.status }}">{{ order.status|upper|replace('_', ' ') }}</span>
+            {% if order.reply_needed and order.status != 'reply' %}
+            <span class="flag flag-reply">REPLY</span>
+            {% endif %}
             {% endif %}
             {% if order.post_case %}
             <span class="flag flag-post">By POST</span>
