@@ -21,17 +21,17 @@ export function AppShell({
   active,
   children,
   sidebarContent = null,
+  headerLeft = null,
 }) {
   const { user, logout } = useAuth();
   const { t } = useI18n();
 
   const isAdmin = user?.role === "admin";
+  const username = user?.username ?? user?.email ?? "";
+  const showUser = Boolean(username);
 
   return (
     <div className="bg-background-light text-slate-800 font-display min-h-screen">
-      <div className="fixed top-4 right-4 z-50 md:hidden">
-        <LanguageSwitcher compact />
-      </div>
       <div className="flex min-h-screen overflow-hidden">
         <aside className="hidden lg:flex w-64 flex-col bg-[#EEF1F4] text-slate-800 relative overflow-hidden sticky top-0 h-screen shadow-[6px_0_6px_rgba(15,23,42,0.08)] border-r border-slate-200/80">
           <div className="absolute inset-0 bg-gradient-to-b from-[#F6F7F9] via-[#EEF1F4] to-[#E2E6EA] opacity-100" />
@@ -71,19 +71,35 @@ export function AppShell({
               </div>
             ) : null}
           </div>
-          <div className="relative z-10 px-6 py-5 border-t border-slate-300/80">
-            <button
-              type="button"
-              onClick={logout}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-slate-300 text-slate-800 hover:bg-slate-400 transition-colors"
-            >
-              <span className="material-icons text-lg">logout</span>
-              <span className="text-sm font-medium">{t("common.logout")}</span>
-            </button>
-          </div>
         </aside>
 
         <div className="flex-1 flex flex-col h-screen overflow-y-auto lg:px-6">
+          <header className="sticky top-0 z-30 bg-surface-light border-b border-slate-200">
+            <div className="h-16 px-6 flex items-center justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                {headerLeft}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <LanguageSwitcher compact />
+                {showUser ? (
+                  <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700">
+                    <span className="material-icons text-lg text-slate-500">account_circle</span>
+                    <span className="text-sm font-medium">{username}</span>
+                  </div>
+                ) : null}
+                {showUser ? (
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200 text-slate-800 hover:bg-slate-300 transition-colors"
+                  >
+                    <span className="material-icons text-base">logout</span>
+                    <span className="text-sm font-medium">{t("common.logout")}</span>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </header>
           {children}
         </div>
       </div>

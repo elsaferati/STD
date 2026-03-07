@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
-import { StatusBadge } from "../components/StatusBadge";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
-import { formatDateTime, formatPercent } from "../utils/format";
+import { formatPercent } from "../utils/format";
 
 function MetricCard({ title, value, subtitle, icon, accentClass = "" }) {
   return (
@@ -79,9 +77,8 @@ function getBucketTotals(bucket) {
 
 export function OverviewPage() {
   const navigate = useNavigate();
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const [overview, setOverview] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [selectedDayIndex, setSelectedDayIndex] = useState(null);
@@ -93,8 +90,6 @@ export function OverviewPage() {
       setError("");
     } catch (requestError) {
       setError(requestError.message || t("overview.loadError"));
-    } finally {
-      setLoading(false);
     }
   }, [t]);
 
@@ -143,36 +138,30 @@ export function OverviewPage() {
   return (
     <AppShell
       active="overview"
+      headerLeft={(
+        <form onSubmit={handleSearchSubmit} className="relative hidden md:block w-full max-w-md">
+          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
+            <span className="material-icons text-lg">search</span>
+          </span>
+          <input
+            className="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            placeholder={t("overview.searchPlaceholder")}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
+        </form>
+      )}
     >
-          <header className="bg-surface-light/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
-            <div className="max-w-[1600px] mx-auto px-6 h-16 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center text-primary font-bold text-xl">
-                  S
-                </div>
-                <div>
-                  <h1 className="text-lg font-bold tracking-tight">{t("overview.title")}</h1>
-                  <p className="text-xs text-slate-500">{t("overview.subtitle")}</p>
-                </div>
+          <main className="flex-1 max-w-[1600px] mx-auto w-full p-6 space-y-6">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center text-primary font-bold text-xl">
+                S
               </div>
-              <div className="flex items-center gap-3">
-                <form onSubmit={handleSearchSubmit} className="relative hidden md:block w-64">
-                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-                    <span className="material-icons text-lg">search</span>
-                  </span>
-                  <input
-                    className="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-                    placeholder={t("overview.searchPlaceholder")}
-                    value={searchInput}
-                    onChange={(event) => setSearchInput(event.target.value)}
-                  />
-                </form>
-                <LanguageSwitcher compact className="hidden md:flex" />
+              <div>
+                <h1 className="text-lg font-bold tracking-tight">{t("overview.title")}</h1>
+                <p className="text-xs text-slate-500">{t("overview.subtitle")}</p>
               </div>
             </div>
-          </header>
-
-          <main className="flex-1 max-w-[1600px] mx-auto w-full p-6 space-y-6">
             {error ? (
               <div className="bg-danger/10 border border-danger/20 text-danger rounded-lg p-3 text-sm">{error}</div>
             ) : null}
@@ -353,72 +342,6 @@ export function OverviewPage() {
               </div>
             </div>
 
-            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-              <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <h3 className="font-bold text-lg">{t("overview.latestOrders")}</h3>
-                  <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-medium">{t("overview.liveFeed")}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={loadOverview}
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors"
-                >
-                  <span className="material-icons text-sm">refresh</span>
-                  {t("overview.refresh")}
-                </button>
-              </div>
-
-              <div className="overflow-auto h-[60vh]">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
-                    <tr>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">Nr</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.receivedAt")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.status")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-40 max-w-[160px]">{t("common.ticketKom")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50 w-56 max-w-[224px]">{t("common.clientStore")}</th>
-                      <th className="px-6 py-4 whitespace-nowrap sticky top-0 z-20 bg-slate-50">{t("common.items")}</th>
-                      <th className="px-6 py-4 text-right sticky top-0 z-20 bg-slate-50">{t("common.actions")}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {(overview?.latest_orders || []).map((order, index) => (
-                      <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-500">{index + 1}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-black">
-                          {formatDateTime(order.effective_received_at, lang)}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap"><StatusBadge status={order.status} /></td>
-                        <td className="px-6 py-4 font-medium text-primary w-40 max-w-[160px]">
-                          <span className="block truncate">
-                            {order.ticket_number || order.kom_nr || order.id}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap w-56 max-w-[224px]">
-                          <div className="font-medium text-slate-800 truncate">{order.kom_name || "-"}</div>
-                          <div className="text-xs text-slate-500 truncate">{order.store_name || "-"}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-600">{order.item_count}</td>
-                        <td className="px-6 py-4 text-right">
-                          <Link
-                            to={`/orders/${order.id}`}
-                            className="text-primary hover:text-primary-dark transition-colors bg-primary/10 px-2 py-1 rounded text-xs font-bold uppercase"
-                          >
-                            {t("common.open")}
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                    {!loading && (overview?.latest_orders || []).length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="px-6 py-8 text-center text-slate-500">{t("overview.noOrders")}</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
           </main>
     </AppShell>
   );

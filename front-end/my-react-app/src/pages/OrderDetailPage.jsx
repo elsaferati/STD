@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { StatusBadge } from "../components/StatusBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
@@ -372,7 +371,20 @@ export function OrderDetailPage() {
 
   if (loading) {
     return (
-      <AppShell active="orders">
+      <AppShell
+        active="orders"
+        headerLeft={(
+          <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+            <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+            <input
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+              placeholder={t("orders.searchPlaceholder")}
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+          </form>
+        )}
+      >
         <div className="flex-1 flex items-center justify-center">{t("common.loadingOrder")}</div>
       </AppShell>
     );
@@ -380,7 +392,20 @@ export function OrderDetailPage() {
 
   if (!order) {
     return (
-      <AppShell active="orders">
+      <AppShell
+        active="orders"
+        headerLeft={(
+          <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+            <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+            <input
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+              placeholder={t("orders.searchPlaceholder")}
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+          </form>
+        )}
+      >
         <div className="p-6">
           <Link to="/orders" className="text-primary hover:underline">{t("common.backToOrders")}</Link>
           <p className="mt-4 text-danger">{error || t("orderDetail.notFound")}</p>
@@ -403,25 +428,21 @@ export function OrderDetailPage() {
   const editDisabledHelpId = editButtonDisabled && editDisabledReason ? "edit-fields-helptext" : undefined;
 
   return (
-    <AppShell active="orders">
+    <AppShell
+      active="orders"
+      headerLeft={(
+        <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
+          <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+          <input
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+            placeholder={t("orders.searchPlaceholder")}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
+        </form>
+      )}
+    >
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="sticky top-0 z-20">
-          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
-            <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
-              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-              <input
-                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-                placeholder={t("orders.searchPlaceholder")}
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </form>
-            <div className="flex items-center gap-3 ml-4">
-              <LanguageSwitcher compact className="hidden md:flex" />
-            </div>
-          </header>
-        </div>
-
         <div className={`px-6 py-6 space-y-6 ${isEditing ? "pb-44 md:pb-40" : ""}`}>
           <header className="bg-surface-light border-b border-slate-200 rounded-xl">
             <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
