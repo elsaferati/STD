@@ -28,6 +28,7 @@ HEADER_FIELDS = [
     "iln",
     "iln_anl",
     "iln_fil",
+    "mail_to",
     "human_review_needed",
     "reply_needed",
     "post_case",

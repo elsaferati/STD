@@ -510,6 +510,7 @@ export function OrdersPage() {
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-44 max-w-44">{t("common.kommissionNumber")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-64 max-w-64">{t("common.customer")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("fields.mail_to")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
@@ -536,6 +537,7 @@ export function OrdersPage() {
                         <div className="font-medium text-slate-900 truncate">{order.kom_name || "-"}</div>
                         <div className="text-xs text-slate-500 truncate">{order.store_name || order.kundennummer || "-"}</div>
                       </td>
+                      <td className="px-4 py-3 text-slate-600 truncate">{order.mail_to || "-"}</td>
                       <td className="px-4 py-3 font-medium text-slate-900 w-56 max-w-56">
                         <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
                       </td>

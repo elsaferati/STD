@@ -100,6 +100,7 @@ export const translations = {
       modellnummer: "Model Number",
       menge: "Quantity",
       furncloud_id: "Furncloud ID",
+      mail_to: "Mail To",
     },
     flags: {
       reply: "Reply",
@@ -411,6 +412,7 @@ export const translations = {
       modellnummer: "Modellnummer",
       menge: "Menge",
       furncloud_id: "Furncloud-ID",
+      mail_to: "Mail To",
     },
     flags: {
       reply: "Antwort",
