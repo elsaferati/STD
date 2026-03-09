@@ -371,6 +371,27 @@ export function OrdersPage() {
               >
                 {t("status.failed")} <span className="bg-slate-200 text-slate-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.failed || 0}</span>
               </button>
+              <button
+                type="button"
+                onClick={() => applyTab("waiting_for_reply")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "waiting_for_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.waiting_for_reply")} <span className="bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.waiting_for_reply || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("client_replied")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "client_replied" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.client_replied")} <span className="bg-blue-100 text-blue-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.client_replied || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("updated_after_reply")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "updated_after_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
+              </button>
             </div>
           </div>
 
@@ -464,28 +485,7 @@ export function OrdersPage() {
                 <button type="button" disabled className="bg-primary/40 text-white px-3.5 py-2 rounded-md text-sm font-medium cursor-not-allowed">
                   {t("orders.manualOrder")}
                 </button>
-                <button
-                type="button"
-                onClick={() => applyTab("waiting_for_reply")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "waiting_for_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t("status.waiting_for_reply")} <span className="bg-amber-100 text-amber-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.waiting_for_reply || 0}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => applyTab("client_replied")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "client_replied" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t("status.client_replied")} <span className="bg-blue-100 text-blue-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.client_replied || 0}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => applyTab("updated_after_reply")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "updated_after_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
-              </button>
-            </div>
+              </div>
             </div>
           </div>
 
