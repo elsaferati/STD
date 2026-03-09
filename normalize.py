@@ -194,6 +194,7 @@ _STREET_KEYWORD_START_RE = re.compile(
 
 
 _SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
+_SEGMULLER_FURNCLOUD_COMPACT_RE = re.compile(r"^([A-Za-z0-9]{4})([A-Za-z0-9]{4})$")
 
 
 def _format_german_address_lines(value: str) -> str:
@@ -1041,6 +1042,16 @@ def _split_segmuller_code(raw: Any) -> tuple[str, str] | None:
     return None
 
 
+def _normalize_segmuller_furncloud_id(raw: Any) -> str:
+    text = _clean_text(raw)
+    if not text:
+        return ""
+    match = _SEGMULLER_FURNCLOUD_COMPACT_RE.fullmatch(text)
+    if not match:
+        return text
+    return f"{match.group(1)} {match.group(2)}"
+
+
 def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
     entry["source"] = "derived"
     entry["confidence"] = 1.0
@@ -1076,6 +1087,29 @@ def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
     if new_modell != modell_value:
         modell_entry["value"] = new_modell
         _mark_segmuller_code_derived(modell_entry)
+
+
+def _normalize_segmuller_item_furncloud_id(item: dict[str, Any]) -> None:
+    entry = _ensure_field(item, "furncloud_id")
+    current_value = _clean_text(entry.get("value"))
+    normalized_value = _normalize_segmuller_furncloud_id(current_value)
+    if normalized_value == current_value:
+        return
+    entry["value"] = normalized_value
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_furncloud_id_split"
+
+
+def _normalize_segmuller_program_furncloud_id(data: dict[str, Any]) -> None:
+    program = data.get("program")
+    if not isinstance(program, dict):
+        return
+    current_value = _clean_text(program.get("furncloud_id"))
+    normalized_value = _normalize_segmuller_furncloud_id(current_value)
+    if normalized_value == current_value:
+        return
+    program["furncloud_id"] = normalized_value
 
 
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
@@ -1148,6 +1182,7 @@ def _normalize_items(
             _normalize_momax_bg_item_codes(item)
         elif (branch_id or "").strip() == "segmuller":
             _normalize_segmuller_item_codes(item)
+            _normalize_segmuller_item_furncloud_id(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
@@ -1624,6 +1659,7 @@ def normalize_output(
     _normalize_header(header, dayfirst, warnings)
     if (branch_id or "").strip() == "segmuller":
         _normalize_segmuller_kom_name(header)
+        _normalize_segmuller_program_furncloud_id(data)
     reply_needed_entry = header.get("reply_needed", {})
     reply_needed_flag = False
     if isinstance(reply_needed_entry, dict):
