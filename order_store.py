@@ -477,9 +477,9 @@ def _upsert_revision(
                 parse_error = %s,
                 current_revision_id = %s,
                 current_revision_no = %s,
-                updated_at = %s,
-                deleted_at = NULL
+                updated_at = %s
             WHERE id = %s
+              AND deleted_at IS NULL
             """,
             (
                 external_message_id,
@@ -1370,40 +1370,9 @@ def soft_delete_order(*, order_id: str, actor_user_id: str | None) -> bool:
     detail = get_order_detail(order_id)
     if not detail:
         return False
-    now = _now()
     with get_connection() as conn:
-        revision = _upsert_revision(
-            conn,
-            payload=_normalize_payload(detail.get("data") if isinstance(detail.get("data"), dict) else {}),
-            external_message_id=str(detail.get("message_id") or order_id),
-            change_type="delete",
-            changed_by_user_id=actor_user_id,
-            parse_error=detail.get("parse_error"),
-            diff_json={"deleted": True},
-        )
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE orders SET deleted_at = %s, updated_at = %s WHERE id = %s", (now, now, order_id))
-            cursor.execute(
-                """
-                UPDATE order_review_tasks
-                SET state = 'cancelled',
-                    resolution_outcome = COALESCE(resolution_outcome, 'deleted'),
-                    resolution_note = COALESCE(resolution_note, 'Order deleted'),
-                    resolved_at = COALESCE(resolved_at, %s),
-                    claim_expires_at = NULL,
-                    updated_at = %s
-                WHERE order_id = %s
-                  AND state NOT IN ('resolved', 'cancelled')
-                """,
-                (now, now, order_id),
-            )
-            cursor.execute(
-                """
-                INSERT INTO order_events (order_id, revision_id, event_type, actor_type, actor_user_id, event_data, created_at)
-                VALUES (%s, %s, 'order_deleted', %s, %s, %s::jsonb, %s)
-                """,
-                (order_id, revision["revision_id"], "user" if actor_user_id else "system", actor_user_id, _jsonb({"soft_delete": True}), now),
-            )
+            cursor.execute("DELETE FROM orders WHERE id = %s", (order_id,))
         conn.commit()
     return True
 
