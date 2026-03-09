@@ -1205,7 +1205,12 @@ def _propagate_furncloud_id(items: list[dict[str, Any]], warnings: list[str]) ->
         return
 
     if len(values) > 1:
-        warnings.append("Multiple furncloud_id values found; using the first for all items.")
+        warnings.append(
+            f"Multiple furncloud_id values found ({', '.join(values)}); "
+            "each item keeps its own furncloud_id per 'Siehe Planung' row."
+        )
+        # Each item retains its own value; do not override.
+        return
 
     chosen = values[0]
     for item in items:
@@ -1216,6 +1221,43 @@ def _propagate_furncloud_id(items: list[dict[str, Any]], warnings: list[str]) ->
             continue
         entry["source"] = "derived"
         entry["confidence"] = 1.0
+
+
+def _remove_furncloud_ghost_items(items: list[dict[str, Any]], warnings: list[str]) -> None:
+    """Remove spurious items whose modellnummer+artikelnummer matches a furncloud_id.
+
+    The LLM sometimes treats the two tokens in a 'Siehe Planung(xxxx xxxx)' phrase as
+    modellnummer + artikelnummer, creating a fake item. Detect these by checking if
+    an item's model+article (case-insensitive, no space) equals any furncloud_id value
+    present in the items list.
+    """
+    furncloud_values: set[str] = set()
+    for item in items:
+        entry = item.get("furncloud_id", {})
+        value = _clean_text(entry.get("value") if isinstance(entry, dict) else entry)
+        if value:
+            furncloud_values.add(value.lower().replace(" ", ""))
+
+    if not furncloud_values:
+        return
+
+    to_remove = []
+    for item in items:
+        mod_entry = item.get("modellnummer", {})
+        art_entry = item.get("artikelnummer", {})
+        mod = _clean_text(mod_entry.get("value") if isinstance(mod_entry, dict) else mod_entry) or ""
+        art = _clean_text(art_entry.get("value") if isinstance(art_entry, dict) else art_entry) or ""
+        if mod and art and (mod + art).lower() in furncloud_values:
+            to_remove.append(item)
+
+    for ghost in to_remove:
+        items.remove(ghost)
+        mod_val = ghost.get("modellnummer", {}).get("value", "")
+        art_val = ghost.get("artikelnummer", {}).get("value", "")
+        warnings.append(
+            f"Removed ghost item (modellnummer={mod_val}, artikelnummer={art_val}) — "
+            "matched a furncloud_id; likely created from 'Siehe Planung' text."
+        )
 
 
 def apply_program_furncloud_to_items(data: dict[str, Any], warnings: list[str] | None = None) -> None:
@@ -1725,6 +1767,7 @@ def normalize_output(
     if is_momax_bg:
         apply_momax_bg_strict_item_code_corrections(data)
     _propagate_furncloud_id(items, warnings)
+    _remove_furncloud_ghost_items(items, warnings)
     apply_program_furncloud_to_items(data, warnings)
 
     existing_warnings = data.get("warnings", [])
@@ -1827,6 +1870,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     # global furncloud ID and fill missing item-level values before recomputing missing fields.
     data["items"] = items
     apply_program_furncloud_to_items(data, None)
+    _remove_furncloud_ghost_items(items, data.get("warnings") or [])
 
     kom_name_entry = header.get("kom_name", {})
     is_momax_bg = (
