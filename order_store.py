@@ -585,18 +585,79 @@ def mark_reply_email_sent(order_id: str, missing_fields: list[str]) -> None:
         conn.commit()
 
 
-def find_order_awaiting_reply_by_kom(kom_number: str) -> dict[str, Any] | None:
+def find_reply_needed_order_by_kom(kom_number: str) -> dict[str, Any] | None:
+    """Find an order that is awaiting or recently received a client reply, by KOM/ticket number.
+
+    Looks back up to 14 days to also catch orders where the first reply was already
+    processed (client_replied / updated_after_reply) so that follow-up emails can still
+    be merged into the original order instead of creating a new one.
+    """
     row = fetch_one(
         """
         SELECT id, status, missing_fields_snapshot, external_message_id
         FROM orders
-        WHERE waiting_for_client_reply = TRUE
+        WHERE (
+            waiting_for_client_reply = TRUE
+            OR reply_needed = TRUE
+            OR status IN ('waiting_for_reply', 'client_replied', 'updated_after_reply')
+        )
           AND (kom_nr = %s OR ticket_number = %s)
+          AND deleted_at IS NULL
+          AND updated_at >= NOW() - INTERVAL '1 days'
+        ORDER BY received_at DESC
         LIMIT 1
         """,
         (kom_number, kom_number),
     )
     return dict(row) if row else None
+
+
+def find_order_awaiting_reply_by_kom(kom_number: str) -> dict[str, Any] | None:
+    """Find an order awaiting or recently received a client reply, by KOM/ticket number.
+
+    Like find_reply_needed_order_by_kom but used specifically for the Re: email path.
+    Also covers recently-processed orders within 14 days so repeated replies work.
+    """
+    row = fetch_one(
+        """
+        SELECT id, status, missing_fields_snapshot, external_message_id
+        FROM orders
+        WHERE (
+            waiting_for_client_reply = TRUE
+            OR status IN ('waiting_for_reply', 'client_replied', 'updated_after_reply')
+        )
+          AND (kom_nr = %s OR ticket_number = %s)
+          AND deleted_at IS NULL
+          AND updated_at >= NOW() - INTERVAL '1 days'
+        ORDER BY received_at DESC
+        LIMIT 1
+        """,
+        (kom_number, kom_number),
+    )
+    return dict(row) if row else None
+
+
+def reopen_waiting_for_reply(order_id: str, missing_fields: list[str]) -> None:
+    """Re-mark an order as waiting for client reply after a partial follow-up.
+
+    Called when a follow-up email was processed but some fields are still missing.
+    Updates the missing_fields_snapshot without touching reply_email_sent_at.
+    """
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET waiting_for_client_reply = TRUE,
+                    missing_fields_snapshot = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (missing_fields, STATUS_WAITING_REPLY, now, order_id),
+            )
+        conn.commit()
 
 
 def get_order_current_payload(order_id: str) -> dict[str, Any] | None:

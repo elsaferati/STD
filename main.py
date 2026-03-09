@@ -11,7 +11,12 @@ from email_ingest import EmailClient
 from openai_extract import OpenAIExtractor
 import order_store
 from pipeline import process_message
-from reply_tracker import is_client_reply, process_client_reply
+from reply_tracker import (
+    is_client_reply,
+    process_client_reply,
+    process_new_email_followup,
+    extract_kom_from_bestellung_subject,
+)
 import xml_exporter
 
 
@@ -102,7 +107,34 @@ def main() -> int:
                     seen_message_ids.add(message.message_id)
                     continue
 
+            # Check if subject looks like "Bestellung {KOM}" — a new client reply email
+            _bestellung_kom = extract_kom_from_bestellung_subject(message.subject or "")
+            if _bestellung_kom:
+                _existing_bestellung = order_store.find_reply_needed_order_by_kom(_bestellung_kom)
+                if _existing_bestellung:
+                    # Process as a reply using full extraction for the body content
+                    result = process_message(message, config, extractor)
+                    _handled = process_new_email_followup(_existing_bestellung, result.data, message, config)
+                    if _handled:
+                        seen_message_ids.add(message.message_id)
+                        continue
+
             result = process_message(message, config, extractor)
+
+            # Check if this new email is a follow-up for an existing reply-needed order
+            _header = result.data.get("header") or {}
+            _kom_entry = _header.get("kom_nr") or _header.get("ticket_number")
+            _kom_nr = str((_kom_entry.get("value") if isinstance(_kom_entry, dict) else _kom_entry) or "").strip()
+            # Also try extracting KOM from subject directly as a fallback
+            if not _kom_nr:
+                _kom_nr = _bestellung_kom
+            if _kom_nr:
+                _existing = order_store.find_reply_needed_order_by_kom(_kom_nr)
+                if _existing:
+                    _handled = process_new_email_followup(_existing, result.data, message, config)
+                    if _handled:
+                        seen_message_ids.add(message.message_id)
+                        continue
 
             try:
                 persisted = order_store.upsert_order_payload(

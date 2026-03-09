@@ -1013,6 +1013,10 @@ def _load_order(
 def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     data = order["data"]
     response = dict(data)
+    # Override status with authoritative DB column value.
+    # The payload-derived status (from derive_status/header flags) can be stale
+    # after reply processing — the DB status is always up-to-date.
+    response["status"] = _normalize_status(order.get("status"))
     response["extraction_branch"] = _normalize_extraction_branch(response.get("extraction_branch"))
     response["order_id"] = order["safe_id"]
     response["header"] = order["header"]
