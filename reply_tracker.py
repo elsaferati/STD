@@ -16,6 +16,7 @@ from typing import Any
 
 from config import Config
 from email_ingest import IngestedEmail
+from gemini_validation import GeminiValidator, build_validation_error_result
 from openai_extract import OpenAIExtractor
 import order_store
 import xml_exporter
@@ -161,6 +162,35 @@ _STALE_WARNING_PREFIXES = (
     "Reply needed: Missing critical item fields:",
     "Reply needed:",
 )
+
+
+def _prepare_xml_documents_and_validation(
+    *,
+    config: Config,
+    validator: GeminiValidator | None,
+    message: IngestedEmail,
+    payload: dict[str, Any],
+    output_name: str,
+) -> tuple[list[xml_exporter.XmlDocument], dict[str, Any] | None]:
+    xml_documents: list[xml_exporter.XmlDocument] = []
+    validation_result: dict[str, Any] | None = None
+    try:
+        xml_documents = xml_exporter.render_xml_documents(payload, output_name, config, config.output_dir)
+        if validator is not None:
+            validation_result = validator.validate_order(
+                message=message,
+                branch_id=str(payload.get("extraction_branch") or "").strip(),
+                normalized=payload,
+                xml_documents=xml_documents,
+            )
+    except Exception as exc:
+        print(f"[reply_tracker] Failed to prepare XML documents for validation: {exc}")
+        if validator is not None:
+            validation_result = build_validation_error_result(
+                f"Gemini validation skipped because XML rendering failed: {exc}",
+                model=config.gemini_model,
+            )
+    return xml_documents, validation_result
 
 
 def _strip_stale_field_warnings(payload: dict[str, Any]) -> None:
@@ -395,6 +425,7 @@ def process_new_email_followup(
     new_payload: dict[str, Any],
     message: Any,
     config: Any,
+    validator: GeminiValidator | None = None,
 ) -> bool:
     """Handle a new (non-Re:) email whose KOM matches an existing reply-needed order.
 
@@ -415,13 +446,28 @@ def process_new_email_followup(
         return False
 
     merged = _merge_new_extraction(existing_payload, new_payload)
+    output_name = f"followup_{order_id}"
+    xml_documents, validation_result = _prepare_xml_documents_and_validation(
+        config=config,
+        validator=validator,
+        message=message,
+        payload=merged,
+        output_name=output_name,
+    )
 
     try:
-        order_store.upsert_order_payload(
+        persisted = order_store.upsert_order_payload(
             merged,
             external_message_id=original_message_id,
             change_type="followup_update",
+            validation_result=validation_result,
         )
+        if validation_result and persisted.get("revision_id"):
+            order_store.record_validation_run(
+                order_id=order_id,
+                revision_id=persisted["revision_id"],
+                validation_result=validation_result,
+            )
     except Exception as exc:
         print(f"[reply_tracker] Failed to upsert followup payload for order {order_id}: {exc}")
         return False
@@ -433,8 +479,11 @@ def process_new_email_followup(
         return False
 
     try:
-        output_name = f"followup_{order_id}"
-        xml_paths = xml_exporter.export_xmls(merged, output_name, config, config.output_dir)
+        xml_paths = (
+            xml_exporter.write_xml_documents(xml_documents)
+            if xml_documents
+            else xml_exporter.export_xmls(merged, output_name, config, config.output_dir)
+        )
         for xp in xml_paths:
             print(f"[reply_tracker] Regenerated XML: {xp}")
     except Exception as exc:
@@ -467,6 +516,7 @@ def process_client_reply(
     message: IngestedEmail,
     config: Config,
     extractor: OpenAIExtractor,
+    validator: GeminiValidator | None = None,
 ) -> bool:
     """Process a client reply email.
 
@@ -504,14 +554,30 @@ def process_client_reply(
     else:
         print(f"[reply_tracker] No missing_fields_snapshot for order {order_id}; skipping extraction.")
 
+    output_name = f"reply_{order_id}"
+    xml_documents, validation_result = _prepare_xml_documents_and_validation(
+        config=config,
+        validator=validator,
+        message=message,
+        payload=payload,
+        output_name=output_name,
+    )
+
     # Persist the updated payload — must use the ORIGINAL message_id so the dedupe_key
     # matches the existing order row rather than creating a new one.
     try:
-        order_store.upsert_order_payload(
+        persisted = order_store.upsert_order_payload(
             payload,
             external_message_id=original_message_id,
             change_type="reply_update",
+            validation_result=validation_result,
         )
+        if validation_result and persisted.get("revision_id"):
+            order_store.record_validation_run(
+                order_id=order_id,
+                revision_id=persisted["revision_id"],
+                validation_result=validation_result,
+            )
     except Exception as exc:
         print(f"[reply_tracker] Failed to upsert updated payload for order {order_id}: {exc}")
         return False
@@ -525,8 +591,11 @@ def process_client_reply(
 
     # Regenerate XMLs
     try:
-        output_name = f"reply_{order_id}"
-        xml_paths = xml_exporter.export_xmls(payload, output_name, config, config.output_dir)
+        xml_paths = (
+            xml_exporter.write_xml_documents(xml_documents)
+            if xml_documents
+            else xml_exporter.export_xmls(payload, output_name, config, config.output_dir)
+        )
         for xp in xml_paths:
             print(f"[reply_tracker] Regenerated XML: {xp}")
     except Exception as exc:

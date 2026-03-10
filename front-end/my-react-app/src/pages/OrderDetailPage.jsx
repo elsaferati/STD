@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
+import { ValidationBadge } from "../components/ValidationBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 import {
@@ -237,9 +238,40 @@ export function OrderDetailPage() {
             }
           : current
       ));
+      await loadOrder();
       setNotice(t("orderDetail.xmlRegenerated"));
     } catch (requestError) {
       setError(requestError.message || t("orderDetail.xmlRegenFailed"));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const resolveValidation = async () => {
+    if (!orderId || !order) {
+      return;
+    }
+    const note = window.prompt(t("orderDetail.resolveValidationPrompt"));
+    if (note === null) {
+      return;
+    }
+    const trimmedNote = note.trim();
+    if (!trimmedNote) {
+      setError(t("orderDetail.resolveValidationNoteRequired"));
+      return;
+    }
+    setBusyAction("resolve-validation");
+    setError("");
+    setNotice("");
+    try {
+      const updated = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/validation/resolve`, {
+        method: "POST",
+        body: { note: trimmedNote },
+      });
+      setOrder(updated);
+      setNotice(t("orderDetail.validationResolved"));
+    } catch (requestError) {
+      setError(requestError.message || t("orderDetail.validationResolveFailed"));
     } finally {
       setBusyAction("");
     }
@@ -426,6 +458,9 @@ export function OrderDetailPage() {
     ? String(order.editability_reason || t("orderDetail.editUnavailableFallback"))
     : "";
   const editDisabledHelpId = editButtonDisabled && editDisabledReason ? "edit-fields-helptext" : undefined;
+  const validationStatus = String(order.validation_status || "not_run").toLowerCase();
+  const validationIssues = Array.isArray(order.validation_issues) ? order.validation_issues : [];
+  const canResolveValidation = validationStatus === "flagged" || validationStatus === "stale";
 
   return (
     <AppShell
@@ -457,6 +492,7 @@ export function OrderDetailPage() {
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: displayOrderRef })}</h1>
               <StatusBadge status={order.status} />
+              <ValidationBadge status={order.validation_status} />
               <span className="text-xs text-slate-500">{t("orderDetail.received", { date: formatDateTime(order.received_at, lang) })}</span>
             </div>
           </div>
@@ -676,6 +712,47 @@ export function OrderDetailPage() {
                   </a>
                 ) : null}
               </div>
+            </div>
+            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">{t("common.validation")}</h2>
+                  <p className="mt-1 text-sm text-slate-600">{order.validation_summary || t("orderDetail.validationNoSummary")}</p>
+                </div>
+                <ValidationBadge status={validationStatus} />
+              </div>
+              <div className="grid grid-cols-1 gap-2 text-xs text-slate-500">
+                <div>{t("orderDetail.validationCheckedAt", { date: order.validation_checked_at ? formatDateTime(order.validation_checked_at, lang) : "-" })}</div>
+                {order.validation_stale_reason ? (
+                  <div>{t("orderDetail.validationStaleReason", { reason: order.validation_stale_reason })}</div>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                {validationIssues.length ? validationIssues.map((issue, index) => (
+                  <div key={`validation-issue-${index}`} className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                    <p className="font-semibold">{issue.field_path || t("orderDetail.validationGeneralIssue")}</p>
+                    <p className="mt-1">{issue.reason || issue.source_evidence || "-"}</p>
+                    <p className="mt-1 text-xs text-rose-700">
+                      {t("orderDetail.validationExpected")} {issue.expected_value || "-"} | {t("orderDetail.validationXml")} {issue.xml_value || "-"}
+                    </p>
+                  </div>
+                )) : (
+                  <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+                    {t("orderDetail.validationIssuesEmpty")}
+                  </div>
+                )}
+              </div>
+              {canResolveValidation ? (
+                <button
+                  type="button"
+                  onClick={resolveValidation}
+                  disabled={busyAction === "resolve-validation"}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold text-white bg-slate-900 rounded-md hover:bg-slate-700 disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">verified</span>
+                  {busyAction === "resolve-validation" ? t("common.saving") : t("orderDetail.resolveValidation")}
+                </button>
+              ) : null}
             </div>
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden sticky top-6">
               <div className="p-5 border-b border-slate-200 flex items-center justify-between">

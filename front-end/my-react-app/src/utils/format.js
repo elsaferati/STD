@@ -88,6 +88,28 @@ export function statusLabel(status, t) {
   return normalized;
 }
 
+export function validationStatusLabel(status, t) {
+  const normalized = String(status || "not_run").toLowerCase();
+  if (typeof t === "function") {
+    if (normalized === "not_run") return t("validation.not_run", null, "Not Run");
+    if (normalized === "passed") return t("validation.passed", null, "Passed");
+    if (normalized === "flagged") return t("validation.flagged", null, "Flagged");
+    if (normalized === "stale") return t("validation.stale", null, "Stale");
+    if (normalized === "skipped") return t("validation.skipped", null, "Skipped");
+    if (normalized === "error") return t("validation.error", null, "Error");
+    if (normalized === "resolved") return t("validation.resolved", null, "Resolved");
+    return t(`validation.${normalized}`, null, normalized);
+  }
+  if (normalized === "not_run") return "Not Run";
+  if (normalized === "passed") return "Passed";
+  if (normalized === "flagged") return "Flagged";
+  if (normalized === "stale") return "Stale";
+  if (normalized === "skipped") return "Skipped";
+  if (normalized === "error") return "Error";
+  if (normalized === "resolved") return "Resolved";
+  return normalized;
+}
+
 export function fieldLabel(field, t) {
   const fallback = String(field || "")
     .replace(/_/g, " ")

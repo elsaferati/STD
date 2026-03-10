@@ -1,81 +1,86 @@
-# Add Configurable Preparation-Week Rules For Delivery Scheduling
+# Add Gemini Post-Generation Validation
 
 ## Summary
-Replace the fixed earliest-week matrix with a true preparation-time model driven by dashboard settings. The system will compute the earliest possible delivery week as `current ISO week + applicable prep weeks`, then choose the first valid tour week on or after that candidate. Rules will be global, repeat every year, allow multiple non-overlapping week ranges, and use a default baseline of `2` prep weeks outside custom ranges.
+- Add a second AI step after extraction and XML assembly that compares the source order evidence against the finalized XML output and flags likely mistakes.
+- Use Gemini as a dedicated validator, not as a replacement for the current OpenAI extraction path.
+- Surface the result as a separate persisted review state labeled `Gemini Review`, instead of overloading the existing order lifecycle statuses like `reply`, `waiting_for_reply`, or `client_replied`.
+- Run it for all newly processed orders, including follow-up/reply updates. With the chosen inline-only source handling, later manual edits will mark the prior Gemini result `stale` rather than rerunning Gemini.
 
 ## Implementation Changes
-- Add a new persistent settings table for delivery preparation rules:
-  - global scope only for v1
-  - fields: `id`, `week_from`, `week_to`, `prep_weeks`, `is_default`, timestamps
-  - enforce one default rule and non-overlapping custom ranges
-  - rules repeat every year and use ISO week numbers `1-52`
-- Add backend API endpoints in [`app.py`](C:/Users/Lili/Documents/GitHub/STD/app.py) for admin-only management:
-  - `GET /api/settings/delivery-preparation`
-  - `PUT /api/settings/delivery-preparation`
-  - response shape includes the default prep weeks plus the ordered list of custom ranges
-  - validate ranges server-side: `week_from <= week_to`, `prep_weeks >= 0`, no overlaps, no duplicate default
-- Add a small data-access layer for these settings using the existing DB helpers in [`db.py`](C:/Users/Lili/Documents/GitHub/STD/db.py).
-- Update [`delivery_logic.py`](C:/Users/Lili/Documents/GitHub/STD/delivery_logic.py):
-  - keep `TOUR_TO_SCHEDULE_CODE` and `VALID_WEEKS_BY_CODE`
-  - remove `EARLIEST_WEEK_BY_TOUR` as the runtime source of truth
-  - add rule lookup for the current ISO week:
-    - if current week falls inside a configured custom range, use that `prep_weeks`
-    - otherwise use the default `2` weeks
-  - compute earliest candidate week by real calendar math, including correct next-year rollover
-  - select the first valid tour week on or after that candidate, rolling into the next year when needed
-  - preserve current requested-week logic after earliest-week determination, except that year rollover should now be calendar-correct
-  - preserve current public API and debug logging keys
-- Add a real settings UI in [`front-end/my-react-app/src/pages/SettingsPage.jsx`](C:/Users/Lili/Documents/GitHub/STD/front-end/my-react-app/src/pages/SettingsPage.jsx):
-  - admin-only editor
-  - one default prep-weeks input
-  - editable list of custom ranges with `week_from`, `week_to`, `prep_weeks`
-  - add/remove rows
-  - client-side validation for obvious overlap/input errors
-  - save via `PUT /api/settings/delivery-preparation`
-  - read-only or hidden state for non-admin users
+- Add Gemini config and dependency:
+  - Add `google-genai` to `requirements.txt`.
+  - Add env/config fields: `GEMINI_API_KEY`, `GEMINI_MODEL` default `gemini-2.5-flash`, `GEMINI_VALIDATION_ENABLED`, `GEMINI_VALIDATION_TIMEOUT_SECONDS`, `GEMINI_VALIDATION_MAX_EMAIL_CHARS`, `GEMINI_VALIDATION_MAX_ATTACHMENTS`.
+- Add a dedicated validator module:
+  - Create a small `GeminiValidator` wrapper using the native Google SDK.
+  - Input bundle: branch id, subject, sender, email body, PDF attachments when present, finalized XML text for both XMLs, and a compact normalized header/items snapshot.
+  - Output schema: `validation_status` (`passed|flagged|skipped|error`), `summary`, and `issues[]` with stable fields like `severity`, `scope`, `field_path`, `source_evidence`, `expected_value`, `xml_value`, `reason`.
+  - Prompt Gemini to compare only what is explicitly present in the evidence and never invent missing fields.
+- Refactor XML generation slightly so validation uses the exact final XML payload:
+  - Split XML creation into “build XML strings in memory” and “write XML files”.
+  - Use the in-memory XML strings for Gemini, then write the same strings to disk.
+- Wire validation into processing flows:
+  - In normal ingestion, run Gemini after normalized order data and XML payloads are finalized, before the final order persistence step.
+  - In `process_client_reply` and `process_new_email_followup`, run the same validator on the updated order payload and regenerated XML.
+  - If Gemini returns `flagged`, keep the XML files but persist the finding and place the order in `Gemini Review`.
+  - If Gemini errors or times out, persist `validation_status='error'` and continue; validation must not break order ingestion.
+- Persist validation separately from core order status:
+  - Add order-level summary columns such as `validation_status`, `validation_summary`, `validation_checked_at`, `validation_provider`, `validation_model`, and `validation_stale_reason`.
+  - Add a new `order_validation_runs` table keyed by `order_id` and `revision_id` to store the full structured Gemini result for history and detail-page display.
+  - Do not replace the current `status` column. `Gemini Review` is a separate queue/filter backed by `validation_status IN ('flagged','stale')`.
+- Extend API and UI surfaces:
+  - Add `validation_status`, `validation_summary`, `validation_checked_at`, and `validation_issues` to order detail payloads.
+  - Add `validation_status` filter support and a `gemini_review` count to the orders list API.
+  - Add a `Gemini Review` tab in the orders UI.
+  - Show a validation badge, summary, timestamp, and issue list on the order detail page.
+  - Add `POST /api/orders/<order_id>/validation/resolve` so a reviewer can clear the Gemini finding with a note after checking/fixing the order.
+- Handle later edits with the chosen inline-only model:
+  - On manual save or manual XML regeneration, do not rerun Gemini.
+  - If the order already has a Gemini result, mark it `stale` and keep it in the `Gemini Review` queue until a human resolves it.
+  - Historical orders are not backfilled because the original email/PDF sources are not stored.
 
-## Behavior Rules
-- Earliest possible delivery is no longer taken from a hardcoded week-by-tour table.
-- New algorithm:
-  - determine today’s ISO year/week
-  - resolve the applicable prep-weeks rule for that week
-  - add prep weeks to the current ISO week using real calendar rollover
-  - for the resolved tour rhythm, find the first valid service week on or after the candidate week
-  - if that valid week lands in the next ISO year, return the next year in `delivery_week`
-- Example:
-  - default prep = `2`
-  - custom range `7-17 => 4`
-  - today = week `8`
-  - candidate = week `12`
-  - `D2` (`2.3` rhythm) returns week `14`
-- Requested-week behavior remains layered on top of the earliest possible week; this change only replaces how earliest possible week is computed.
+## Public API / Type Additions
+- New config fields: `gemini_*`.
+- New order fields in API responses and CSV/export payloads:
+  - `validation_status`
+  - `validation_summary`
+  - `validation_checked_at`
+  - `validation_provider`
+  - `validation_model`
+  - `validation_issues`
+  - `validation_stale_reason`
+- New API endpoint:
+  - `POST /api/orders/<order_id>/validation/resolve`
+- New persisted validation states:
+  - `not_run`
+  - `passed`
+  - `flagged`
+  - `stale`
+  - `skipped`
+  - `error`
+  - `resolved`
 
 ## Test Plan
-- Add backend tests for rule validation:
-  - default rule required
-  - invalid week bounds rejected
-  - overlapping ranges rejected
-  - adjacent ranges accepted
-- Add delivery-logic tests for:
-  - default prep weeks outside custom ranges
-  - custom prep weeks inside configured ranges
-  - tour-specific next valid week selection for all six tours
-  - year rollover from late weeks into next ISO year
-  - requested-week calculations still respecting the new earliest possible week
-  - Braun vs non-Braun requested-week offsets unchanged
-- Add API tests for:
-  - admin can read/write settings
-  - non-admin cannot modify settings
-  - malformed payloads return `400`
-- Add UI tests or at minimum manual verification scenarios:
-  - load current settings
-  - add/edit/delete non-overlapping ranges
-  - block overlap before save
-  - save and reload persists correctly
+- Mocked validator tests for `passed`, `flagged`, `skipped`, and `error`.
+- Ingestion-path tests verifying:
+  - flagged orders enter `Gemini Review`
+  - passed orders do not
+  - validator failures do not stop XML generation or order persistence
+- Reply/follow-up tests verifying Gemini runs on updated orders too.
+- Persistence/API tests verifying new fields, filters, counts, and resolve endpoint behavior.
+- Manual edit tests verifying existing Gemini results become `stale`.
+- UI verification for:
+  - `Gemini Review` tab/count
+  - detail-page validation report
+  - resolve action
+  - XML download still available while the order is in Gemini Review
 
-## Assumptions
-- V1 is global only; no per-branch overrides.
-- Rules repeat every year by ISO week number.
-- Outside custom ranges, the baseline is always `2` prep weeks.
-- Year-end behavior should become calendar-correct rather than preserving the current same-year wrap quirk.
-- Existing callers of `delivery_logic.calculate_delivery_week()` and `is_tour_valid()` remain unchanged.
+## Assumptions and Defaults
+- Default model: `gemini-2.5-flash`.
+- Native Google SDK is preferred over OpenAI-compat mode because this validator needs direct Files API support and structured schema output.
+- Validation compares PDF + email + XML when PDFs exist; if there is no PDF, it falls back to email-vs-XML and may return `skipped` when evidence is insufficient.
+- Soft gate means a separate review queue/state, not a hard block on XML file download.
+- Official feasibility references:
+  - [Gemini API quickstart](https://ai.google.dev/gemini-api/docs/quickstart)
+  - [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)
+  - [Structured output](https://ai.google.dev/gemini-api/docs/structured-output)
+  - [OpenAI compatibility guidance](https://ai.google.dev/gemini-api/docs/openai)

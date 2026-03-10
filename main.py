@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from config import Config
 from db import init_db
 from email_ingest import EmailClient
+from gemini_validation import GeminiValidator, build_validation_error_result
 from openai_extract import OpenAIExtractor
 import order_store
 from pipeline import process_message
@@ -25,6 +26,8 @@ def _validate_config(config: Config) -> list[str]:
     missing = []
     if not config.openai_api_key:
         missing.append("OPENAI_API_KEY")
+    if config.gemini_validation_enabled and not config.gemini_api_key:
+        missing.append("GEMINI_API_KEY")
     if not config.email_host:
         missing.append("EMAIL_HOST")
     if not config.email_user:
@@ -34,6 +37,36 @@ def _validate_config(config: Config) -> list[str]:
     if config.email_protocol not in ("imap", "pop3"):
         missing.append("EMAIL_PROTOCOL (imap|pop3)")
     return missing
+
+
+def _prepare_xml_documents_and_validation(
+    *,
+    config: Config,
+    validator: GeminiValidator | None,
+    message,
+    payload: dict[str, object],
+    output_name: str,
+) -> tuple[list[xml_exporter.XmlDocument], dict[str, object] | None]:
+    xml_documents: list[xml_exporter.XmlDocument] = []
+    validation_result: dict[str, object] | None = None
+    try:
+        xml_documents = xml_exporter.render_xml_documents(payload, output_name, config, config.output_dir)
+        if validator is not None:
+            branch_id = str(payload.get("extraction_branch") or "").strip()
+            validation_result = validator.validate_order(
+                message=message,
+                branch_id=branch_id,
+                normalized=payload,
+                xml_documents=xml_documents,
+            )
+    except Exception as exc:
+        print(f"Failed to prepare XML documents for {message.message_id}: {exc}")
+        if validator is not None:
+            validation_result = build_validation_error_result(
+                f"Gemini validation skipped because XML rendering failed: {exc}",
+                model=config.gemini_model,
+            )
+    return xml_documents, validation_result
 
 
 def main() -> int:
@@ -76,6 +109,7 @@ def main() -> int:
         reasoning_effort=config.openai_reasoning_effort,
         max_output_tokens=config.openai_max_output_tokens,
     )
+    validator = GeminiValidator.from_config(config)
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,7 +148,7 @@ def main() -> int:
 
         for message in new_messages:
             if is_client_reply(message):
-                handled = process_client_reply(message, config, extractor)
+                handled = process_client_reply(message, config, extractor, validator)
                 if handled:
                     seen_message_ids.add(message.message_id)
                     continue
@@ -126,7 +160,13 @@ def main() -> int:
                 if _existing_bestellung:
                     # Process as a reply using full extraction for the body content
                     result = process_message(message, config, extractor)
-                    _handled = process_new_email_followup(_existing_bestellung, result.data, message, config)
+                    _handled = process_new_email_followup(
+                        _existing_bestellung,
+                        result.data,
+                        message,
+                        config,
+                        validator,
+                    )
                     if _handled:
                         seen_message_ids.add(message.message_id)
                         continue
@@ -143,21 +183,42 @@ def main() -> int:
             if _kom_nr:
                 _existing = order_store.find_reply_needed_order_by_kom(_kom_nr)
                 if _existing:
-                    _handled = process_new_email_followup(_existing, result.data, message, config)
+                    _handled = process_new_email_followup(
+                        _existing,
+                        result.data,
+                        message,
+                        config,
+                        validator,
+                    )
                     if _handled:
                         seen_message_ids.add(message.message_id)
                         continue
+
+            xml_documents, validation_result = _prepare_xml_documents_and_validation(
+                config=config,
+                validator=validator,
+                message=message,
+                payload=result.data,
+                output_name=result.output_name,
+            )
 
             try:
                 persisted = order_store.upsert_order_payload(
                     result.data,
                     external_message_id=message.message_id,
                     change_type="ingested",
+                    validation_result=validation_result,
                 )
                 print(
                     "DB upsert complete: "
                     f"order_id={persisted['order_id']} revision_no={persisted.get('revision_no')}"
                 )
+                if validation_result and persisted.get("revision_id"):
+                    order_store.record_validation_run(
+                        order_id=persisted["order_id"],
+                        revision_id=persisted["revision_id"],
+                        validation_result=validation_result,
+                    )
                 if result.reply_email_sent:
                     try:
                         order_store.mark_reply_email_sent(
@@ -173,7 +234,11 @@ def main() -> int:
             # Generate XML outputs
             xml_paths: list[str] = []
             try:
-                generated_xml_paths = xml_exporter.export_xmls(result.data, result.output_name, config, config.output_dir)
+                generated_xml_paths = (
+                    xml_exporter.write_xml_documents(xml_documents)
+                    if xml_documents
+                    else xml_exporter.export_xmls(result.data, result.output_name, config, config.output_dir)
+                )
                 xml_paths = [str(path) for path in generated_xml_paths]
                 for xp in generated_xml_paths:
                     print(f"Generated XML: {xp}")

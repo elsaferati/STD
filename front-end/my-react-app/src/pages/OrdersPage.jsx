@@ -4,6 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
+import { ValidationBadge } from "../components/ValidationBadge";
 import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBranches";
 import { downloadBlob } from "../utils/download";
 import { formatDateTime } from "../utils/format";
@@ -51,10 +52,14 @@ export function OrdersPage() {
   const fromDate = searchParams.get("from") || "";
   const toDate = searchParams.get("to") || "";
   const statusParam = searchParams.get("status");
+  const validationStatusParam = searchParams.get("validation_status") || "";
   const clientParam = searchParams.get("client") || "";
   const deliveryWeekParam = searchParams.get("delivery_week") || "";
 
   const activeTab = useMemo(() => {
+    if (validationStatusParam === "flagged,stale" || validationStatusParam === "stale,flagged") {
+      return "gemini_review";
+    }
     if (statusParam === "ok") {
       return "ok";
     }
@@ -83,7 +88,7 @@ export function OrdersPage() {
       return "today";
     }
     return "all";
-  }, [fromDate, statusParam, toDate, todayIso]);
+  }, [fromDate, statusParam, toDate, todayIso, validationStatusParam]);
 
   const updateParams = useCallback(
     (updates, options = {}) => {
@@ -134,42 +139,47 @@ export function OrdersPage() {
         reply_needed: null,
         human_review_needed: null,
         post_case: null,
+        validation_status: null,
       });
       return;
     }
     if (tab === "needs_reply") {
-      updateParams({ status: "reply", human_review_needed: null, reply_needed: null, post_case: null });
+      updateParams({ status: "reply", human_review_needed: null, reply_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "ok") {
-      updateParams({ status: "ok", human_review_needed: null, reply_needed: null, post_case: null });
+      updateParams({ status: "ok", human_review_needed: null, reply_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "manual_review") {
-      updateParams({ status: "human_in_the_loop", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "human_in_the_loop", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
+      return;
+    }
+    if (tab === "gemini_review") {
+      updateParams({ status: null, reply_needed: null, human_review_needed: null, post_case: null, validation_status: "flagged,stale" });
       return;
     }
     if (tab === "waiting_for_reply") {
-      updateParams({ status: "waiting_for_reply", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "waiting_for_reply", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "client_replied") {
-      updateParams({ status: "client_replied", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "client_replied", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "updated_after_reply") {
-      updateParams({ status: "updated_after_reply", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "updated_after_reply", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "post") {
-      updateParams({ status: "post", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "post", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
     if (tab === "failed") {
-      updateParams({ status: "failed", reply_needed: null, human_review_needed: null, post_case: null });
+      updateParams({ status: "failed", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
-    updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null });
+    updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null, validation_status: null });
   };
 
   const handleSearchSubmit = (event) => {
@@ -240,7 +250,7 @@ export function OrdersPage() {
   };
 
   const orders = payload?.orders || [];
-  const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0, waiting_for_reply: 0, client_replied: 0, updated_after_reply: 0 };
+  const counts = payload?.counts || { all: 0, today: 0, needs_reply: 0, manual_review: 0, gemini_review: 0, waiting_for_reply: 0, client_replied: 0, updated_after_reply: 0 };
   const pagination = payload?.pagination || { page: 1, total_pages: 1, total: 0 };
   const clientOptions = useMemo(() => {
     const options = [...CLIENT_BRANCHES];
@@ -274,8 +284,8 @@ export function OrdersPage() {
     });
   }, [deliveryWeekParam, orders]);
   const hasActiveFilters = useMemo(
-    () => Boolean(searchParams.get("q") || statusParam || clientParam || fromDate || toDate || deliveryWeekParam),
-    [clientParam, deliveryWeekParam, fromDate, searchParams, statusParam, toDate],
+    () => Boolean(searchParams.get("q") || statusParam || validationStatusParam || clientParam || fromDate || toDate || deliveryWeekParam),
+    [clientParam, deliveryWeekParam, fromDate, searchParams, statusParam, toDate, validationStatusParam],
   );
 
   const hasPrev = pagination.page > 1;
@@ -356,6 +366,13 @@ export function OrdersPage() {
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "manual_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
                 {t("orders.manualReview")} <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("gemini_review")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "gemini_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("orders.geminiReview")} <span className="bg-fuchsia-100 text-fuchsia-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.gemini_review || 0}</span>
               </button>
               <button
                 type="button"
@@ -459,6 +476,7 @@ export function OrdersPage() {
                       updateParams({
                         q: null,
                         status: null,
+                        validation_status: null,
                         client: null,
                         from: null,
                         to: null,
@@ -513,6 +531,7 @@ export function OrdersPage() {
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("fields.mail_to")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
+                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.validation")}</th>
                     <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
                   </tr>
                 </thead>
@@ -542,6 +561,7 @@ export function OrdersPage() {
                         <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
+                      <td className="px-4 py-3"><ValidationBadge status={order.validation_status} /></td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
@@ -575,7 +595,7 @@ export function OrdersPage() {
                   ))}
                   {!loading && visibleOrders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-10 text-center text-slate-500" colSpan={8}>
+                      <td className="px-4 py-10 text-center text-slate-500" colSpan={10}>
                         <div className="space-y-1">
                           <p className="text-sm font-medium text-slate-700">{t("orders.noMatchingOrders")}</p>
                           <p className="text-xs text-slate-500">{t("orders.workspaceSubtitle")}</p>

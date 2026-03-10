@@ -1,5 +1,6 @@
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,6 +15,14 @@ _MANUFACTURER_ILN_MAP = {
     "wimex": "4011808000003",
     "express": "4013227000009",
 }
+
+
+@dataclass(frozen=True)
+class XmlDocument:
+    name: str
+    filename: str
+    content: str
+    output_path: Path
 
 def _get_val(data: Dict[str, Any], key: str, default: str = "") -> str:
     """Helper to safely get value from data dict structure."""
@@ -171,15 +180,12 @@ def _delivery_week_to_xml_format(value: str) -> str:
     return ""
 
 
-def generate_order_info_xml(data: Dict[str, Any], base_name: str, config: Config, output_dir: Path) -> Path:
-    """
-    Generates OrderInfo_TIMESTAMP.xml
-    """
+def _build_order_info_root(data: Dict[str, Any]) -> ET.Element:
     header = data.get("header", {})
-    
+
     # Root element
     root = ET.Element("Order")
-    
+
     # OrderInformations element
     # Mapping based on analysis:
     # StoreName -> Config
@@ -206,23 +212,11 @@ def generate_order_info_xml(data: Dict[str, Any], base_name: str, config: Config
     # The example had "Im Gewerbepark 1\n76863 Herxheim\nGermany" inside the attribute.
     # So we keep newlines.
     order_info.set("DeliveryAddress", _normalize_address_spacing(_get_val(header, "lieferanschrift")))
-    order_info.set("ASAP", "1") 
+    order_info.set("ASAP", "1")
+    return root
 
-    filename = f"OrderInfo_{base_name}.xml"
-    output_path = output_dir / filename
-    
-    xml_str = _prettify_xml(root)
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(xml_str)
-        
-    return output_path
 
-def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: Path) -> Path:
-    """
-    Generates OrderArticleInfo_TIMESTAMP.xml
-    Uses optional `articles` data when present, otherwise falls back to basic `items`.
-    """
+def _build_article_info_root(data: Dict[str, Any]) -> ET.Element:
     header = data.get("header", {})
     items = data.get("items", [])
     program_info = data.get("program") or {}
@@ -242,13 +236,78 @@ def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: 
         _build_items_from_articles(items_elem, articles, program_name, program_furncloud)
     else:
         _build_items_from_items(items_elem, items, program_name, program_furncloud)
+    return root
 
-    filename = f"OrderArticleInfo_{base_name}.xml"
-    output_path = output_dir / filename
-    xml_str = _prettify_xml(root)
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(xml_str)
-    return output_path
+
+def build_order_info_xml_text(data: Dict[str, Any], config: Config) -> str:
+    _ = config
+    return _prettify_xml(_build_order_info_root(data))
+
+
+def build_article_info_xml_text(data: Dict[str, Any]) -> str:
+    return _prettify_xml(_build_article_info_root(data))
+
+
+def render_xml_documents(data: Dict[str, Any], base_name: str, config: Config, output_dir: Path) -> List[XmlDocument]:
+    """Render XML documents in memory without writing them to disk."""
+    _ = base_name
+    effective_base = _effective_xml_base_name(data)
+    order_filename = f"OrderInfo_{effective_base}.xml"
+    article_filename = f"OrderArticleInfo_{effective_base}.xml"
+    return [
+        XmlDocument(
+            name="Order Info XML",
+            filename=order_filename,
+            content=build_order_info_xml_text(data, config),
+            output_path=output_dir / order_filename,
+        ),
+        XmlDocument(
+            name="Article Info XML",
+            filename=article_filename,
+            content=build_article_info_xml_text(data),
+            output_path=output_dir / article_filename,
+        ),
+    ]
+
+
+def write_xml_documents(documents: List[XmlDocument]) -> List[Path]:
+    paths: List[Path] = []
+    for document in documents:
+        document.output_path.parent.mkdir(parents=True, exist_ok=True)
+        document.output_path.write_text(document.content, encoding="utf-8")
+        paths.append(document.output_path)
+    return paths
+
+
+def generate_order_info_xml(data: Dict[str, Any], base_name: str, config: Config, output_dir: Path) -> Path:
+    """
+    Generates OrderInfo_TIMESTAMP.xml
+    """
+    _ = base_name
+    effective_base = _effective_xml_base_name(data)
+    document = XmlDocument(
+        name="Order Info XML",
+        filename=f"OrderInfo_{effective_base}.xml",
+        content=build_order_info_xml_text(data, config),
+        output_path=output_dir / f"OrderInfo_{effective_base}.xml",
+    )
+    return write_xml_documents([document])[0]
+
+
+def generate_article_info_xml(data: Dict[str, Any], base_name: str, output_dir: Path) -> Path:
+    """
+    Generates OrderArticleInfo_TIMESTAMP.xml
+    Uses optional `articles` data when present, otherwise falls back to basic `items`.
+    """
+    _ = base_name
+    effective_base = _effective_xml_base_name(data)
+    document = XmlDocument(
+        name="Article Info XML",
+        filename=f"OrderArticleInfo_{effective_base}.xml",
+        content=build_article_info_xml_text(data),
+        output_path=output_dir / f"OrderArticleInfo_{effective_base}.xml",
+    )
+    return write_xml_documents([document])[0]
 
 
 def _build_items_from_articles(items_elem, articles, program_name, program_furncloud):
@@ -290,8 +349,5 @@ def _build_items_from_items(items_elem, items, program_name, program_furncloud):
 
 def export_xmls(data: Dict[str, Any], base_name: str, config: Config, output_dir: Path) -> List[Path]:
     """Generates both XML files and returns their paths. Filename base = kom_nr else kom_name else 'unknown' (no message_id)."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    effective_base = _effective_xml_base_name(data)
-    p1 = generate_order_info_xml(data, effective_base, config, output_dir)
-    p2 = generate_article_info_xml(data, effective_base, output_dir)
-    return [p1, p2]
+    documents = render_xml_documents(data, base_name, config, output_dir)
+    return write_xml_documents(documents)

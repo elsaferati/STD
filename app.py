@@ -108,6 +108,7 @@ VALID_STATUSES = {
     "ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown",
     "waiting_for_reply", "client_replied", "updated_after_reply",
 }
+VALID_VALIDATION_STATUSES = set(order_store.VALID_VALIDATION_STATUSES)
 ALLOWED_SORTS = {"received_at_desc", "received_at_asc"}
 ALLOWED_DOWNLOAD_EXTENSIONS = {".xml"}
 ALLOWED_DATA_EXPORT_TABLES = frozenset(
@@ -497,6 +498,7 @@ def _orders_counts_cache_key(
     reply_needed: bool | None,
     human_review_needed: bool | None,
     post_case: bool | None,
+    validation_statuses: set[str] | None,
     client_branches: set[str] | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
@@ -510,6 +512,7 @@ def _orders_counts_cache_key(
         reply_needed,
         human_review_needed,
         post_case,
+        tuple(sorted(validation_statuses or set())),
         tuple(sorted(client_branches or set())),
         assigned_user_id or "",
         tuple(sorted(allowed_client_branches or set())),
@@ -590,6 +593,12 @@ def _serialize_order_summary(order: dict[str, Any]) -> dict[str, Any]:
         "human_review_needed": bool(order.get("human_review_needed")),
         "reply_needed": bool(order.get("reply_needed")),
         "post_case": bool(order.get("post_case")),
+        "validation_status": order_store.normalize_validation_status(order.get("validation_status")),
+        "validation_summary": order.get("validation_summary", ""),
+        "validation_checked_at": order.get("validation_checked_at", ""),
+        "validation_provider": order.get("validation_provider", ""),
+        "validation_model": order.get("validation_model", ""),
+        "validation_stale_reason": order.get("validation_stale_reason", ""),
         "reply_mailto": order.get("reply_mailto", ""),
         "parse_error": order.get("parse_error"),
         "mtime": mtime_text,
@@ -623,6 +632,17 @@ def _api_error(status_code: int, code: str, message: str):
 
 def _order_store_error_response(exc: order_store.OrderStoreError):
     return _api_error(exc.status_code, exc.code, exc.message)
+
+
+def _mark_order_validation_stale(order_id: str, *, actor_user_id: str | None, reason: str) -> None:
+    try:
+        order_store.mark_validation_stale(
+            order_id=order_id,
+            reason=reason,
+            actor_user_id=actor_user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Failed to mark validation stale: {exc}") from exc
 
 
 def _response_status_code(error_response: Any, default: int = 500) -> int:
@@ -807,6 +827,25 @@ def _parse_orders_query(allow_default_pagination: bool = True):
     if raw_post_case not in (None, "") and post_case is None:
         return None, _api_error(400, "invalid_flag", "Invalid post_case flag. Use true or false.")
 
+    raw_validation_status = (request.args.get("validation_status") or "").strip()
+    validation_statuses: set[str] | None = None
+    if raw_validation_status:
+        parsed_validation_statuses = {
+            item.strip().lower() for item in raw_validation_status.split(",") if item.strip()
+        }
+        invalid = [
+            status for status in parsed_validation_statuses if status not in VALID_VALIDATION_STATUSES
+        ]
+        if invalid:
+            return None, _api_error(
+                400,
+                "invalid_validation_status",
+                f"Invalid validation_status values: {', '.join(sorted(invalid))}",
+            )
+        validation_statuses = {
+            order_store.normalize_validation_status(status) for status in parsed_validation_statuses
+        }
+
     raw_client = (request.args.get("client") or "").strip()
     client_branches: set[str] | None = None
     if raw_client:
@@ -854,6 +893,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         "reply_needed": reply_needed,
         "human_review_needed": human_review_needed,
         "post_case": post_case,
+        "validation_statuses": validation_statuses,
         "client_branches": client_branches,
         "sort_key": sort_key,
         "page": page,
@@ -899,6 +939,7 @@ def _query_orders(
         reply_needed=parsed["reply_needed"],
         human_review_needed=parsed["human_review_needed"],
         post_case=parsed["post_case"],
+        validation_statuses=parsed["validation_statuses"],
         client_branches=effective_client_branches,
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
@@ -915,6 +956,7 @@ def _query_orders(
             reply_needed=parsed["reply_needed"],
             human_review_needed=parsed["human_review_needed"],
             post_case=parsed["post_case"],
+            validation_statuses=parsed["validation_statuses"],
             client_branches=effective_client_branches,
             assigned_user_id=scope.get("assigned_user_id"),
             allowed_client_branches=scope.get("allowed_client_branches"),
@@ -1030,6 +1072,13 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     response["reply_mailto"] = order["reply_mailto"]
     response["reply_needed"] = order["reply_needed"]
     response["post_case"] = order["post_case"]
+    response["validation_status"] = order_store.normalize_validation_status(order.get("validation_status"))
+    response["validation_summary"] = str(order.get("validation_summary") or "")
+    response["validation_checked_at"] = str(order.get("validation_checked_at") or "")
+    response["validation_provider"] = str(order.get("validation_provider") or "")
+    response["validation_model"] = str(order.get("validation_model") or "")
+    response["validation_stale_reason"] = str(order.get("validation_stale_reason") or "")
+    response["validation_issues"] = order.get("validation_issues") if isinstance(order.get("validation_issues"), list) else []
     response["review_task_id"] = order.get("review_task_id")
     response["review_state"] = order.get("review_state")
     response["assigned_user"] = order.get("assigned_user")
@@ -1097,6 +1146,13 @@ def _load_order_export_data(
         if header
         else bool(order.get("human_review_needed")),
         "post_case": _is_truthy_flag(header.get("post_case")) if header else bool(order.get("post_case")),
+        "validation_status": str(detail.get("validation_status") or order.get("validation_status") or "not_run"),
+        "validation_summary": str(detail.get("validation_summary") or order.get("validation_summary") or ""),
+        "validation_checked_at": str(detail.get("validation_checked_at") or order.get("validation_checked_at") or ""),
+        "validation_provider": str(detail.get("validation_provider") or order.get("validation_provider") or ""),
+        "validation_model": str(detail.get("validation_model") or order.get("validation_model") or ""),
+        "validation_stale_reason": str(detail.get("validation_stale_reason") or order.get("validation_stale_reason") or ""),
+        "validation_issues": detail.get("validation_issues") if isinstance(detail.get("validation_issues"), list) else [],
         "warnings": warnings,
         "errors": errors,
         "parse_error": parse_error or "",
@@ -1128,6 +1184,13 @@ def _as_orders_xlsx_bytes(
         "message_id",
         "received_at",
         "status",
+        "validation_status",
+        "validation_summary",
+        "validation_checked_at",
+        "validation_provider",
+        "validation_model",
+        "validation_stale_reason",
+        "validation_issues",
         "item_count",
         "warnings_count",
         "errors_count",
@@ -1310,6 +1373,13 @@ def _as_orders_xlsx_bytes(
             "message_id": parsed_order["message_id"],
             "received_at": parsed_order["received_at"],
             "status": parsed_order["status"],
+            "validation_status": parsed_order["validation_status"],
+            "validation_summary": parsed_order["validation_summary"],
+            "validation_checked_at": parsed_order["validation_checked_at"],
+            "validation_provider": parsed_order["validation_provider"],
+            "validation_model": parsed_order["validation_model"],
+            "validation_stale_reason": parsed_order["validation_stale_reason"],
+            "validation_issues": json.dumps(parsed_order["validation_issues"], ensure_ascii=False),
             "item_count": parsed_order["item_count"],
             "warnings_count": parsed_order["warnings_count"],
             "errors_count": parsed_order["errors_count"],
@@ -1371,6 +1441,13 @@ def _as_csv_text(orders: list[dict[str, Any]]) -> str:
     fieldnames = [
         "received_at",
         "status",
+        "validation_status",
+        "validation_summary",
+        "validation_checked_at",
+        "validation_provider",
+        "validation_model",
+        "validation_stale_reason",
+        "validation_issues",
         "ticket_number",
         "kom_nr",
         "kom_name",
@@ -1405,6 +1482,13 @@ def _as_csv_text(orders: list[dict[str, Any]]) -> str:
             {
                 "received_at": parsed.get("received_at", ""),
                 "status": _normalize_status(parsed.get("status")),
+                "validation_status": parsed.get("validation_status", "not_run"),
+                "validation_summary": parsed.get("validation_summary", ""),
+                "validation_checked_at": parsed.get("validation_checked_at", ""),
+                "validation_provider": parsed.get("validation_provider", ""),
+                "validation_model": parsed.get("validation_model", ""),
+                "validation_stale_reason": parsed.get("validation_stale_reason", ""),
+                "validation_issues": json.dumps(parsed.get("validation_issues", []), ensure_ascii=False),
                 "ticket_number": _export_entry_value(header.get("ticket_number", "")),
                 "kom_nr": _export_entry_value(header.get("kom_nr", "")),
                 "kom_name": _export_entry_value(header.get("kom_name", "")),
@@ -2385,6 +2469,14 @@ def api_order_detail(order_id: str):
         return _order_store_error_response(exc)
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to save manual revision: {exc}")
+    try:
+        _mark_order_validation_stale(
+            order["safe_id"],
+            actor_user_id=current_user_id or None,
+            reason="manual_edit",
+        )
+    except RuntimeError as exc:
+        return _api_error(500, "db_error", str(exc))
 
     xml_regenerated = False
     xml_paths: list[str] = []
@@ -2477,9 +2569,60 @@ def api_export_order_xml(order_id: str):
         )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to record XML export metadata: {exc}")
+    try:
+        _mark_order_validation_stale(
+            order["safe_id"],
+            actor_user_id=actor_user_id,
+            reason="manual_xml_export",
+        )
+    except RuntimeError as exc:
+        return _api_error(500, "db_error", str(exc))
 
     files = _resolve_xml_files(order["safe_id"], order["header"])
     return jsonify({"xml_files": files})
+
+
+@app.route("/api/orders/<order_id>/validation/resolve", methods=["POST"])
+def api_resolve_order_validation(order_id: str):
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    order, load_error = _load_order(
+        order_id,
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
+    if load_error is not None:
+        return load_error
+
+    body = request.get_json(silent=True)
+    if body is None:
+        body = {}
+    if not isinstance(body, dict):
+        return _api_error(400, "invalid_body", "POST body must be a JSON object")
+    note = str(body.get("note") or "").strip()
+    if not note:
+        return _api_error(400, "invalid_body", "A resolution note is required")
+
+    actor_user_id = str((getattr(g, "user", {}) or {}).get("id") or "") or None
+    try:
+        order_store.resolve_validation(
+            order_id=order["safe_id"],
+            actor_user_id=actor_user_id,
+            note=note,
+        )
+    except order_store.OrderStoreError as exc:
+        return _order_store_error_response(exc)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to resolve validation: {exc}")
+
+    _invalidate_order_index_cache()
+    updated_order, updated_error = _load_order(
+        order["safe_id"],
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
+    if updated_error is not None:
+        return updated_error
+    return jsonify(_order_api_payload(updated_order))
 
 
 @app.route("/api/files/<filename>")
@@ -2646,6 +2789,11 @@ def export_order_xml(order_id: str):
             actor_user_id=actor_user_id,
             event_data={"files": xml_paths},
         )
+        _mark_order_validation_stale(
+            order["safe_id"],
+            actor_user_id=actor_user_id,
+            reason="manual_xml_export",
+        )
     except Exception:  # noqa: BLE001
         abort(500)
     _invalidate_order_index_cache()
@@ -2714,6 +2862,11 @@ def order_detail(order_id: str) -> str:
                 actor_user_id=actor_user_id,
             )
             revision_id = persisted.get("revision_id")
+            _mark_order_validation_stale(
+                safe_id,
+                actor_user_id=actor_user_id,
+                reason="manual_edit",
+            )
         except order_store.OrderStoreError as exc:
             abort(exc.status_code)
         except Exception:  # noqa: BLE001
