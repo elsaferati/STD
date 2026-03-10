@@ -14,6 +14,7 @@ from gemini_validation import (
     VALIDATION_STATUS_PASSED,
     VALIDATION_STATUS_SKIPPED,
     VALIDATION_STATUS_STALE,
+    _build_business_logic_context,
     _pdf_attachments,
     build_stale_validation_result,
     normalize_validation_result,
@@ -206,6 +207,28 @@ def test_xml_render_write_parity() -> None:
     print("SUCCESS: XML documents are rendered in memory and written without altering content.")
 
 
+def test_business_logic_context_includes_authoritative_rules() -> None:
+    payload = _sample_payload()
+    payload["header"]["kundennummer"]["source"] = "derived"
+    payload["header"]["kundennummer"]["derived_from"] = "excel_lookup"
+    payload["header"]["adressnummer"] = {"value": "0", "source": "derived", "confidence": 1.0}
+    payload["header"]["tour"] = {"value": "D1", "source": "derived", "confidence": 1.0}
+    payload["header"]["bestelldatum"] = {"value": "17.02.26", "source": "email", "confidence": 1.0}
+    payload["header"]["wunschtermin"] = {"value": "KW14/2026", "source": "email", "confidence": 1.0}
+    payload["header"]["delivery_week"]["source"] = "derived"
+    payload["header"]["delivery_week"]["derived_from"] = "delivery_logic"
+    payload["warnings"] = ["Kundennummer from email KDNR verified in Primex; please confirm."]
+
+    context = _build_business_logic_context("porta", payload)
+    rules = {rule["xml_field"]: rule for rule in context["authoritative_xml_rules"]}
+
+    assert rules["OrderInformations.DealerNumberAtManufacturer"]["expected_value"] == "123456"
+    assert rules["OrderInformations.DateOfDelivery"]["expected_value"] == "202605WO"
+    assert context["resolved_fields"]["delivery_week"]["inputs"]["requested_week_input"] == "KW14/2026"
+    assert context["resolved_fields"]["kundennummer"]["derived_from"] == "excel_lookup"
+    print("SUCCESS: business logic context exposes authoritative delivery week and customer lookup rules.")
+
+
 if __name__ == "__main__":
     test_normalize_validation_result_defaults()
     test_build_stale_validation_result()
@@ -213,4 +236,5 @@ if __name__ == "__main__":
     test_validator_skips_when_evidence_is_insufficient()
     test_order_store_validation_helpers()
     test_xml_render_write_parity()
+    test_business_logic_context_includes_authoritative_rules()
     print("All Gemini validation verification checks passed.")

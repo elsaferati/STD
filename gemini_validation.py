@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 import traceback
 from typing import Any
 
@@ -94,8 +95,14 @@ _VALIDATION_JSON_SCHEMA: dict[str, Any] = {
 
 _SYSTEM_PROMPT = (
     "You validate generated order XML against explicit source evidence. "
-    "Compare only what is directly supported by the email body, attached PDFs, and supplied XML. "
+    "Compare only what is directly supported by the email body, attached PDFs, supplied XML, "
+    "and any supplied business_logic_context. "
     "Never infer missing values, never guess, and never mark a mismatch unless the evidence is explicit. "
+    "Treat business_logic_context as authoritative system evidence from the same internal pipeline that generated the order. "
+    "When a field is marked as derived or a rule note is supplied there, validate the XML against the final resolved value "
+    "in business_logic_context instead of raw earlier values from the email or PDF. "
+    "In particular, delivery week and customer number may intentionally differ from raw email text because they are resolved "
+    "by internal delivery and customer lookup rules. Do not flag those as mismatches when the XML matches business_logic_context. "
     "If there is not enough evidence, return validation_status='skipped'. "
     "If you find any likely mismatch between source evidence and the XML payload, return validation_status='flagged'. "
     "If everything material in the XML matches the evidence, return validation_status='passed'. "
@@ -227,6 +234,137 @@ def _entry_plain(entry: Any) -> Any:
     return entry
 
 
+def _entry_text(entry: Any) -> str:
+    value = _entry_plain(entry)
+    return "" if value is None else str(value).strip()
+
+
+def _entry_source(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return str(entry.get("source") or "").strip()
+    return ""
+
+
+def _entry_derived_from(entry: Any) -> str:
+    if isinstance(entry, dict):
+        return str(entry.get("derived_from") or "").strip()
+    return ""
+
+
+def _xml_delivery_week_value(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    match = re.match(r"(\d{4})\s*Week\s*-\s*(\d{1,2})\b", text, re.IGNORECASE)
+    if match:
+        year, week = int(match.group(1)), int(match.group(2))
+        if 1 <= week <= 53:
+            return f"{year}{week:02d}WO"
+    match = re.search(r"(?:KW|Woche)\s*(\d{1,2})\s*[/.-]?\s*(\d{4})", text, re.IGNORECASE)
+    if match:
+        week, year = int(match.group(1)), int(match.group(2))
+        if 1 <= week <= 53:
+            return f"{year}{week:02d}WO"
+    return ""
+
+
+def _kundennummer_rule_note(derived_from: str) -> str:
+    normalized = str(derived_from or "").strip().lower()
+    if normalized == "excel_lookup":
+        return "Customer number was resolved from the Primex customer Excel by address matching."
+    if normalized == "excel_lookup_by_kundennummer":
+        return "Raw KDNR from the source was verified against the Primex customer Excel and then expanded to final customer, address, and tour values."
+    if normalized == "excel_lookup_momax_bg_address":
+        return "Customer number was resolved from the MOMAX BG customer Excel by store address matching."
+    if normalized == "segmuller_kom_nr_prefix":
+        return "Customer number was derived from the Segmuller kom_nr prefix and then verified against the Primex customer Excel."
+    if normalized == "iln_fallback":
+        return "Address matching failed, so customer number was derived from ILN fallback and then used to fill related fields."
+    return "Customer number was resolved by internal customer lookup logic. Validate XML against the final resolved value."
+
+
+def _delivery_week_rule_note(derived_from: str) -> str:
+    normalized = str(derived_from or "").strip().lower()
+    if normalized == "delivery_logic":
+        return "Delivery week was computed by internal delivery_logic using order date, tour schedule, and requested delivery window."
+    return "Delivery week was resolved by internal business logic. Validate XML against the final resolved value."
+
+
+def _build_business_logic_context(branch_id: str, normalized: dict[str, Any]) -> dict[str, Any]:
+    header = normalized.get("header")
+    warnings = normalized.get("warnings")
+    if not isinstance(header, dict):
+        header = {}
+
+    context: dict[str, Any] = {
+        "branch_id": str(branch_id or "").strip(),
+        "authoritative_xml_rules": [],
+        "resolved_fields": {},
+        "warnings": [str(item) for item in warnings[:10]] if isinstance(warnings, list) else [],
+    }
+
+    kundennummer_entry = header.get("kundennummer")
+    kundennummer_value = _entry_text(kundennummer_entry)
+    kundennummer_source = _entry_source(kundennummer_entry)
+    kundennummer_derived_from = _entry_derived_from(kundennummer_entry)
+    if kundennummer_value:
+        context["resolved_fields"]["kundennummer"] = {
+            "value": kundennummer_value,
+            "source": kundennummer_source,
+            "derived_from": kundennummer_derived_from,
+            "related_fields": {
+                "adressnummer": _entry_text(header.get("adressnummer")),
+                "tour": _entry_text(header.get("tour")),
+                "store_name": _entry_text(header.get("store_name")),
+                "store_address": _entry_text(header.get("store_address")),
+                "lieferanschrift": _entry_text(header.get("lieferanschrift")),
+                "iln": _entry_text(header.get("iln")),
+            },
+            "rule_note": _kundennummer_rule_note(kundennummer_derived_from),
+        }
+        if kundennummer_source.lower() == "derived" or kundennummer_derived_from:
+            context["authoritative_xml_rules"].append(
+                {
+                    "xml_field": "OrderInformations.DealerNumberAtManufacturer",
+                    "resolved_from": "normalized.header.kundennummer",
+                    "expected_value": kundennummer_value,
+                    "rule_note": _kundennummer_rule_note(kundennummer_derived_from),
+                }
+            )
+
+    delivery_week_entry = header.get("delivery_week")
+    delivery_week_value = _entry_text(delivery_week_entry)
+    delivery_week_source = _entry_source(delivery_week_entry)
+    delivery_week_derived_from = _entry_derived_from(delivery_week_entry)
+    if delivery_week_value:
+        delivery_week_xml = _xml_delivery_week_value(delivery_week_value)
+        requested_week_input = _entry_text(header.get("wunschtermin")) or _entry_text(header.get("liefertermin"))
+        context["resolved_fields"]["delivery_week"] = {
+            "value": delivery_week_value,
+            "xml_value": delivery_week_xml,
+            "source": delivery_week_source,
+            "derived_from": delivery_week_derived_from,
+            "inputs": {
+                "bestelldatum": _entry_text(header.get("bestelldatum")),
+                "tour": _entry_text(header.get("tour")),
+                "requested_week_input": requested_week_input,
+                "store_name": _entry_text(header.get("store_name")),
+            },
+            "rule_note": _delivery_week_rule_note(delivery_week_derived_from),
+        }
+        if delivery_week_source.lower() == "derived" or delivery_week_derived_from:
+            context["authoritative_xml_rules"].append(
+                {
+                    "xml_field": "OrderInformations.DateOfDelivery",
+                    "resolved_from": "normalized.header.delivery_week",
+                    "expected_value": delivery_week_xml or delivery_week_value,
+                    "rule_note": _delivery_week_rule_note(delivery_week_derived_from),
+                }
+            )
+
+    return context
+
+
 def _pdf_attachments(attachments: list[Attachment], max_attachments: int) -> list[Attachment]:
     pdfs: list[Attachment] = []
     for attachment in attachments:
@@ -310,6 +448,7 @@ class GeminiValidator:
             "sender": message.sender,
             "email_text": body_text,
             "normalized_order": _compact_order_snapshot(normalized),
+            "business_logic_context": _build_business_logic_context(branch_id, normalized),
             "xml_documents": [
                 {"name": document.name, "filename": document.filename, "content": document.content}
                 for document in xml_documents
@@ -318,6 +457,7 @@ class GeminiValidator:
                 "Compare the source evidence against the XML documents. "
                 "Check ticket/order identifiers, customer/store data, delivery dates or delivery week, "
                 "line items, quantities, and obvious article/model mismatches. "
+                "When business_logic_context supplies an authoritative resolved field for the XML, use that final resolved value. "
                 "Only flag mismatches when the source evidence is explicit."
             ),
         }

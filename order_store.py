@@ -1599,6 +1599,7 @@ def save_manual_revision(
             changed_by_user_id=actor_user_id,
             parse_error=None,
             diff_json=diff_json,
+            validation_result=None,
         )
         conn.commit()
     return result
