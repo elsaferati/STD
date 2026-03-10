@@ -1786,6 +1786,14 @@ def normalize_output(
     if (branch_id or "").strip() == "braun":
         missing_header = [field for field in missing_header if field != "store_address"]
     segmuller_review_only = _is_segmuller_missing_layout_review_only(header, branch_id)
+    is_zusatzliche = (branch_id or "").strip() == "xxxlutz_zusatzliche"
+    if is_zusatzliche:
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _clear_reply_needed(header)
+        _append_unique_warning(
+            data.setdefault("warnings", []),
+            "Zusätzliche Information order: human review required.",
+        )
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     if missing_critical_fields and not segmuller_review_only:
@@ -1883,6 +1891,10 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         header,
         extraction_branch,
     )
+    is_zusatzliche = extraction_branch == "xxxlutz_zusatzliche"
+    if is_zusatzliche:
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _clear_reply_needed(header)
 
     missing_header = [f for f in HEADER_FIELDS if _is_missing(header.get(f, {}))]
     if is_momax_bg:

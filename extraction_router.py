@@ -41,6 +41,10 @@ _XXXLUTZ_DEFAULT_MAIL_HINT_RE = re.compile(
     r"mail\s*:\s*office-lutz@lutz\.at\b",
     re.IGNORECASE,
 )
+_ZUSATZLICHE_INFO_RE = re.compile(
+    r"zus[aä]tzliche\s+information",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -174,6 +178,13 @@ def _has_xxxlutz_default_mail_hint_in_body(text: str) -> bool:
     if not normalized:
         return False
     return bool(_XXXLUTZ_DEFAULT_MAIL_HINT_RE.search(normalized))
+
+
+def _has_zusatzliche_info_hint(text: str) -> bool:
+    normalized = _normalize_whitespace(text or "")
+    if not normalized:
+        return False
+    return bool(_ZUSATZLICHE_INFO_RE.search(normalized))
 
 
 def _is_momax_bg_hard_match(message: IngestedEmail) -> bool:
@@ -456,7 +467,18 @@ def route_message(
     config: Config,
     extractor: OpenAIExtractor,
 ) -> RouteDecision:
-    if _has_xxxlutz_default_mail_hint_in_body(message.body_text or ""):
+    body_text = message.body_text or ""
+    if _has_xxxlutz_default_mail_hint_in_body(body_text) and _has_zusatzliche_info_hint(body_text):
+        return RouteDecision(
+            selected_branch_id="xxxlutz_zusatzliche",
+            classifier_branch_id="xxxlutz_zusatzliche",
+            confidence=1.0,
+            reason="xxxlutz_zusatzliche_hint",
+            forced_by_detector=True,
+            used_fallback=False,
+        )
+
+    if _has_xxxlutz_default_mail_hint_in_body(body_text):
         return RouteDecision(
             selected_branch_id=DEFAULT_BRANCH_ID,
             classifier_branch_id=DEFAULT_BRANCH_ID,
