@@ -606,7 +606,7 @@ def find_reply_needed_order_by_kom(kom_number: str) -> dict[str, Any] | None:
         )
           AND (kom_nr = %s OR ticket_number = %s)
           AND deleted_at IS NULL
-          AND updated_at >= NOW() - INTERVAL '1 days'
+          AND updated_at >= NOW() - INTERVAL '30 days'
         ORDER BY received_at DESC
         LIMIT 1
         """,
@@ -631,7 +631,7 @@ def find_order_awaiting_reply_by_kom(kom_number: str) -> dict[str, Any] | None:
         )
           AND (kom_nr = %s OR ticket_number = %s)
           AND deleted_at IS NULL
-          AND updated_at >= NOW() - INTERVAL '1 days'
+          AND updated_at >= NOW() - INTERVAL '30 days'
         ORDER BY received_at DESC
         LIMIT 1
         """,
@@ -716,6 +716,42 @@ def mark_order_updated_after_reply(order_id: str) -> None:
                 WHERE id = %s
                 """,
                 (STATUS_UPDATED_AFTER_REPLY, now, order_id),
+            )
+        conn.commit()
+
+
+def get_stale_waiting_orders(cutoff_dt: datetime) -> list[dict[str, Any]]:
+    """Return orders waiting_for_client_reply where reply_email_sent_at < cutoff_dt."""
+    rows = fetch_all(
+        """
+        SELECT id, kom_nr, reply_email_sent_at
+        FROM orders
+        WHERE status = %s
+          AND waiting_for_client_reply = TRUE
+          AND reply_email_sent_at IS NOT NULL
+          AND reply_email_sent_at < %s
+          AND deleted_at IS NULL
+        ORDER BY reply_email_sent_at ASC
+        """,
+        (STATUS_WAITING_REPLY, cutoff_dt),
+    )
+    return [dict(row) for row in rows]
+
+
+def mark_order_escalated(order_id: str) -> None:
+    """Set status=human_in_the_loop, clear waiting_for_client_reply."""
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET status = %s,
+                    waiting_for_client_reply = FALSE,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (STATUS_HUMAN, now, order_id),
             )
         conn.commit()
 

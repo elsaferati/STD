@@ -63,6 +63,7 @@ class Config:
     reply_email_to: str
     reply_email_body: str
     reply_template_file: Path
+    stale_reply_working_days: int
 
     source_priority: list[str]
     max_email_chars: int
@@ -117,6 +118,7 @@ class Config:
             reply_template_file=Path(
                 os.getenv("REPLY_TEMPLATE_FILE", "email_templates/reply_templates.json").strip()
             ),
+            stale_reply_working_days=_get_int("STALE_REPLY_WORKING_DAYS", 5),
 
             source_priority=priority,
             max_email_chars=_get_int("MAX_EMAIL_CHARS", 20000),

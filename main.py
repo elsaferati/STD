@@ -16,6 +16,7 @@ from reply_tracker import (
     process_client_reply,
     process_new_email_followup,
     extract_kom_from_bestellung_subject,
+    escalate_stale_waiting_orders,
 )
 import xml_exporter
 
@@ -80,8 +81,19 @@ def main() -> int:
 
     poll_seconds = max(0, config.email_poll_seconds)
     seen_message_ids: set[str] = set()
+    _last_escalation_check: datetime = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
+        _now_utc = datetime.now(timezone.utc)
+        if (_now_utc - _last_escalation_check).total_seconds() >= 3600:
+            try:
+                n = escalate_stale_waiting_orders(config)
+                if n:
+                    print(f"[main] Escalated {n} stale order(s) to human_in_the_loop.")
+            except Exception as exc:
+                print(f"[main] escalate_stale_waiting_orders failed: {exc}")
+            _last_escalation_check = _now_utc
+
         messages = email_client.fetch()
         if not messages:
             if poll_seconds <= 0:

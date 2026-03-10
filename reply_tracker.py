@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import Any
 
 from config import Config
@@ -17,7 +19,7 @@ from email_ingest import IngestedEmail
 from openai_extract import OpenAIExtractor
 import order_store
 import xml_exporter
-from reply_email import detect_missing_fields
+from reply_email import detect_missing_fields, send_email_via_smtp
 
 _REPLY_WINDOW_DAYS = 14
 
@@ -42,6 +44,12 @@ _BARE_KOM_RE = re.compile(
 # Matches "Ihre Bestellung" or "IhreBestellung" followed by a KOM number
 _IHRE_BESTELLUNG_KOM_RE = re.compile(
     r'Ihre\s+Bestellung\s+([\w][\w\-\.]*\d)',
+    re.IGNORECASE,
+)
+
+# Matches Porta-style "KV:2881634" or "KV 2881634" prefix (Kommissionsvorgang)
+_KV_KOM_RE = re.compile(
+    r'\bKV[:\s]+(\d+)',
     re.IGNORECASE,
 )
 
@@ -79,7 +87,7 @@ def extract_kom_from_bestellung_subject(subject: str) -> str:
     3. Bare KOM number like '20-634616-12' anywhere in subject
     """
     s = subject or ""
-    for pattern in (_BESTELLUNG_KOM_RE, _IHRE_BESTELLUNG_KOM_RE, _BARE_KOM_RE):
+    for pattern in (_BESTELLUNG_KOM_RE, _IHRE_BESTELLUNG_KOM_RE, _KV_KOM_RE, _BARE_KOM_RE):
         match = pattern.search(s)
         if match:
             return match.group(1).strip().rstrip(".")
@@ -336,7 +344,15 @@ def _merge_new_extraction(
                 return ni
         return None
 
-    item_fields = ("modellnummer", "artikelnummer", "menge", "beschreibung", "farbe")
+    # Snapshot BEFORE the merge loop mutates existing_items in-place.
+    # Guard: only append extra items when at least one existing item had both fields empty.
+    _had_placeholders = any(
+        _is_missing(ex.get("artikelnummer")) and _is_missing(ex.get("modellnummer"))
+        for ex in existing_items
+        if isinstance(ex, dict)
+    )
+
+    item_fields = ("modellnummer", "artikelnummer", "menge", "beschreibung", "farbe", "furncloud_id")
     for idx, ex_item in enumerate(existing_items):
         if not isinstance(ex_item, dict):
             continue
@@ -350,6 +366,12 @@ def _merge_new_extraction(
                     raw if isinstance(raw, dict)
                     else {"value": str(raw).strip(), "source": "followup_email", "confidence": 0.9}
                 )
+
+    # Append extra Furnplan items (uses pre-loop snapshot so placeholder check is accurate).
+    if _had_placeholders and len(new_items) > len(existing_items):
+        for new_item in new_items[len(existing_items):]:
+            if isinstance(new_item, dict):
+                existing_items.append(new_item)
 
     # Strip stale field-missing warnings before checking remaining fields
     _strip_stale_field_warnings(existing_payload)
@@ -531,3 +553,86 @@ def process_client_reply(
 
     print(f"[reply_tracker] Successfully processed reply for order {order_id}.")
     return True
+
+
+def _count_working_days(start: datetime, end: datetime) -> int:
+    """Count Mon–Fri days between start and end (exclusive of end date)."""
+    start_date = start.date()
+    end_date = end.date()
+    if end_date <= start_date:
+        return 0
+    count = 0
+    current = start_date
+    while current < end_date:
+        if current.weekday() < 5:  # 0=Mon … 4=Fri
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
+def _working_day_cutoff(now: datetime, working_days: int) -> datetime:
+    """Return the datetime that is exactly working_days Mon–Fri days before now.
+    Any reply_email_sent_at older than this has waited the full period."""
+    target_date = now.date()
+    days_counted = 0
+    while days_counted < working_days:
+        target_date -= timedelta(days=1)
+        if target_date.weekday() < 5:
+            days_counted += 1
+    return datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
+
+
+def escalate_stale_waiting_orders(config: Config) -> int:
+    """Escalate orders waiting more than config.stale_reply_working_days working days.
+
+    For each stale order:
+      1. Sets status='human_in_the_loop', waiting_for_client_reply=FALSE
+      2. Sends notification email to config.reply_email_to
+      3. Logs the action
+
+    Returns the number of orders escalated.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = _working_day_cutoff(now, config.stale_reply_working_days)
+    stale_orders = order_store.get_stale_waiting_orders(cutoff)
+
+    if not stale_orders:
+        return 0
+
+    escalated = 0
+    for order in stale_orders:
+        order_id = order["id"]
+        kom_nr = order.get("kom_nr") or order_id
+        sent_at = order.get("reply_email_sent_at")
+
+        try:
+            order_store.mark_order_escalated(order_id)
+        except Exception as exc:
+            print(f"[reply_tracker] escalate: DB update failed for order {order_id}: {exc}")
+            continue
+
+        try:
+            msg = EmailMessage()
+            msg["To"] = config.reply_email_to
+            msg["Subject"] = (
+                f"Escalation: Order {kom_nr} — no Furnplan reply in "
+                f"{config.stale_reply_working_days} working days"
+            )
+            msg.set_content(
+                f"Order {kom_nr} has not received a Furnplan reply in "
+                f"{config.stale_reply_working_days} working days and has been escalated "
+                f"to human review.\n\n"
+                f"Reply email was sent at: {sent_at}\n"
+                f"Order ID: {order_id}\n"
+            )
+            send_email_via_smtp(config, msg)
+        except Exception as exc:
+            print(f"[reply_tracker] escalate: notification email failed for {order_id}: {exc}")
+
+        print(
+            f"[reply_tracker] Escalated order {order_id} (KOM={kom_nr}) "
+            f"after {config.stale_reply_working_days} working days without reply."
+        )
+        escalated += 1
+
+    return escalated
