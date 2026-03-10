@@ -2059,7 +2059,6 @@ def api_overview():
             hourly_start=hourly_start,
             assigned_user_id=scope.get("assigned_user_id"),
             allowed_client_branches=scope.get("allowed_client_branches"),
-            latest_limit=20,
         )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to load overview metrics: {exc}")
