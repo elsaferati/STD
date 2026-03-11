@@ -170,6 +170,7 @@ CRITICAL_REPLY_FIELDS = ["kom_nr", "lieferanschrift", "store_address"]
 CRITICAL_ITEM_REPLY_FIELDS = ["artikelnummer", "modellnummer"]
 MISSING_CRITICAL_REPLY_PREFIX = "Missing critical header fields:"
 MISSING_CRITICAL_ITEM_REPLY_PREFIX = "Missing critical item fields:"
+_PORTA_AMBIGUOUS_HUMAN_REVIEW_DERIVED_FROM = "porta_ambiguous_code_human_review"
 _ADDRESS_PLZ_RE = re.compile(r"\b\d{5}\b")
 _ADDRESS_GLUE_PLZ_RE = re.compile(r"(\d{1,4}[A-Za-z]?)(\d{5})\b")
 _ILN_TOKEN_RE = re.compile(r"\b\d{13}\b")
@@ -563,6 +564,17 @@ def _is_ab_nr_order(header: dict[str, Any]) -> bool:
     """Return True if the AB Nr pattern was detected for this order."""
     entry = header.get("ab_nr_detected")
     return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
+
+
+def _is_porta_ambiguous_code_human_review_only(header: dict[str, Any], branch_id: str) -> bool:
+    if str(branch_id or "").strip() != "porta":
+        return False
+    review_entry = header.get("human_review_needed")
+    if not isinstance(review_entry, dict):
+        return False
+    if review_entry.get("value") is not True:
+        return False
+    return str(review_entry.get("derived_from") or "").strip() == _PORTA_AMBIGUOUS_HUMAN_REVIEW_DERIVED_FROM
 
 
 def _append_unique_warning(warnings: list[str], message: str) -> None:
@@ -1622,6 +1634,10 @@ def normalize_output(
         missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
+    porta_ambiguous_human_review_only = _is_porta_ambiguous_code_human_review_only(
+        header,
+        branch_id,
+    )
     if missing_critical_fields:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
@@ -1637,7 +1653,7 @@ def normalize_output(
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
@@ -1708,6 +1724,10 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     )
 
     extraction_branch = str(data.get("extraction_branch") or "").strip()
+    porta_ambiguous_human_review_only = _is_porta_ambiguous_code_human_review_only(
+        header,
+        extraction_branch,
+    )
 
     missing_header = [f for f in HEADER_FIELDS if _is_missing(header.get(f, {}))]
     if is_momax_bg:
@@ -1729,7 +1749,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
         _set_reply_needed_from_derived(header)
 
     if not items:
@@ -1816,7 +1836,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
             warnings,
             _missing_critical_reply_warning(missing_critical_fields),
         )
-    if missing_critical_item_fields:
+    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
         _append_unique_warning(
             warnings,
             _missing_critical_item_reply_warning(missing_critical_item_fields),

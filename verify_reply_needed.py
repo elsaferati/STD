@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 from pipeline import process_message, ProcessedResult
-from normalize import normalize_output
+from normalize import normalize_output, refresh_missing_warnings
 from config import Config
 from email_ingest import IngestedEmail
 import app as dashboard_app
@@ -264,6 +264,131 @@ def test_reply_needed_from_missing_critical_item_fields() -> None:
     print("SUCCESS: Missing artikelnummer/modellnummer now triggers reply_needed.")
 
 
+def test_porta_ambiguous_human_review_keeps_reply_needed_false() -> None:
+    warnings: list[str] = []
+    data = {
+        "header": {
+            "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Storestr. 2", "source": "email", "confidence": 1.0},
+            "human_review_needed": {
+                "value": True,
+                "source": "derived",
+                "confidence": 1.0,
+                "derived_from": "porta_ambiguous_code_human_review",
+            },
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "artikelnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "modellnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "menge": {"value": 1, "source": "email", "confidence": 1.0},
+                "furncloud_id": {"value": "ABCD 1234", "source": "email", "confidence": 1.0},
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+    normalized = normalize_output(
+        data=data,
+        message_id="test_porta_ambiguous_human_review_only",
+        received_at="2026-02-12T12:00:00+00:00",
+        dayfirst=True,
+        warnings=warnings,
+        email_body="",
+        sender="test@example.com",
+        branch_id="porta",
+    )
+    warning_list = normalized.get("warnings") if isinstance(normalized.get("warnings"), list) else []
+    assert normalized["header"].get("reply_needed", {}).get("value") is not True
+    assert normalized.get("status") == "human_in_the_loop"
+    assert not any(
+        isinstance(w, str) and w.startswith("Reply needed: Missing critical item fields:")
+        for w in warning_list
+    )
+    print("SUCCESS: Porta ambiguous human-review marker keeps reply_needed=False.")
+
+
+def test_non_porta_missing_critical_item_fields_still_force_reply_needed() -> None:
+    warnings: list[str] = []
+    data = {
+        "header": {
+            "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Storestr. 2", "source": "email", "confidence": 1.0},
+            "human_review_needed": {"value": True, "source": "derived", "confidence": 1.0},
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "artikelnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "modellnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "menge": {"value": 1, "source": "email", "confidence": 1.0},
+                "furncloud_id": {"value": "ABCD 1234", "source": "email", "confidence": 1.0},
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+    normalized = normalize_output(
+        data=data,
+        message_id="test_non_porta_missing_item_critical",
+        received_at="2026-02-12T12:00:00+00:00",
+        dayfirst=True,
+        warnings=warnings,
+        email_body="",
+        sender="test@example.com",
+        branch_id="xxxlutz_default",
+    )
+    warning_list = normalized.get("warnings") if isinstance(normalized.get("warnings"), list) else []
+    assert normalized["header"].get("reply_needed", {}).get("value") is True
+    assert any(
+        isinstance(w, str) and w.startswith("Reply needed: Missing critical item fields:")
+        for w in warning_list
+    )
+    print("SUCCESS: Non-Porta missing critical item fields still force reply_needed.")
+
+
+def test_refresh_missing_warnings_keeps_porta_ambiguous_human_review_reply_false() -> None:
+    data = {
+        "extraction_branch": "porta",
+        "header": {
+            "kom_nr": {"value": "KOM-99", "source": "email", "confidence": 1.0},
+            "lieferanschrift": {"value": "Musterstr. 1", "source": "email", "confidence": 1.0},
+            "store_address": {"value": "Storestr. 2", "source": "email", "confidence": 1.0},
+            "human_review_needed": {
+                "value": True,
+                "source": "derived",
+                "confidence": 1.0,
+                "derived_from": "porta_ambiguous_code_human_review",
+            },
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [
+            {
+                "line_no": 1,
+                "artikelnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "modellnummer": {"value": "", "source": "derived", "confidence": 0.0},
+                "menge": {"value": 1, "source": "email", "confidence": 1.0},
+                "furncloud_id": {"value": "ABCD 1234", "source": "email", "confidence": 1.0},
+            }
+        ],
+        "warnings": [],
+        "errors": [],
+    }
+
+    refresh_missing_warnings(data)
+    warning_list = data.get("warnings") if isinstance(data.get("warnings"), list) else []
+    assert data["header"].get("reply_needed", {}).get("value") is not True
+    assert data.get("status") == "human_in_the_loop"
+    assert not any(
+        isinstance(w, str) and w.startswith("Reply needed: Missing critical item fields:")
+        for w in warning_list
+    )
+    print("SUCCESS: refresh_missing_warnings keeps Porta ambiguity in human-review-only mode.")
+
+
 def test_post_case_preservation() -> None:
     warnings: list[str] = []
     data = {
@@ -362,6 +487,9 @@ if __name__ == "__main__":
     test_reply_needed_from_missing_store_address()
     test_kundennummer_alone_does_not_trigger_reply_needed()
     test_reply_needed_from_missing_critical_item_fields()
+    test_porta_ambiguous_human_review_keeps_reply_needed_false()
+    test_non_porta_missing_critical_item_fields_still_force_reply_needed()
+    test_refresh_missing_warnings_keeps_porta_ambiguous_human_review_reply_false()
     test_post_case_preservation()
     test_post_case_default_false_when_missing()
     test_dashboard_list_orders_post_case_mapping()

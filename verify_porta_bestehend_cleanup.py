@@ -625,6 +625,7 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "1xPDSL71SP44-57383" in verify_prompt
     assert "2xCQ1212-09377G" in verify_prompt
     assert "strip it from modellnummer" in verify_prompt
+    assert "Standalone unlabeled code-like token in Porta article/description/sketch context, e.g., 'muba 4nuh'." in porta_prompt
     assert "'Siehe Skizze vcrr kwkk' and 'Siehe Skizze: vcrr kwkk' style phrases" in porta_prompt
     assert "For 'Siehe Skizze ...' phrases, accept only when the extracted candidate is exactly 8 alphanumeric characters after cleanup." in porta_prompt
     assert "If the Verkaufshaus store address is missing, use lieferanschrift for store_address." in porta_prompt

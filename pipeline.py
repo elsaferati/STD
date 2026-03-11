@@ -36,14 +36,28 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
 _TICKET_SUBJECT_RE = re.compile(r"ticket\s*number\b[^0-9]*(\d+)", re.IGNORECASE)
 _BESTEHEND_AUS_JE_RE = re.compile(r"bestehend\s+aus\s+je\s*:", re.IGNORECASE)
 _PORTA_PARENT_ARTIKEL_NR_RE = re.compile(r"\b\d{6,8}\s*/\s*\d{2}\b")
-_PORTA_COMPONENT_PAIR_RE = re.compile(r"\b([A-Z0-9]{3,14})\s*(?:-|/| )\s*(\d{4,6}[A-Z]?)\b")
-_PORTA_ARTICLE_TOKEN_RE = re.compile(r"^(\d{4,6})([A-Z]?)$")
+_PORTA_ARTICLE_TOKEN_PATTERN = (
+    r"(?:\d{5}"
+    r"|[A-Z]\d{5}"
+    r"|\d[A-Z]\d{4}"
+    r"|\d{2}[A-Z]\d{3}"
+    r"|\d{3}[A-Z]\d{2}"
+    r"|\d{4}[A-Z]\d"
+    r"|\d{5}[A-Z])"
+)
+_PORTA_COMPONENT_PAIR_RE = re.compile(
+    rf"\b([A-Z0-9]{{3,14}})\s*(?:-|/| )\s*({_PORTA_ARTICLE_TOKEN_PATTERN})\b"
+)
+_PORTA_LIEFERMODELL_ARTICLE_MODEL_RE = re.compile(
+    rf"\b({_PORTA_ARTICLE_TOKEN_PATTERN})\s+([A-Z0-9]{{3,14}})\b"
+)
+_PORTA_ARTICLE_TOKEN_RE = re.compile(rf"^{_PORTA_ARTICLE_TOKEN_PATTERN}$")
 _PORTA_MODEL_QTY_PREFIX_RE = re.compile(r"^\s*\d+\s*[X]\s*")
 _PORTA_OJ_ACCESSORY_PAIR_RE = re.compile(
-    r"\b((?:[O0]J\d{2})|(?:OJOO))\s*(?:-| )\s*(\d{4,6}[A-Z]?)\b"
+    rf"\b((?:[O0]J\d{{2}})|(?:OJOO))\s*(?:-| )\s*({_PORTA_ARTICLE_TOKEN_PATTERN})\b"
 )
 _PORTA_TYP_ARTICLE_RE = re.compile(
-    r"\bTYP\.?\s*[:\-]?\s*(\d{4,6}[A-Z]?)\b",
+    rf"\bTYP\.?\s*[:\-]?\s*({_PORTA_ARTICLE_TOKEN_PATTERN})\b",
     re.IGNORECASE,
 )
 _PORTA_AUSF_MODEL_RE = re.compile(
@@ -343,7 +357,7 @@ def _extract_page_number_from_image_name(image_name: str) -> int | None:
 
 
 def _is_invalid_porta_component_model(model: str) -> bool:
-    token = re.sub(r"[^A-Z0-9]", "", str(model or "").upper())
+    token = _normalize_porta_model_token(model)
     if not token:
         return True
     normalized = token.replace("8", "B")
@@ -356,16 +370,50 @@ def _is_invalid_porta_component_model(model: str) -> bool:
     return normalized.startswith("HRB") or normalized.startswith("HRA")
 
 
+def _normalize_porta_model_token(model: str) -> str:
+    token = re.sub(r"[^A-Z0-9]", "", str(model or "").upper())
+    if not token:
+        return ""
+    # Porta accessory rows sometimes OCR "OJ00" as "OJOO".
+    if re.fullmatch(r"[O0]J[O0]{2}", token):
+        return "OJ00"
+    return token
+
+
+def _is_porta_model_code_like(model: str) -> bool:
+    token = _normalize_porta_model_token(model)
+    if not token:
+        return False
+    if _is_invalid_porta_component_model(token):
+        return False
+    if not any(ch.isalpha() for ch in token):
+        return False
+    if not any(ch.isdigit() for ch in token):
+        return False
+    return True
+
+
+def _is_porta_article_code_like(article: str) -> bool:
+    token = str(article or "").strip().upper()
+    if not token:
+        return False
+    if not _PORTA_ARTICLE_TOKEN_RE.fullmatch(token):
+        return False
+    digit_count = sum(ch.isdigit() for ch in token)
+    alpha_count = sum(ch.isalpha() for ch in token)
+    return digit_count == 5 and alpha_count <= 1 and (digit_count + alpha_count == len(token))
+
+
 def _strip_porta_qty_prefix_from_model_token(token: str) -> str:
     normalized = str(token or "").strip().upper()
     if not normalized:
         return ""
     stripped = _PORTA_MODEL_QTY_PREFIX_RE.sub("", normalized, count=1).strip()
     if not stripped:
-        return normalized
+        return _normalize_porta_model_token(normalized)
     if not re.search(r"[A-Z0-9]", stripped):
-        return normalized
-    return stripped
+        return _normalize_porta_model_token(normalized)
+    return _normalize_porta_model_token(stripped)
 
 
 def _extract_pdf_page_texts(
@@ -577,9 +625,7 @@ def _extract_porta_quantity_candidates_strict(
             article = str(component.get("artikelnummer") or "").strip().upper()
             if not model or not article:
                 continue
-            if not any(ch.isalpha() for ch in model):
-                continue
-            if _is_invalid_porta_component_model(model):
+            if not _is_porta_model_code_like(model):
                 continue
             qty = _parse_qty_token(str(component.get("menge", 1)))
             key = (model, article)
@@ -751,12 +797,11 @@ def _prune_porta_items_without_explicit_pdf_pairs(
         expected_pair_counts[(model, article)] += 1
 
     # Safety fallback: if there is no explicit pair evidence in PDF text,
-    # skip pruning to avoid deleting all extracted items on text-poor documents.
+    # skip ambiguity review to avoid false positives on text-poor documents.
     if not expected_pair_counts:
         return 0
 
-    kept_items: list[dict[str, Any]] = []
-    removed_rows: list[str] = []
+    flagged_rows: list[str] = []
 
     def _remaining_unique_pair() -> tuple[str, str] | None:
         remaining = [(pair, count) for pair, count in expected_pair_counts.items() if count > 0]
@@ -787,55 +832,36 @@ def _prune_porta_items_without_explicit_pdf_pairs(
                 article_entry["confidence"] = 0.95
                 article_entry["derived_from"] = "porta_explicit_pair_backfill"
                 expected_pair_counts[(inferred_model, inferred_article)] -= 1
-                kept_items.append(item)
                 continue
-            removed_rows.append(f"line {line_no}: {model or '?'} / {article or '?'}")
+            flagged_rows.append(f"line {line_no}: {model or '?'} / {article or '?'}")
             continue
         if expected_pair_counts.get(key, 0) <= 0:
-            removed_rows.append(f"line {line_no}: {model} / {article}")
+            flagged_rows.append(f"line {line_no}: {model} / {article}")
             continue
 
         expected_pair_counts[key] -= 1
-        kept_items.append(item)
 
-    removed_count = len(items) - len(kept_items)
-    if removed_count <= 0:
+    flagged_count = len(flagged_rows)
+    if flagged_count <= 0:
         return 0
 
-    normalized["items"] = kept_items
-    for line_no, item in enumerate(kept_items, start=1):
-        if isinstance(item, dict):
-            item["line_no"] = line_no
-
-    header = normalized.get("header")
-    if not isinstance(header, dict):
-        header = {}
-        normalized["header"] = header
-
-    reply_entry = header.get("reply_needed")
-    if not isinstance(reply_entry, dict):
-        reply_entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["reply_needed"] = reply_entry
-    reply_entry["value"] = True
-    reply_entry["source"] = "derived"
-    reply_entry["confidence"] = 1.0
-    reply_entry["derived_from"] = "porta_ambiguous_code_reply_needed"
+    _set_porta_ambiguous_code_human_review(normalized)
 
     warnings = _ensure_warning_list(normalized)
-    removed_summary = ", ".join(removed_rows[:6])
-    if len(removed_rows) > 6:
-        removed_summary += f", ... (+{len(removed_rows) - 6} more)"
+    flagged_summary = ", ".join(flagged_rows[:6])
+    if len(flagged_rows) > 6:
+        flagged_summary += f", ... (+{len(flagged_rows) - 6} more)"
 
     warnings.append(
-        "Reply needed: Porta ambiguous standalone code token(s) removed; please confirm valid item codes. "
-        f"Removed: {removed_summary}."
+        "Human review needed: Porta ambiguous standalone code token(s) retained for human confirmation; "
+        f"please confirm valid item codes. Flagged: {flagged_summary}."
     )
     warnings.append(
-        "Porta explicit-pair prune removed "
-        f"{removed_count} item(s) not backed by explicit PDF model/article pairs: {removed_summary}."
+        "Porta explicit-pair review retained "
+        f"{flagged_count} ambiguous item(s) not backed by explicit PDF model/article pairs: {flagged_summary}."
     )
 
-    return removed_count
+    return flagged_count
 
 
 def _porta_has_bestehend_aus_je_block(
@@ -869,29 +895,17 @@ def _force_porta_reply_needed_for_ambiguous_ignored_codes(
     if not matched_warning:
         return False
 
-    header = normalized.get("header")
-    if not isinstance(header, dict):
-        header = {}
-        normalized["header"] = header
+    _set_porta_ambiguous_code_human_review(normalized)
 
-    reply_entry = header.get("reply_needed")
-    if not isinstance(reply_entry, dict):
-        reply_entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["reply_needed"] = reply_entry
-    reply_entry["value"] = True
-    reply_entry["source"] = "derived"
-    reply_entry["confidence"] = 1.0
-    reply_entry["derived_from"] = "porta_ambiguous_code_reply_needed"
-
-    reply_warning = (
-        "Reply needed: Porta ambiguous standalone code token(s) were ignored; "
+    review_warning = (
+        "Human review needed: Porta ambiguous standalone code token(s) were ignored; "
         "please confirm valid item codes."
     )
-    if not any(str(w or "").startswith("Reply needed: Porta ambiguous standalone code token(s)") for w in warnings):
-        warnings.append(reply_warning)
+    if not any(str(w or "").startswith("Human review needed: Porta ambiguous standalone code token(s)") for w in warnings):
+        warnings.append(review_warning)
 
     technical_warning = (
-        "Porta ambiguous-code reply trigger activated from warning: "
+        "Porta ambiguous-code human-review trigger activated from warning: "
         f"{matched_warning}"
     )
     if technical_warning not in warnings:
@@ -946,7 +960,7 @@ def _extract_porta_typ_article_token(line: str) -> str:
     if not match:
         return ""
     token = str(match.group(1) or "").strip().upper()
-    if not _PORTA_ARTICLE_TOKEN_RE.fullmatch(token):
+    if not _is_porta_article_code_like(token):
         return ""
     return token
 
@@ -958,11 +972,9 @@ def _extract_porta_ausf_model_token(line: str) -> str:
     token = re.sub(r"[^A-Z0-9]", "", str(match.group(1) or "").upper())
     if len(token) < 3 or len(token) > 18:
         return ""
-    if not any(ch.isalpha() for ch in token):
+    if not _is_porta_model_code_like(token):
         return ""
-    if not any(ch.isdigit() for ch in token):
-        return ""
-    if _PORTA_ARTICLE_TOKEN_RE.fullmatch(token):
+    if _is_porta_article_code_like(token):
         return ""
     return token
 
@@ -1148,7 +1160,10 @@ def _apply_porta_oj_accessory_article_backfill(
     expected_counts: Counter[tuple[str, str]] = Counter()
     for _image_name, page_text in ordered_pages.items():
         text_upper = str(page_text or "").upper()
-        for model, article in _PORTA_OJ_ACCESSORY_PAIR_RE.findall(text_upper):
+        for model_raw, article in _PORTA_OJ_ACCESSORY_PAIR_RE.findall(text_upper):
+            model = _normalize_porta_model_token(model_raw)
+            if not model:
+                continue
             expected_counts[(model, article)] += 1
     if not expected_counts:
         return
@@ -1157,7 +1172,7 @@ def _apply_porta_oj_accessory_article_backfill(
     for item in items:
         if not isinstance(item, dict):
             continue
-        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        model = _normalize_porta_model_token(_entry_value(item.get("modellnummer")) or "")
         article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
         if not model or not article:
             continue
@@ -1177,7 +1192,7 @@ def _apply_porta_oj_accessory_article_backfill(
     for index, item in enumerate(items, start=1):
         if not isinstance(item, dict):
             continue
-        model = str(_entry_value(item.get("modellnummer")) or "").strip().upper()
+        model = _normalize_porta_model_token(_entry_value(item.get("modellnummer")) or "")
         article = str(_entry_value(item.get("artikelnummer")) or "").strip().upper()
         if not model or not model.startswith(("OJ", "0J")) or article:
             continue
@@ -1352,9 +1367,7 @@ def _extract_porta_parent_signature(line: str) -> tuple[str, str, str] | None:
     pair_article = ""
     for model_raw, article in _PORTA_COMPONENT_PAIR_RE.findall(upper):
         model = _strip_porta_qty_prefix_from_model_token(model_raw)
-        if not any(ch.isalpha() for ch in model):
-            continue
-        if _is_invalid_porta_component_model(model):
+        if not _is_porta_model_code_like(model):
             continue
         pair_model = model
         pair_article = article
@@ -1384,9 +1397,7 @@ def _extract_porta_component_pair_from_group(
 
     model_raw, article = pairs[-1]
     model = _strip_porta_qty_prefix_from_model_token(model_raw)
-    if not any(ch.isalpha() for ch in model):
-        return None
-    if _is_invalid_porta_component_model(model):
+    if not _is_porta_model_code_like(model):
         return None
     return (model, article)
 
@@ -1677,13 +1688,46 @@ def _extract_porta_component_occurrences_from_page_texts(
     return _extract_porta_component_occurrences_from_blocks(blocks)
 
 
+def _extract_porta_pdf_pairs_from_line(line_upper: str) -> list[tuple[str, str]]:
+    upper = str(line_upper or "").upper()
+    if not upper:
+        return []
+
+    raw_pairs: list[tuple[str, str]] = []
+    raw_pairs.extend(_PORTA_COMPONENT_PAIR_RE.findall(upper))
+
+    if "LIEFERMODELL" in upper:
+        # Deterministic fallback for rows that encode ARTICLE MODEL order, e.g.
+        # "Liefermodell: Sonate 13505 OGAW819696".
+        for article_raw, model_raw in _PORTA_LIEFERMODELL_ARTICLE_MODEL_RE.findall(upper):
+            raw_pairs.append((model_raw, article_raw))
+
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for model_raw, article_raw in raw_pairs:
+        model = _strip_porta_qty_prefix_from_model_token(model_raw)
+        article = str(article_raw or "").strip().upper()
+        if not model or not article:
+            continue
+        if not _is_porta_model_code_like(model):
+            continue
+        if not _is_porta_article_code_like(article):
+            continue
+        key = (model, article)
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append(key)
+    return pairs
+
+
 def _is_porta_inline_item_region_start(line: str) -> bool:
     upper = str(line or "").upper()
     if not upper:
         return False
     if _PORTA_PARENT_ROW_RE.search(upper):
         return True
-    if "LIEFERMODELL" in upper and _PORTA_COMPONENT_PAIR_RE.search(upper):
+    if "LIEFERMODELL" in upper and _extract_porta_pdf_pairs_from_line(upper):
         return True
     return False
 
@@ -1733,17 +1777,7 @@ def _extract_porta_inline_pair_occurrences_from_page_texts(
                 qty_value = _parse_qty_token(qty_match.group(1)) if qty_match else 1
                 qty_explicit = bool(qty_match)
 
-                for model_raw, article_raw in _PORTA_COMPONENT_PAIR_RE.findall(current_upper):
-                    model = _strip_porta_qty_prefix_from_model_token(model_raw)
-                    article = str(article_raw or "").strip().upper()
-                    if not model or not article:
-                        continue
-                    if not any(ch.isalpha() for ch in model):
-                        continue
-                    if _is_invalid_porta_component_model(model):
-                        continue
-                    if not _PORTA_ARTICLE_TOKEN_RE.fullmatch(article):
-                        continue
+                for model, article in _extract_porta_pdf_pairs_from_line(current_upper):
                     region_occurrences.append(
                         {
                             "modellnummer": model,
@@ -1821,10 +1855,9 @@ def _porta_article_base(value: str) -> str:
     token = str(value or "").strip().upper()
     if not token:
         return ""
-    match = _PORTA_ARTICLE_TOKEN_RE.fullmatch(token)
-    if not match:
+    if not _is_porta_article_code_like(token):
         return ""
-    return match.group(1)
+    return "".join(ch for ch in token if ch.isdigit())
 
 
 def _collect_porta_pdf_code_pairs(
@@ -1848,17 +1881,7 @@ def _collect_porta_pdf_code_pairs(
             upper = line.upper()
             if _PORTA_LEGAL_LINE_RE.search(upper):
                 continue
-            for model_raw, article_raw in _PORTA_COMPONENT_PAIR_RE.findall(upper):
-                model = _strip_porta_qty_prefix_from_model_token(model_raw)
-                article = str(article_raw or "").strip().upper()
-                if not model or not article:
-                    continue
-                if not any(ch.isalpha() for ch in model):
-                    continue
-                if _is_invalid_porta_component_model(model):
-                    continue
-                if not _PORTA_ARTICLE_TOKEN_RE.fullmatch(article):
-                    continue
+            for model, article in _extract_porta_pdf_pairs_from_line(upper):
                 model_to_articles.setdefault(model, set()).add(article)
                 article_to_models.setdefault(article, set()).add(model)
                 pair_set.add((model, article))
@@ -1961,6 +1984,107 @@ def _apply_porta_code_consistency_corrections(
     if corrections > 0:
         _set_porta_code_consistency_human_review(normalized)
     return corrections
+
+
+def _set_porta_ambiguous_code_human_review(normalized: dict[str, Any]) -> None:
+    header = normalized.get("header")
+    if not isinstance(header, dict):
+        header = {}
+        normalized["header"] = header
+
+    entry = header.get("human_review_needed")
+    if not isinstance(entry, dict):
+        entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["human_review_needed"] = entry
+
+    entry["value"] = True
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "porta_ambiguous_code_human_review"
+
+
+def _set_porta_code_shape_validation_human_review(normalized: dict[str, Any]) -> None:
+    header = normalized.get("header")
+    if not isinstance(header, dict):
+        header = {}
+        normalized["header"] = header
+
+    entry = header.get("human_review_needed")
+    if not isinstance(entry, dict):
+        entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["human_review_needed"] = entry
+
+    entry["value"] = True
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "porta_code_shape_validation"
+
+
+def _apply_porta_code_shape_validation(
+    normalized: dict[str, Any],
+) -> int:
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return 0
+
+    warnings = _ensure_warning_list(normalized)
+    corrected_fields = 0
+    cleared_fields = 0
+
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+
+        model_entry = _ensure_item_field(item, "modellnummer")
+        article_entry = _ensure_item_field(item, "artikelnummer")
+
+        model_value = str(model_entry.get("value") or "").strip().upper()
+        article_value = str(article_entry.get("value") or "").strip().upper()
+        normalized_model_value = _normalize_porta_model_token(model_value)
+
+        if model_value and normalized_model_value and normalized_model_value != model_value:
+            model_entry["value"] = normalized_model_value
+            model_entry["source"] = "derived"
+            model_entry["confidence"] = 1.0
+            model_entry["derived_from"] = "porta_code_shape_validation"
+            warnings.append(
+                "Porta code-shape validation normalized modellnummer on "
+                f"line {item.get('line_no', index)}: '{model_value}' -> '{normalized_model_value}'."
+            )
+            model_value = normalized_model_value
+            corrected_fields += 1
+
+        invalid_model = bool(model_value) and not _is_porta_model_code_like(model_value)
+        invalid_article = bool(article_value) and not _is_porta_article_code_like(article_value)
+        if not invalid_model and not invalid_article:
+            continue
+
+        line_no = item.get("line_no", index)
+
+        if invalid_model:
+            model_entry["value"] = ""
+            model_entry["source"] = "derived"
+            model_entry["confidence"] = 1.0
+            model_entry["derived_from"] = "porta_code_shape_validation"
+            corrected_fields += 1
+            cleared_fields += 1
+
+        if invalid_article:
+            article_entry["value"] = ""
+            article_entry["source"] = "derived"
+            article_entry["confidence"] = 1.0
+            article_entry["derived_from"] = "porta_code_shape_validation"
+            corrected_fields += 1
+            cleared_fields += 1
+
+        warnings.append(
+            "Porta code-shape validation cleared invalid item code(s) on "
+            f"line {line_no}: modellnummer='{model_value}', artikelnummer='{article_value}'."
+        )
+
+    if cleared_fields > 0:
+        _set_porta_code_shape_validation_human_review(normalized)
+    return corrected_fields
 
 
 def _set_porta_reconciliation_human_review(normalized: dict[str, Any]) -> None:
@@ -2577,6 +2701,7 @@ def process_message(
         _apply_porta_oj_accessory_article_backfill(normalized, pdf_text_by_image_name)
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
         _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)
+        _apply_porta_code_shape_validation(normalized)
         _prune_porta_items_without_explicit_pdf_pairs(normalized, pdf_text_by_image_name)
         _force_porta_reply_needed_for_ambiguous_ignored_codes(normalized)
 

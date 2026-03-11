@@ -111,10 +111,11 @@
     "Reply needed: Missing critical header fields: kom_nr, lieferanschrift, store_address",
     "ticket number is missing",
     "No items extracted.",
-    "Auto-reply email sent to 333primex.eu@gmail.com."
+    "Auto-reply email failed: [WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions"
   ],
   "errors": [],
   "message_id": "test_reply_needed",
   "received_at": "2025-01-01T12:00:00",
-  "status": "partial"
+  "status": "reply",
+  "extraction_branch": "xxxlutz_default"
 }
