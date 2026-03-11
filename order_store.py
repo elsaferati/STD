@@ -1223,13 +1223,12 @@ def list_client_branch_counts(
 
 def query_overview_snapshot(
     *,
-    now: datetime,
-    today_start: datetime,
-    today_end: datetime,
-    seven_day_start: datetime,
-    last_24h_start: datetime,
-    current_hour: datetime,
-    hourly_start: datetime,
+    range_start: datetime,
+    range_end: datetime,
+    chart_start: datetime,
+    chart_end: datetime,
+    bucket_granularity: str = "day",
+    local_timezone: str = "UTC",
     assigned_user_id: str | None = None,
     allowed_client_branches: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -1245,133 +1244,186 @@ def query_overview_snapshot(
     summary = fetch_one(
         f"""
         SELECT
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS today_total,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS today_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS today_reply,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS today_human,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS today_post,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS today_failed,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS last24_total,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS last24_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS last24_reply,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS last24_human,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS last24_post,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS last24_failed,
-            SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS queue_reply,
-            SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS queue_human,
-            SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS queue_post
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS period_total,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS period_ok,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS period_waiting_for_reply,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS period_human_in_the_loop,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS period_post,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS period_unknown,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS period_failed,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'updated_after_reply' THEN 1 ELSE 0 END)::bigint AS period_updated_after_reply
         FROM orders o
         WHERE {where_sql}
         """,
         [
-            today_start,
-            today_end,
-            today_start,
-            today_end,
-            today_start,
-            today_end,
-            today_start,
-            today_end,
-            today_start,
-            today_end,
-            today_start,
-            today_end,
-            last_24h_start,
-            now,
-            last_24h_start,
-            now,
-            last_24h_start,
-            now,
-            last_24h_start,
-            now,
-            last_24h_start,
-            now,
-            last_24h_start,
-            now,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
+            range_start,
+            range_end,
             *scope_params,
         ],
     ) or {}
 
-    day_rows = fetch_all(
-        f"""
-        WITH day_buckets AS (
-            SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 day') AS bucket_start
+    if bucket_granularity == "month":
+        bucket_rows = fetch_all(
+            f"""
+            WITH month_buckets AS (
+                SELECT generate_series(%s::date, %s::date, interval '1 month')::date AS bucket_start
+            )
+            SELECT b.bucket_start,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS ok,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS waiting_for_reply,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS human_in_the_loop,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS post,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS unknown,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS failed,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'updated_after_reply' THEN 1 ELSE 0 END)::bigint AS updated_after_reply,
+                   COUNT(o.id)::bigint AS total
+            FROM month_buckets b
+            LEFT JOIN orders o
+              ON o.deleted_at IS NULL
+             AND ({_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND ({_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+             {join_scope_sql}
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [chart_start.date(), chart_end.date(), local_timezone, local_timezone, *scope_params],
         )
-        SELECT b.bucket_start,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS ok,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS reply,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS human_in_the_loop,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS post,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS failed,
-               COUNT(o.id)::bigint AS total
-        FROM day_buckets b
-        LEFT JOIN orders o
-          ON o.deleted_at IS NULL
-         AND {_EFFECTIVE_RECEIVED_SQL} >= b.bucket_start
-         AND {_EFFECTIVE_RECEIVED_SQL} < b.bucket_start + interval '1 day'
-         {join_scope_sql}
-        GROUP BY b.bucket_start
-        ORDER BY b.bucket_start
-        """,
-        [seven_day_start, today_start, *scope_params],
-    )
+        client_hour_rows: list[dict[str, Any]] = []
+    else:
+        bucket_rows = fetch_all(
+            f"""
+            WITH day_buckets AS (
+                SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 day') AS bucket_start
+            )
+            SELECT b.bucket_start,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS ok,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS waiting_for_reply,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS human_in_the_loop,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS post,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS unknown,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS failed,
+                   SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'updated_after_reply' THEN 1 ELSE 0 END)::bigint AS updated_after_reply,
+                   COUNT(o.id)::bigint AS total
+            FROM day_buckets b
+            LEFT JOIN orders o
+              ON o.deleted_at IS NULL
+             AND {_EFFECTIVE_RECEIVED_SQL} >= b.bucket_start
+             AND {_EFFECTIVE_RECEIVED_SQL} < b.bucket_start + interval '1 day'
+             {join_scope_sql}
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [chart_start, chart_end, *scope_params],
+        )
+        client_hour_rows = fetch_all(
+            f"""
+            SELECT DATE_TRUNC('day', {_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s)::date AS bucket_day,
+                   EXTRACT(HOUR FROM {_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s)::int AS bucket_hour,
+                   {_EXTRACTION_BRANCH_SQL} AS branch_id,
+                   COUNT(*)::bigint AS total
+            FROM orders o
+            WHERE o.deleted_at IS NULL
+              AND {_EFFECTIVE_RECEIVED_SQL} >= %s
+              AND {_EFFECTIVE_RECEIVED_SQL} < (%s + interval '1 day')
+              {join_scope_sql}
+            GROUP BY bucket_day, bucket_hour, {_EXTRACTION_BRANCH_SQL}
+            ORDER BY bucket_day, bucket_hour, {_EXTRACTION_BRANCH_SQL}
+            """,
+            [local_timezone, local_timezone, chart_start, chart_end, *scope_params],
+        )
 
-    hour_rows = fetch_all(
-        f"""
-        WITH hour_buckets AS (
-            SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 hour') AS bucket_start
-        )
-        SELECT b.bucket_start,
-               COUNT(o.id)::bigint AS processed
-        FROM hour_buckets b
-        LEFT JOIN orders o
-          ON o.deleted_at IS NULL
-         AND {_EFFECTIVE_RECEIVED_SQL} >= b.bucket_start
-         AND {_EFFECTIVE_RECEIVED_SQL} < b.bucket_start + interval '1 hour'
-         {join_scope_sql}
-        GROUP BY b.bucket_start
-        ORDER BY b.bucket_start
-        """,
-        [hourly_start, current_hour, *scope_params],
-    )
+    client_hour_map: dict[tuple[Any, int], dict[str, int]] = {}
+    for row in client_hour_rows:
+        bucket_day = row.get("bucket_day")
+        bucket_hour = int(row.get("bucket_hour") or 0)
+        branch_id = _normalize_extraction_branch(row.get("branch_id"))
+        total = int(row.get("total") or 0)
+        key = (bucket_day, bucket_hour)
+        if key not in client_hour_map:
+            client_hour_map[key] = {}
+        client_hour_map[key][branch_id] = total
+
+    client_hour_days: list[dict[str, Any]] = []
+    if bucket_granularity == "day":
+        current_day = chart_start.date()
+        last_day = chart_end.date()
+        known_client_ids = sorted(ALLOWED_EXTRACTION_BRANCHES)
+        while current_day <= last_day:
+            hours: list[dict[str, Any]] = []
+            day_total = 0
+            for hour in range(24):
+                client_counts = client_hour_map.get((current_day, hour), {})
+                total = sum(client_counts.values())
+                day_total += total
+                hours.append(
+                    {
+                        "hour": hour,
+                        "total": total,
+                        "clients": [
+                            {"id": client_id, "count": int(client_counts.get(client_id) or 0)}
+                            for client_id in known_client_ids
+                            if int(client_counts.get(client_id) or 0) > 0
+                        ],
+                    }
+                )
+            client_hour_days.append(
+                {
+                    "date": current_day.isoformat(),
+                    "total": day_total,
+                    "hours": hours,
+                }
+            )
+            current_day += timedelta(days=1)
 
     return {
         "summary": {
-            "today_total": int(summary.get("today_total") or 0),
-            "today_ok": int(summary.get("today_ok") or 0),
-            "today_reply": int(summary.get("today_reply") or 0),
-            "today_human": int(summary.get("today_human") or 0),
-            "today_post": int(summary.get("today_post") or 0),
-            "today_failed": int(summary.get("today_failed") or 0),
-            "last24_total": int(summary.get("last24_total") or 0),
-            "last24_ok": int(summary.get("last24_ok") or 0),
-            "last24_reply": int(summary.get("last24_reply") or 0),
-            "last24_human": int(summary.get("last24_human") or 0),
-            "last24_post": int(summary.get("last24_post") or 0),
-            "last24_failed": int(summary.get("last24_failed") or 0),
-            "queue_reply": int(summary.get("queue_reply") or 0),
-            "queue_human": int(summary.get("queue_human") or 0),
-            "queue_post": int(summary.get("queue_post") or 0),
+            "period_total": int(summary.get("period_total") or 0),
+            "period_ok": int(summary.get("period_ok") or 0),
+            "period_waiting_for_reply": int(summary.get("period_waiting_for_reply") or 0),
+            "period_human_in_the_loop": int(summary.get("period_human_in_the_loop") or 0),
+            "period_post": int(summary.get("period_post") or 0),
+            "period_unknown": int(summary.get("period_unknown") or 0),
+            "period_failed": int(summary.get("period_failed") or 0),
+            "period_updated_after_reply": int(summary.get("period_updated_after_reply") or 0),
         },
         "status_by_day": [
             {
                 "bucket_start": row.get("bucket_start"),
                 "ok": int(row.get("ok") or 0),
-                "reply": int(row.get("reply") or 0),
+                "waiting_for_reply": int(row.get("waiting_for_reply") or 0),
                 "human_in_the_loop": int(row.get("human_in_the_loop") or 0),
                 "post": int(row.get("post") or 0),
+                "unknown": int(row.get("unknown") or 0),
                 "failed": int(row.get("failed") or 0),
+                "updated_after_reply": int(row.get("updated_after_reply") or 0),
                 "total": int(row.get("total") or 0),
             }
-            for row in day_rows
+            for row in bucket_rows
         ],
-        "processed_by_hour": [
-            {
-                "bucket_start": row.get("bucket_start"),
-                "processed": int(row.get("processed") or 0),
-            }
-            for row in hour_rows
-        ],
+        "orders_by_client_hour": {
+            "clients": [
+                {
+                    "id": branch_id,
+                    "label": BRANCHES[branch_id].label if branch_id in BRANCHES else "Unknown",
+                }
+                for branch_id in sorted(ALLOWED_EXTRACTION_BRANCHES)
+            ],
+            "days": client_hour_days,
+        },
     }
 
 
