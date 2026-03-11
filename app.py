@@ -439,6 +439,149 @@ def _rate(count: int, total: int) -> float:
     return round((count / total) * 100, 2)
 
 
+def _shift_month_start(value: datetime, delta_months: int) -> datetime:
+    month_index = (value.year * 12 + (value.month - 1)) + delta_months
+    year = month_index // 12
+    month = (month_index % 12) + 1
+    return datetime(year, month, 1, tzinfo=value.tzinfo)
+
+
+def _chart_day_bounds(range_start: datetime, range_end: datetime) -> tuple[datetime, datetime]:
+    local_tz = range_start.tzinfo
+    chart_start = datetime.combine(range_start.date(), datetime.min.time(), tzinfo=local_tz)
+    inclusive_end = max(range_start, range_end - timedelta(microseconds=1))
+    chart_end = datetime.combine(inclusive_end.date(), datetime.min.time(), tzinfo=local_tz)
+    return chart_start, chart_end
+
+
+def _chart_month_bounds(range_start: datetime, range_end: datetime) -> tuple[datetime, datetime]:
+    inclusive_end = max(range_start, range_end - timedelta(microseconds=1))
+    chart_start = datetime(range_start.year, range_start.month, 1, tzinfo=range_start.tzinfo)
+    chart_end = datetime(inclusive_end.year, inclusive_end.month, 1, tzinfo=range_start.tzinfo)
+    return chart_start, chart_end
+
+
+def _postgres_timezone_name(value: Any) -> str:
+    key = getattr(value, "key", None)
+    if key:
+      return str(key)
+    text = str(value or "").strip()
+    if text in {"Central Europe Standard Time", "W. Europe Standard Time"}:
+      return "Europe/Budapest"
+    return text or "UTC"
+
+
+def _parse_overview_range(now: datetime) -> tuple[dict[str, Any] | None, Response | None]:
+    preset = (request.args.get("range") or "today").strip().lower()
+    local_tz = now.tzinfo
+    today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=local_tz)
+    selected_year = now.year
+    chart_preset = preset
+
+    if preset == "today":
+        range_start = today_start
+        range_end = now
+        chart_preset = "week"
+    elif preset == "week":
+        range_start = today_start - timedelta(days=now.weekday())
+        range_end = now
+    elif preset == "month":
+        range_start = datetime(now.year, now.month, 1, tzinfo=local_tz)
+        range_end = now
+    elif preset == "custom_month":
+        month_token = (request.args.get("month") or "").strip()
+        match = re.fullmatch(r"(\d{4})-(\d{2})", month_token)
+        if not match:
+            return None, _api_error(400, "invalid_range", "Invalid month. Use YYYY-MM.")
+        month_year = int(match.group(1))
+        month_number = int(match.group(2))
+        if month_number < 1 or month_number > 12:
+            return None, _api_error(400, "invalid_range", "Invalid month. Use YYYY-MM.")
+        range_start = datetime(month_year, month_number, 1, tzinfo=local_tz)
+        range_end = _shift_month_start(range_start, 1)
+    elif preset == "3m":
+        current_month_start = datetime(now.year, now.month, 1, tzinfo=local_tz)
+        range_start = _shift_month_start(current_month_start, -2)
+        range_end = now
+    elif preset == "6m":
+        current_month_start = datetime(now.year, now.month, 1, tzinfo=local_tz)
+        range_start = _shift_month_start(current_month_start, -5)
+        range_end = now
+    elif preset == "year":
+        year_token = (request.args.get("year") or "").strip()
+        if year_token:
+            if not re.fullmatch(r"\d{4}", year_token):
+                return None, _api_error(400, "invalid_range", "Invalid year. Use YYYY.")
+            selected_year = int(year_token)
+        range_start = datetime(selected_year, 1, 1, tzinfo=local_tz)
+        range_end = datetime(selected_year + 1, 1, 1, tzinfo=local_tz)
+    else:
+        return None, _api_error(400, "invalid_range", "Invalid range preset.")
+
+    bucket_granularity = "month" if chart_preset in {"3m", "6m", "year"} else "day"
+    if bucket_granularity == "month":
+        chart_range_start = range_start
+        chart_range_end = range_end
+        chart_start, chart_end = _chart_month_bounds(chart_range_start, chart_range_end)
+    else:
+        if chart_preset == "week":
+            chart_range_start = today_start - timedelta(days=now.weekday())
+            chart_range_end = now
+        else:
+            chart_range_start = range_start
+            chart_range_end = range_end
+        chart_start, chart_end = _chart_day_bounds(chart_range_start, chart_range_end)
+    return (
+        {
+            "preset": preset,
+            "month": (request.args.get("month") or "").strip() or None,
+            "year": selected_year if preset == "year" else None,
+            "start": range_start,
+            "end": range_end,
+            "chart_range_start": chart_range_start,
+            "chart_range_end": chart_range_end,
+            "chart_start": chart_start,
+            "chart_end": chart_end,
+            "bucket_granularity": bucket_granularity,
+        },
+        None,
+    )
+
+
+def _overview_status_summary_from_counts(
+    *,
+    total: int,
+    ok: int,
+    waiting_for_reply: int,
+    human_in_the_loop: int,
+    post: int,
+    unknown: int,
+    failed: int,
+    updated_after_reply: int,
+) -> dict[str, Any]:
+    return {
+        "total": int(total),
+        "statuses": {
+            "ok": {"count": int(ok), "rate": _rate(int(ok), int(total))},
+            "waiting_for_reply": {
+                "count": int(waiting_for_reply),
+                "rate": _rate(int(waiting_for_reply), int(total)),
+            },
+            "human_in_the_loop": {
+                "count": int(human_in_the_loop),
+                "rate": _rate(int(human_in_the_loop), int(total)),
+            },
+            "post": {"count": int(post), "rate": _rate(int(post), int(total))},
+            "unknown": {"count": int(unknown), "rate": _rate(int(unknown), int(total))},
+            "failed": {"count": int(failed), "rate": _rate(int(failed), int(total))},
+            "updated_after_reply": {
+                "count": int(updated_after_reply),
+                "rate": _rate(int(updated_after_reply), int(total)),
+            },
+        },
+    }
+
+
 def _status_breakdown(orders: list[dict[str, Any]]) -> dict[str, Any]:
     counts = _status_counts(orders)
     total = counts["total"]
@@ -499,6 +642,7 @@ def _orders_counts_cache_key(
     post_case: bool | None,
     validation_statuses: set[str] | None,
     client_branches: set[str] | None,
+    delivery_week: str | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
     today_start: datetime,
@@ -513,6 +657,7 @@ def _orders_counts_cache_key(
         post_case,
         tuple(sorted(validation_statuses or set())),
         tuple(sorted(client_branches or set())),
+        str(delivery_week or "").strip(),
         assigned_user_id or "",
         tuple(sorted(allowed_client_branches or set())),
         today_start.date().isoformat(),
@@ -787,6 +932,9 @@ def _tab_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
 
 def _parse_orders_query(allow_default_pagination: bool = True):
     q = (request.args.get("q") or "").strip()
+    queue = (request.args.get("queue") or "").strip().lower()
+    if queue and queue != "today":
+        return None, _api_error(400, "invalid_queue", f"Invalid queue value '{queue}'")
 
     raw_status = (request.args.get("status") or "").strip()
     statuses: set[str] | None = None
@@ -853,6 +1001,8 @@ def _parse_orders_query(allow_default_pagination: bool = True):
             return None, _api_error(400, "invalid_client", f"Invalid client values: {', '.join(invalid)}")
         client_branches = parsed_client_branches
 
+    delivery_week = (request.args.get("delivery_week") or "").strip() or None
+
     sort_key = (request.args.get("sort") or "received_at_desc").strip().lower()
     if sort_key not in ALLOWED_SORTS:
         return None, _api_error(
@@ -862,7 +1012,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         )
 
     page = 1
-    page_size = 25
+    page_size = 100
     should_paginate = allow_default_pagination
     if not allow_default_pagination and "page" not in request.args and "page_size" not in request.args:
         should_paginate = False
@@ -875,16 +1025,17 @@ def _parse_orders_query(allow_default_pagination: bool = True):
 
     if "page_size" in request.args:
         try:
-            page_size = int((request.args.get("page_size") or "25").strip())
+            page_size = int((request.args.get("page_size") or "100").strip())
         except ValueError:
             return None, _api_error(400, "invalid_pagination", "Invalid page_size value.")
         if page_size < 1 or page_size > 500:
             return None, _api_error(400, "invalid_pagination", "page_size must be between 1 and 500.")
     elif should_paginate:
-        page_size = 25
+        page_size = 100
 
     query = {
         "q": q,
+        "queue": queue or None,
         "date_from": date_from,
         "date_to": date_to,
         "statuses": statuses,
@@ -893,6 +1044,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         "post_case": post_case,
         "validation_statuses": validation_statuses,
         "client_branches": client_branches,
+        "delivery_week": delivery_week,
         "sort_key": sort_key,
         "page": page,
         "page_size": page_size,
@@ -923,6 +1075,13 @@ def _query_orders(
     if parsed["date_to"] is not None:
         received_to = datetime.combine(parsed["date_to"] + timedelta(days=1), datetime.min.time(), tzinfo=local_tz)
 
+    counts_received_from = received_from
+    counts_received_to = received_to
+
+    if parsed["queue"] == "today" and parsed["date_from"] is None and parsed["date_to"] is None:
+        received_from = today_start
+        received_to = today_end
+
     scope = access_scope or {"assigned_user_id": None, "allowed_client_branches": None}
     effective_client_branches = _effective_client_branches(
         parsed["client_branches"],
@@ -933,12 +1092,13 @@ def _query_orders(
         q=parsed["q"],
         received_from=received_from,
         received_to=received_to,
-        statuses=parsed["statuses"],
+        statuses=None,
         reply_needed=parsed["reply_needed"],
         human_review_needed=parsed["human_review_needed"],
         post_case=parsed["post_case"],
-        validation_statuses=parsed["validation_statuses"],
+        validation_statuses=None,
         client_branches=effective_client_branches,
+        delivery_week=parsed["delivery_week"],
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
         today_start=today_start,
@@ -950,12 +1110,15 @@ def _query_orders(
             q=parsed["q"],
             received_from=received_from,
             received_to=received_to,
+            counts_received_from=counts_received_from,
+            counts_received_to=counts_received_to,
             statuses=parsed["statuses"],
             reply_needed=parsed["reply_needed"],
             human_review_needed=parsed["human_review_needed"],
             post_case=parsed["post_case"],
             validation_statuses=parsed["validation_statuses"],
             client_branches=effective_client_branches,
+            delivery_week=parsed["delivery_week"],
             assigned_user_id=scope.get("assigned_user_id"),
             allowed_client_branches=scope.get("allowed_client_branches"),
             sort_key=parsed["sort_key"],
@@ -2036,25 +2199,18 @@ def api_review_task_resolve(task_id: str):
 def api_overview():
     scope = _order_access_scope(getattr(g, "user", {}) or {})
     now = datetime.now().astimezone()
-    today = now.date()
-    last_24h_start = now - timedelta(hours=24)
-    local_tz = now.tzinfo
-    today_start = datetime.combine(today, datetime.min.time(), tzinfo=local_tz)
-    today_end = today_start + timedelta(days=1)
-    seven_day_start = today_start - timedelta(days=6)
-    queue_velocity_hours = 72
-    current_hour = now.replace(minute=0, second=0, microsecond=0)
-    hourly_start = current_hour - timedelta(hours=queue_velocity_hours - 1)
+    overview_range, error_response = _parse_overview_range(now)
+    if error_response is not None:
+        return error_response
 
     try:
         overview = order_store.query_overview_snapshot(
-            now=now,
-            today_start=today_start,
-            today_end=today_end,
-            seven_day_start=seven_day_start,
-            last_24h_start=last_24h_start,
-            current_hour=current_hour,
-            hourly_start=hourly_start,
+            range_start=overview_range["start"],
+            range_end=overview_range["end"],
+            chart_start=overview_range["chart_start"],
+            chart_end=overview_range["chart_end"],
+            bucket_granularity=overview_range["bucket_granularity"],
+            local_timezone=_postgres_timezone_name(now.tzinfo),
             assigned_user_id=scope.get("assigned_user_id"),
             allowed_client_branches=scope.get("allowed_client_branches"),
         )
@@ -2063,71 +2219,107 @@ def api_overview():
 
     summary = overview.get("summary", {})
     status_by_day_rows = overview.get("status_by_day", [])
-    processed_by_hour_rows = overview.get("processed_by_hour", [])
-    latest_orders = overview.get("latest_orders", [])
+    orders_by_client_hour_payload = overview.get("orders_by_client_hour", {}) or {}
+    orders_by_client_hour_days = orders_by_client_hour_payload.get("days", []) or []
 
     status_by_day = []
     for row in status_by_day_rows:
         bucket_start = row.get("bucket_start")
         if isinstance(bucket_start, datetime):
-            bucket_date = bucket_start.astimezone().date()
+            bucket_point = bucket_start.astimezone()
+        elif isinstance(bucket_start, date):
+            bucket_point = datetime.combine(bucket_start, datetime.min.time(), tzinfo=overview_range["start"].tzinfo)
         else:
-            bucket_date = today
+            bucket_point = overview_range["start"]
+        if overview_range["bucket_granularity"] == "month":
+            label = bucket_point.strftime("%b %Y")
+            iso_value = bucket_point.date().isoformat()
+        else:
+            label = bucket_point.strftime("%b %d")
+            iso_value = bucket_point.date().isoformat()
         status_by_day.append(
             {
-                "date": bucket_date.isoformat(),
-                "label": bucket_date.strftime("%a"),
+                "date": iso_value,
+                "label": label,
                 "ok": int(row.get("ok") or 0),
-                "reply": int(row.get("reply") or 0),
+                "waiting_for_reply": int(row.get("waiting_for_reply") or 0),
                 "human_in_the_loop": int(row.get("human_in_the_loop") or 0),
                 "post": int(row.get("post") or 0),
+                "unknown": int(row.get("unknown") or 0),
                 "failed": int(row.get("failed") or 0),
+                "updated_after_reply": int(row.get("updated_after_reply") or 0),
                 "total": int(row.get("total") or 0),
             }
         )
 
-    processed_by_hour = []
-    for row in processed_by_hour_rows:
-        bucket_start = row.get("bucket_start")
-        if isinstance(bucket_start, datetime):
-            bucket = bucket_start.astimezone()
-        else:
-            bucket = current_hour
-        processed_by_hour.append(
+    orders_by_client_hour = []
+    for day in orders_by_client_hour_days:
+        day_date = str(day.get("date") or "")
+        try:
+            day_point = datetime.fromisoformat(day_date)
+            day_label = day_point.strftime("%b %d")
+        except ValueError:
+            day_label = day_date
+        hours = []
+        for hour_entry in day.get("hours", []) or []:
+            hour_value = int(hour_entry.get("hour") or 0)
+            hours.append(
+                {
+                    "hour": hour_value,
+                    "label": f"{hour_value:02d}:00",
+                    "total": int(hour_entry.get("total") or 0),
+                    "clients": [
+                        {
+                            "id": str(client.get("id") or ""),
+                            "count": int(client.get("count") or 0),
+                        }
+                        for client in (hour_entry.get("clients") or [])
+                    ],
+                }
+            )
+        orders_by_client_hour.append(
             {
-                "hour": bucket.isoformat(),
-                "label": bucket.strftime("%H:%M"),
-                "processed": int(row.get("processed") or 0),
+                "date": day_date,
+                "label": day_label,
+                "total": int(day.get("total") or 0),
+                "hours": hours,
             }
         )
 
     return jsonify(
         {
             "generated_at": now.isoformat(),
-            "today": _status_breakdown_from_counts(
-                total=int(summary.get("today_total") or 0),
-                ok=int(summary.get("today_ok") or 0),
-                reply=int(summary.get("today_reply") or 0),
-                human_in_the_loop=int(summary.get("today_human") or 0),
-                post=int(summary.get("today_post") or 0),
-                failed=int(summary.get("today_failed") or 0),
-            ),
-            "last_24h": _status_breakdown_from_counts(
-                total=int(summary.get("last24_total") or 0),
-                ok=int(summary.get("last24_ok") or 0),
-                reply=int(summary.get("last24_reply") or 0),
-                human_in_the_loop=int(summary.get("last24_human") or 0),
-                post=int(summary.get("last24_post") or 0),
-                failed=int(summary.get("last24_failed") or 0),
-            ),
-            "queue_counts": {
-                "reply": int(summary.get("queue_reply") or 0),
-                "human_in_the_loop": int(summary.get("queue_human") or 0),
-                "post": int(summary.get("queue_post") or 0),
+            "range": {
+                "preset": overview_range["preset"],
+                "month": overview_range.get("month"),
+                "year": overview_range.get("year"),
+                "start": overview_range["start"].isoformat(),
+                "end": overview_range["end"].isoformat(),
+                "chart_start": overview_range["chart_range_start"].isoformat(),
+                "chart_end": overview_range["chart_range_end"].isoformat(),
+                "bucket_granularity": overview_range["bucket_granularity"],
             },
+            "summary": _overview_status_summary_from_counts(
+                total=int(summary.get("period_total") or 0),
+                ok=int(summary.get("period_ok") or 0),
+                waiting_for_reply=int(summary.get("period_waiting_for_reply") or 0),
+                human_in_the_loop=int(summary.get("period_human_in_the_loop") or 0),
+                post=int(summary.get("period_post") or 0),
+                unknown=int(summary.get("period_unknown") or 0),
+                failed=int(summary.get("period_failed") or 0),
+                updated_after_reply=int(summary.get("period_updated_after_reply") or 0),
+            ),
             "status_by_day": status_by_day,
-            "processed_by_hour": processed_by_hour,
-            "latest_orders": [_serialize_order_summary(order) for order in latest_orders],
+            "orders_by_client_hour": {
+                "clients": [
+                    {
+                        "id": str(client.get("id") or ""),
+                        "label": str(client.get("label") or client.get("id") or ""),
+                    }
+                    for client in (orders_by_client_hour_payload.get("clients") or [])
+                ],
+                "days": orders_by_client_hour,
+            },
         }
     )
 
@@ -2206,6 +2398,41 @@ def api_orders_xlsx():
         xlsx_bytes,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
+
+@app.route("/api/orders/export-xml.zip")
+def api_orders_export_xml_zip():
+    import io, zipfile
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    result, error = _query_orders(allow_default_pagination=False, access_scope=scope)
+    if error is not None:
+        return error
+
+    orders = result["orders"]
+    payload_map = _preload_order_export_payloads(orders)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for order in orders:
+            order_id = str(order.get("id") or "").strip()
+            entry = payload_map.get(order_id)
+            if not entry or entry.get("parse_error"):
+                continue
+            data = entry["data"]
+            try:
+                documents = xml_exporter.render_xml_documents(data, "", config, Path("."))
+            except Exception:
+                continue
+            folder = xml_exporter._effective_xml_base_name(data) or order_id
+            for doc in documents:
+                zf.writestr(f"{folder}/{doc.filename}", doc.content)
+
+    date_stamp = datetime.now().astimezone().strftime("%Y-%m-%d")
+    filename = f"orders_xml_{date_stamp}.zip"
+    zip_buffer.seek(0)
+    response = Response(zip_buffer.read(), mimetype="application/zip")
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
 

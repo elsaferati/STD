@@ -11,14 +11,14 @@ const STYLES = {
   resolved: "bg-cyan-50 text-cyan-700 border-cyan-200",
 };
 
-export function ValidationBadge({ status }) {
+export function ValidationBadge({ status, compact = false }) {
   const { t } = useI18n();
   const normalized = String(status || "not_run").toLowerCase();
   const color = STYLES[normalized] || STYLES.not_run;
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${color}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+    <span className={`inline-flex items-center rounded-full border font-medium ${compact ? "gap-1 px-2 py-0.5 text-[11px]" : "gap-1.5 px-2.5 py-1 text-xs"} ${color}`}>
+      <span className={`${compact ? "h-1.5 w-1.5" : "w-1.5 h-1.5"} rounded-full bg-current`} />
       {validationStatusLabel(normalized, t)}
     </span>
   );
