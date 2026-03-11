@@ -32,15 +32,31 @@ def _run_case(modellnummer: str, artikelnummer: str, branch_id: str = "segmuller
     return (normalized.get("items") or [{}])[0]
 
 
-def test_segmuller_does_not_modify_item_codes() -> None:
+def test_segmuller_splits_combined_codes_from_single_field() -> None:
     cases = [
-        ("SINUNU0658XB-89320C", "-"),
+        ("", "ZB00-38337", "38337", "ZB00"),
+        ("", "56847-ZB99", "56847", "ZB99"),
+        ("SI9191TA-10766", "-", "10766", "SI9191TA"),
+        ("", "SIEG9199-44182G", "44182G", "SIEG9199"),
+    ]
+    for model_in, article_in, expected_article, expected_model in cases:
+        item = _run_case(model_in, article_in, branch_id="segmuller")
+        artikel = item.get("artikelnummer", {})
+        modell = item.get("modellnummer", {})
+        assert artikel.get("value") == expected_article
+        assert modell.get("value") == expected_model
+        assert artikel.get("derived_from") == "segmuller_code_split"
+        assert modell.get("derived_from") == "segmuller_code_split"
+    print("SUCCESS: Segmuller combined item codes are split deterministically during normalization.")
+
+
+def test_segmuller_keeps_already_split_codes() -> None:
+    cases = [
+        ("SI9191TA", "10766"),
+        ("ZB00", "38337"),
+        ("ZB99", "59725"),
         ("ZB00-38337", "46518"),
-        ("", "ZB99-56848"),
         ("", "ZB99/56848"),
-        ("", "SIEG9199-44182G"),
-        ("56847-ZB99", ""),
-        ("12345-AB12", ""),
     ]
     for model_in, article_in in cases:
         item = _run_case(model_in, article_in, branch_id="segmuller")
@@ -50,7 +66,7 @@ def test_segmuller_does_not_modify_item_codes() -> None:
         assert modell.get("value") == model_in
         assert artikel.get("source") == "image"
         assert modell.get("source") == "image"
-    print("SUCCESS: Segmuller item codes remain unchanged in normalize; splitting is prompt-driven.")
+    print("SUCCESS: Segmuller normalization leaves already-split or unsupported formats unchanged.")
 
 
 def test_non_segmuller_also_keeps_original_values() -> None:
@@ -61,5 +77,6 @@ def test_non_segmuller_also_keeps_original_values() -> None:
 
 
 if __name__ == "__main__":
-    test_segmuller_does_not_modify_item_codes()
+    test_segmuller_splits_combined_codes_from_single_field()
+    test_segmuller_keeps_already_split_codes()
     test_non_segmuller_also_keeps_original_values()

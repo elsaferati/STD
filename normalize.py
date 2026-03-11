@@ -7,6 +7,7 @@ from dateutil.parser import parse, ParserError
 import datetime
 
 import lookup
+import segmuller_rules
 
 
 HEADER_FIELDS = [
@@ -27,6 +28,7 @@ HEADER_FIELDS = [
     "iln",
     "iln_anl",
     "iln_fil",
+    "mail_to",
     "human_review_needed",
     "reply_needed",
     "post_case",
@@ -194,6 +196,7 @@ _STREET_KEYWORD_START_RE = re.compile(
 
 
 _SEGMULLER_KOM_NAME_PREFIX_RE = re.compile(r"^\s*\d{3,}\s+(.+?)\s*$")
+_SEGMULLER_FURNCLOUD_COMPACT_RE = re.compile(r"^([A-Za-z0-9]{4})([A-Za-z0-9]{4})$")
 
 
 def _format_german_address_lines(value: str) -> str:
@@ -566,6 +569,29 @@ def _is_ab_nr_order(header: dict[str, Any]) -> bool:
     return (entry.get("value") is True) if isinstance(entry, dict) else (entry is True)
 
 
+def _is_segmuller_missing_layout_review_only(
+    header: dict[str, Any],
+    branch_id: str = "",
+) -> bool:
+    if (branch_id or "").strip() != "segmuller":
+        return False
+    review_entry = header.get("human_review_needed")
+    if not isinstance(review_entry, dict):
+        return False
+    if review_entry.get("value") is not True:
+        return False
+    return segmuller_rules.is_review_only_reason(
+        str(review_entry.get("derived_from") or "").strip()
+    )
+
+
+def _clear_reply_needed(entry_owner: dict[str, Any]) -> None:
+    reply_entry = _ensure_field(entry_owner, "reply_needed")
+    reply_entry["value"] = False
+    reply_entry["source"] = "derived"
+    reply_entry["confidence"] = 1.0
+
+
 def _is_porta_ambiguous_code_human_review_only(header: dict[str, Any], branch_id: str) -> bool:
     if str(branch_id or "").strip() != "porta":
         return False
@@ -676,6 +702,12 @@ _BG_LEADING_ARTIKEL_SUFFIX_MODEL_RE = re.compile(
     re.IGNORECASE,
 )
 _BG_WARNING_LINE_RE = re.compile(r"\b(?:Position|Line)\s*(\d+)\b", re.IGNORECASE)
+_SEGMULLER_MODEL_ARTICLE_HYPHEN_RE = re.compile(
+    r"^([A-Za-z][A-Za-z0-9]*)-([0-9]{2,}[A-Za-z]?)$"
+)
+_SEGMULLER_REVERSED_HYPHEN_RE = re.compile(
+    r"^([0-9]{2,}[A-Za-z]?)-([A-Za-z][A-Za-z0-9]*)$"
+)
 
 
 def _split_momax_bg_code(raw: Any) -> tuple[str, str] | None:
@@ -1007,6 +1039,92 @@ def _normalize_segmuller_kom_name(header: dict[str, Any]) -> None:
     entry["derived_from"] = "segmuller_kom_name_cleanup"
 
 
+def _split_segmuller_code(raw: Any) -> tuple[str, str] | None:
+    text = _clean_text(raw)
+    if not text:
+        return None
+
+    match = _SEGMULLER_MODEL_ARTICLE_HYPHEN_RE.fullmatch(text)
+    if match:
+        return match.group(2), match.group(1)
+
+    match = _SEGMULLER_REVERSED_HYPHEN_RE.fullmatch(text)
+    if match:
+        return match.group(1), match.group(2)
+
+    return None
+
+
+def _normalize_segmuller_furncloud_id(raw: Any) -> str:
+    text = _clean_text(raw)
+    if not text:
+        return ""
+    match = _SEGMULLER_FURNCLOUD_COMPACT_RE.fullmatch(text)
+    if not match:
+        return text
+    return f"{match.group(1)} {match.group(2)}"
+
+
+def _mark_segmuller_code_derived(entry: dict[str, Any]) -> None:
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_code_split"
+
+
+def _is_blankish_item_code(value: Any) -> bool:
+    text = _clean_text(value)
+    return text in {"", "-"}
+
+
+def _normalize_segmuller_item_codes(item: dict[str, Any]) -> None:
+    artikel_entry = _ensure_field(item, "artikelnummer")
+    modell_entry = _ensure_field(item, "modellnummer")
+
+    artikel_value = _clean_text(artikel_entry.get("value"))
+    modell_value = _clean_text(modell_entry.get("value"))
+
+    split_result: tuple[str, str] | None = None
+
+    if _is_blankish_item_code(modell_value):
+        split_result = _split_segmuller_code(artikel_value)
+    if not split_result and _is_blankish_item_code(artikel_value):
+        split_result = _split_segmuller_code(modell_value)
+
+    if not split_result:
+        return
+
+    new_artikel, new_modell = split_result
+    if new_artikel != artikel_value:
+        artikel_entry["value"] = new_artikel
+        _mark_segmuller_code_derived(artikel_entry)
+    if new_modell != modell_value:
+        modell_entry["value"] = new_modell
+        _mark_segmuller_code_derived(modell_entry)
+
+
+def _normalize_segmuller_item_furncloud_id(item: dict[str, Any]) -> None:
+    entry = _ensure_field(item, "furncloud_id")
+    current_value = _clean_text(entry.get("value"))
+    normalized_value = _normalize_segmuller_furncloud_id(current_value)
+    if normalized_value == current_value:
+        return
+    entry["value"] = normalized_value
+    entry["source"] = "derived"
+    entry["confidence"] = 1.0
+    entry["derived_from"] = "segmuller_furncloud_id_split"
+
+
+def _normalize_segmuller_program_furncloud_id(data: dict[str, Any]) -> None:
+    program = data.get("program")
+    if not isinstance(program, dict):
+        return
+    current_value = _clean_text(program.get("furncloud_id"))
+    normalized_value = _normalize_segmuller_furncloud_id(current_value)
+    if normalized_value == current_value:
+        return
+    program["furncloud_id"] = normalized_value
+
+
 def _ensure_field(obj: dict[str, Any], field: str) -> dict[str, Any]:
     entry = obj.get(field)
     if not isinstance(entry, dict):
@@ -1075,6 +1193,9 @@ def _normalize_items(
 
         if is_momax_bg:
             _normalize_momax_bg_item_codes(item)
+        elif (branch_id or "").strip() == "segmuller":
+            _normalize_segmuller_item_codes(item)
+            _normalize_segmuller_item_furncloud_id(item)
 
         for field in ITEM_FIELDS:
             entry = _ensure_field(item, field)
@@ -1096,7 +1217,12 @@ def _propagate_furncloud_id(items: list[dict[str, Any]], warnings: list[str]) ->
         return
 
     if len(values) > 1:
-        warnings.append("Multiple furncloud_id values found; using the first for all items.")
+        warnings.append(
+            f"Multiple furncloud_id values found ({', '.join(values)}); "
+            "each item keeps its own furncloud_id per 'Siehe Planung' row."
+        )
+        # Each item retains its own value; do not override.
+        return
 
     chosen = values[0]
     for item in items:
@@ -1107,6 +1233,43 @@ def _propagate_furncloud_id(items: list[dict[str, Any]], warnings: list[str]) ->
             continue
         entry["source"] = "derived"
         entry["confidence"] = 1.0
+
+
+def _remove_furncloud_ghost_items(items: list[dict[str, Any]], warnings: list[str]) -> None:
+    """Remove spurious items whose modellnummer+artikelnummer matches a furncloud_id.
+
+    The LLM sometimes treats the two tokens in a 'Siehe Planung(xxxx xxxx)' phrase as
+    modellnummer + artikelnummer, creating a fake item. Detect these by checking if
+    an item's model+article (case-insensitive, no space) equals any furncloud_id value
+    present in the items list.
+    """
+    furncloud_values: set[str] = set()
+    for item in items:
+        entry = item.get("furncloud_id", {})
+        value = _clean_text(entry.get("value") if isinstance(entry, dict) else entry)
+        if value:
+            furncloud_values.add(value.lower().replace(" ", ""))
+
+    if not furncloud_values:
+        return
+
+    to_remove = []
+    for item in items:
+        mod_entry = item.get("modellnummer", {})
+        art_entry = item.get("artikelnummer", {})
+        mod = _clean_text(mod_entry.get("value") if isinstance(mod_entry, dict) else mod_entry) or ""
+        art = _clean_text(art_entry.get("value") if isinstance(art_entry, dict) else art_entry) or ""
+        if mod and art and (mod + art).lower() in furncloud_values:
+            to_remove.append(item)
+
+    for ghost in to_remove:
+        items.remove(ghost)
+        mod_val = ghost.get("modellnummer", {}).get("value", "")
+        art_val = ghost.get("artikelnummer", {}).get("value", "")
+        warnings.append(
+            f"Removed ghost item (modellnummer={mod_val}, artikelnummer={art_val}) — "
+            "matched a furncloud_id; likely created from 'Siehe Planung' text."
+        )
 
 
 def apply_program_furncloud_to_items(data: dict[str, Any], warnings: list[str] | None = None) -> None:
@@ -1551,6 +1714,7 @@ def normalize_output(
     _normalize_header(header, dayfirst, warnings)
     if (branch_id or "").strip() == "segmuller":
         _normalize_segmuller_kom_name(header)
+        _normalize_segmuller_program_furncloud_id(data)
     reply_needed_entry = header.get("reply_needed", {})
     reply_needed_flag = False
     if isinstance(reply_needed_entry, dict):
@@ -1615,6 +1779,7 @@ def normalize_output(
     if is_momax_bg:
         apply_momax_bg_strict_item_code_corrections(data)
     _propagate_furncloud_id(items, warnings)
+    _remove_furncloud_ghost_items(items, warnings)
     apply_program_furncloud_to_items(data, warnings)
 
     existing_warnings = data.get("warnings", [])
@@ -1632,13 +1797,22 @@ def normalize_output(
         missing_header = [field for field in missing_header if field != "kom_name"]
     if (branch_id or "").strip() == "braun":
         missing_header = [field for field in missing_header if field != "store_address"]
+    segmuller_review_only = _is_segmuller_missing_layout_review_only(header, branch_id)
+    is_zusatzliche = (branch_id or "").strip() == "xxxlutz_zusatzliche"
+    if is_zusatzliche:
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _clear_reply_needed(header)
+        _append_unique_warning(
+            data.setdefault("warnings", []),
+            "Zusätzliche Information order: human review required.",
+        )
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
     porta_ambiguous_human_review_only = _is_porta_ambiguous_code_human_review_only(
         header,
         branch_id,
     )
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
@@ -1653,22 +1827,28 @@ def normalize_output(
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
+    if missing_critical_item_fields and not porta_ambiguous_human_review_only and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
             _missing_critical_item_reply_warning(missing_critical_item_fields),
         )
 
-    if not items:
+    if not items and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
+    elif segmuller_review_only:
+        _clear_reply_needed(header)
+    elif is_zusatzliche:
+        _clear_reply_needed(header)
 
     # Status: furncloud_id alone is non-blocking (OK with warning)
     if not had_structure and not items:
         data["status"] = "failed"
-    elif _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+    elif _flag_true(header, "human_review_needed") and (
+        _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
+    ):
         data["status"] = "human_in_the_loop"
-        _ensure_field(header, "reply_needed")["value"] = False
+        _clear_reply_needed(header)
     elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
@@ -1716,6 +1896,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     # global furncloud ID and fill missing item-level values before recomputing missing fields.
     data["items"] = items
     apply_program_furncloud_to_items(data, None)
+    _remove_furncloud_ghost_items(items, data.get("warnings") or [])
 
     kom_name_entry = header.get("kom_name", {})
     is_momax_bg = (
@@ -1724,6 +1905,14 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     )
 
     extraction_branch = str(data.get("extraction_branch") or "").strip()
+    segmuller_review_only = _is_segmuller_missing_layout_review_only(
+        header,
+        extraction_branch,
+    )
+    is_zusatzliche = extraction_branch == "xxxlutz_zusatzliche"
+    if is_zusatzliche:
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _clear_reply_needed(header)
     porta_ambiguous_human_review_only = _is_porta_ambiguous_code_human_review_only(
         header,
         extraction_branch,
@@ -1736,7 +1925,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
     missing_items: list[tuple[int, str]] = []
     if not items:
@@ -1749,15 +1938,21 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
+    if missing_critical_item_fields and not segmuller_review_only and not is_zusatzliche and not porta_ambiguous_human_review_only:
         _set_reply_needed_from_derived(header)
 
-    if not items:
+    if not items and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
+    elif segmuller_review_only:
+        _clear_reply_needed(header)
+    elif is_zusatzliche:
+        _clear_reply_needed(header)
 
-    if _flag_true(header, "human_review_needed") and _is_ab_nr_order(header):
+    if _flag_true(header, "human_review_needed") and (
+        _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
+    ):
         data["status"] = "human_in_the_loop"
-        _ensure_field(header, "reply_needed")["value"] = False
+        _clear_reply_needed(header)
     elif _flag_true(header, "reply_needed"):
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
@@ -1831,12 +2026,12 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
 
     if missing_header_no_ticket:
         warnings.append(f"Missing header fields: {', '.join(missing_header_no_ticket)}")
-    if missing_critical_fields:
+    if missing_critical_fields and not segmuller_review_only:
         _append_unique_warning(
             warnings,
             _missing_critical_reply_warning(missing_critical_fields),
         )
-    if missing_critical_item_fields and not porta_ambiguous_human_review_only:
+    if missing_critical_item_fields and not segmuller_review_only and not porta_ambiguous_human_review_only:
         _append_unique_warning(
             warnings,
             _missing_critical_item_reply_warning(missing_critical_item_fields),

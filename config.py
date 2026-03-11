@@ -39,6 +39,12 @@ class Config:
     openai_temperature: float
     openai_reasoning_effort: str
     openai_max_output_tokens: int
+    gemini_api_key: str
+    gemini_model: str
+    gemini_validation_enabled: bool
+    gemini_validation_timeout_seconds: int
+    gemini_validation_max_email_chars: int
+    gemini_validation_max_attachments: int
     poppler_path: str
     email_protocol: str
     email_host: str
@@ -63,6 +69,7 @@ class Config:
     reply_email_to: str
     reply_email_body: str
     reply_template_file: Path
+    stale_reply_working_days: int
 
     source_priority: list[str]
     max_email_chars: int
@@ -88,6 +95,12 @@ class Config:
             openai_temperature=_get_float("OPENAI_TEMPERATURE", 0.0),
             openai_reasoning_effort=os.getenv("OPENAI_REASONING_EFFORT", "none").strip() or "none",
             openai_max_output_tokens=_get_int("OPENAI_MAX_OUTPUT_TOKENS", 2000),
+            gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),
+            gemini_validation_enabled=_get_bool("GEMINI_VALIDATION_ENABLED", False),
+            gemini_validation_timeout_seconds=_get_int("GEMINI_VALIDATION_TIMEOUT_SECONDS", 30),
+            gemini_validation_max_email_chars=_get_int("GEMINI_VALIDATION_MAX_EMAIL_CHARS", 12000),
+            gemini_validation_max_attachments=_get_int("GEMINI_VALIDATION_MAX_ATTACHMENTS", 4),
             poppler_path=os.getenv("POPPLER_PATH", "").strip(),
             email_protocol=os.getenv("EMAIL_PROTOCOL", "imap").strip().lower(),
             email_host=os.getenv("EMAIL_HOST", "").strip(),
@@ -117,6 +130,7 @@ class Config:
             reply_template_file=Path(
                 os.getenv("REPLY_TEMPLATE_FILE", "email_templates/reply_templates.json").strip()
             ),
+            stale_reply_working_days=_get_int("STALE_REPLY_WORKING_DAYS", 5),
 
             source_priority=priority,
             max_email_chars=_get_int("MAX_EMAIL_CHARS", 20000),

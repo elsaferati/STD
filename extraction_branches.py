@@ -10,6 +10,7 @@ import prompts_braun
 import prompts_momax_bg
 import prompts_porta
 import prompts_segmuller
+import prompts_zusatzliche
 
 DEFAULT_BRANCH_ID = "xxxlutz_default"
 
@@ -37,6 +38,19 @@ BRANCHES: dict[str, ExtractionBranch] = {
         ),
         system_prompt=prompts.SYSTEM_PROMPT,
         build_user_instructions=prompts.build_user_instructions,
+        enable_detail_extraction=False,
+        enable_item_code_verification=False,
+        is_momax_bg=False,
+    ),
+    "xxxlutz_zusatzliche": ExtractionBranch(
+        id="xxxlutz_zusatzliche",
+        label="XXXLutz Zusätzliche Information",
+        description=(
+            "XXXLutz orders containing 'Zusätzliche Information' sections."
+            " Extracted like standard XXXLutz but always routed to human review."
+        ),
+        system_prompt=prompts_zusatzliche.SYSTEM_PROMPT,
+        build_user_instructions=prompts_zusatzliche.build_user_instructions,
         enable_detail_extraction=False,
         enable_item_code_verification=False,
         is_momax_bg=False,

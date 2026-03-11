@@ -1,8 +1,15 @@
 import datetime
 import json
+import os
 import re
+import time
 from dateutil.parser import parse
 from typing import Optional, Any
+
+from delivery_preparation_settings import (
+    get_delivery_preparation_settings,
+    resolve_delivery_preparation_weeks,
+)
 
 EXCEL_PATH = "Lieferlogik_V2.xlsx"
 SHEET_NAME = "Kapa Base"
@@ -47,59 +54,16 @@ VALID_WEEKS_BY_CODE: dict[str, tuple[int, ...]] = {
     ),
 }
 
-EARLIEST_WEEK_BY_TOUR: dict[str, dict[int, int]] = {
-    "W1": {
-        1: 3, 2: 4, 3: 5, 4: 6, 5: 7, 6: 8, 7: 9, 8: 10, 9: 11, 10: 12,
-        11: 13, 12: 14, 13: 15, 14: 16, 15: 17, 16: 18, 17: 19, 18: 20, 19: 21, 20: 22,
-        21: 23, 22: 24, 23: 25, 24: 26, 25: 27, 26: 28, 27: 29, 28: 30, 29: 31, 30: 32,
-        31: 33, 32: 34, 33: 35, 34: 36, 35: 37, 36: 38, 37: 39, 38: 40, 39: 41, 40: 42,
-        41: 43, 42: 44, 43: 45, 44: 46, 45: 47, 46: 48, 47: 49, 48: 50, 49: 3, 50: 3,
-        51: 4, 52: 5,
-    },
-    "U2": {
-        1: 3, 2: 5, 3: 5, 4: 7, 5: 7, 6: 9, 7: 9, 8: 11, 9: 11, 10: 13,
-        11: 13, 12: 15, 13: 15, 14: 17, 15: 17, 16: 19, 17: 19, 18: 21, 19: 21, 20: 23,
-        21: 23, 22: 25, 23: 25, 24: 27, 25: 27, 26: 29, 27: 29, 28: 31, 29: 31, 30: 33,
-        31: 33, 32: 35, 33: 35, 34: 37, 35: 37, 36: 39, 37: 39, 38: 41, 39: 41, 40: 43,
-        41: 43, 42: 45, 43: 45, 44: 47, 45: 47, 46: 49, 47: 49, 48: 2, 49: 3, 50: 3,
-        51: 5, 52: 5,
-    },
-    "D1": {
-        1: 4, 2: 7, 3: 7, 4: 7, 5: 7, 6: 10, 7: 10, 8: 13, 9: 13, 10: 13,
-        11: 13, 12: 16, 13: 16, 14: 19, 15: 19, 16: 19, 17: 19, 18: 22, 19: 22, 20: 25,
-        21: 25, 22: 25, 23: 25, 24: 28, 25: 28, 26: 31, 27: 31, 28: 31, 29: 31, 30: 34,
-        31: 34, 32: 37, 33: 37, 34: 37, 35: 37, 36: 40, 37: 40, 38: 43, 39: 43, 40: 43,
-        41: 43, 42: 46, 43: 46, 44: 49, 45: 49, 46: 49, 47: 49, 48: 4, 49: 4, 50: 4,
-        51: 4, 52: 4,
-    },
-    "G2": {
-        1: 4, 2: 6, 3: 6, 4: 6, 5: 8, 6: 8, 7: 10, 8: 12, 9: 12, 10: 12,
-        11: 14, 12: 14, 13: 16, 14: 18, 15: 18, 16: 18, 17: 20, 18: 20, 19: 22, 20: 24,
-        21: 24, 22: 24, 23: 26, 24: 26, 25: 28, 26: 30, 27: 30, 28: 30, 29: 32, 30: 32,
-        31: 34, 32: 36, 33: 36, 34: 36, 35: 38, 36: 38, 37: 40, 38: 42, 39: 42, 40: 42,
-        41: 44, 42: 44, 43: 46, 44: 48, 45: 48, 46: 48, 47: 50, 48: 50, 49: 4, 50: 4,
-        51: 4, 52: 4,
-    },
-    "D2": {
-        1: 5, 2: 5, 3: 5, 4: 8, 5: 8, 6: 8, 7: 11, 8: 11, 9: 11, 10: 14,
-        11: 14, 12: 14, 13: 17, 14: 17, 15: 17, 16: 20, 17: 20, 18: 20, 19: 23, 20: 23,
-        21: 23, 22: 26, 23: 26, 24: 26, 25: 29, 26: 29, 27: 29, 28: 32, 29: 32, 30: 32,
-        31: 35, 32: 35, 33: 35, 34: 38, 35: 38, 36: 38, 37: 41, 38: 41, 39: 41, 40: 44,
-        41: 44, 42: 44, 43: 47, 44: 47, 45: 47, 46: 50, 47: 50, 48: 50, 49: 5, 50: 5,
-        51: 5, 52: 5,
-    },
-    "D3": {
-        1: 6, 2: 6, 3: 6, 4: 6, 5: 9, 6: 9, 7: 12, 8: 12, 9: 12, 10: 12,
-        11: 15, 12: 15, 13: 18, 14: 18, 15: 18, 16: 18, 17: 21, 18: 21, 19: 24, 20: 24,
-        21: 24, 22: 24, 23: 27, 24: 27, 25: 30, 26: 30, 27: 30, 28: 30, 29: 33, 30: 33,
-        31: 36, 32: 36, 33: 36, 34: 36, 35: 39, 36: 39, 37: 42, 38: 42, 39: 42, 40: 42,
-        41: 45, 42: 45, 43: 48, 44: 48, 45: 48, 46: 48, 47: 51, 48: 3, 49: 3, 50: 3,
-        51: 3, 52: 3,
-    },
-}
-
 CANONICAL_TOUR_KEYS = frozenset(TOUR_TO_SCHEDULE_CODE)
 SCHEDULE_CODE_KEYS = frozenset(VALID_WEEKS_BY_CODE)
+_DELIVERY_PREPARATION_CACHE_TTL_SECONDS = max(
+    1.0,
+    float((os.getenv("DELIVERY_PREPARATION_SETTINGS_CACHE_TTL_SECONDS") or "5").strip()),
+)
+_DELIVERY_PREPARATION_SETTINGS_CACHE: dict[str, Any] = {
+    "loaded_at": 0.0,
+    "settings": None,
+}
 
 
 def _extract_week_year(text: str, default_year: Optional[int] = None) -> Optional[tuple[int, int]]:
@@ -181,6 +145,68 @@ def _get_valid_tour_weeks(schedule_col: str) -> list[int]:
     return list(VALID_WEEKS_BY_CODE.get(schedule_col, ()))
 
 
+def _get_delivery_preparation_settings_cached() -> dict[str, Any]:
+    now = time.time()
+    loaded_at = float(_DELIVERY_PREPARATION_SETTINGS_CACHE.get("loaded_at") or 0.0)
+    cached_settings = _DELIVERY_PREPARATION_SETTINGS_CACHE.get("settings")
+    if isinstance(cached_settings, dict) and (now - loaded_at) < _DELIVERY_PREPARATION_CACHE_TTL_SECONDS:
+        return cached_settings
+
+    settings = get_delivery_preparation_settings(fallback_on_error=True)
+    _DELIVERY_PREPARATION_SETTINGS_CACHE["loaded_at"] = now
+    _DELIVERY_PREPARATION_SETTINGS_CACHE["settings"] = settings
+    return settings
+
+
+def _max_iso_week_for_year(year: int) -> int:
+    return datetime.date(year, 12, 28).isocalendar()[1]
+
+
+def _iso_week_start(year: int, week: int) -> Optional[datetime.date]:
+    max_week = _max_iso_week_for_year(year)
+    if not 1 <= week <= max_week:
+        return None
+    return datetime.date.fromisocalendar(year, week, 1)
+
+
+def _year_week_from_date(value: datetime.date) -> tuple[int, int]:
+    year, week, _ = value.isocalendar()
+    return year, week
+
+
+def _shift_year_week(year: int, week: int, delta_weeks: int) -> Optional[tuple[int, int]]:
+    week_start = _iso_week_start(year, week)
+    if week_start is None:
+        return None
+    return _year_week_from_date(week_start + datetime.timedelta(weeks=delta_weeks))
+
+
+def _format_year_week(year: int, week: int) -> str:
+    return f"{year} Week - {week:02d}"
+
+
+def _collect_valid_service_weeks(
+    valid_weeks: list[int],
+    min_year_week: tuple[int, int],
+    max_year_week: Optional[tuple[int, int]] = None,
+    *,
+    horizon_years: int = 4,
+) -> list[tuple[int, int]]:
+    candidates: list[tuple[int, int]] = []
+    start_year = min_year_week[0]
+    end_year = max_year_week[0] if max_year_week is not None else start_year + horizon_years
+
+    for year in range(start_year, end_year + 1):
+        for week in valid_weeks:
+            current = (year, week)
+            if current < min_year_week:
+                continue
+            if max_year_week is not None and current > max_year_week:
+                break
+            candidates.append(current)
+    return candidates
+
+
 def _log_delivery_debug(info: dict[str, Any]) -> None:
     try:
         print("DELIVERY_LOGIC_DEBUG " + json.dumps(info, ensure_ascii=True, default=str))
@@ -191,6 +217,7 @@ def _log_delivery_debug(info: dict[str, Any]) -> None:
 def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: str = None, client_name: str = None) -> str:
     debug_info: dict[str, Any] = {
         "current_week": None,
+        "current_year": None,
         "input_order_date": order_date_str if order_date_str else None,
         "effective_order_date": None,
         "earliest_possible_week": None,
@@ -216,14 +243,10 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
         return _return_with_debug("")
     debug_info["effective_order_date"] = dt_order.isoformat()
     debug_info["current_week"] = w_order
+    debug_info["current_year"] = y_order
 
     canonical_tour = _get_canonical_tour(tour)
     if not canonical_tour:
-        return _return_with_debug("")
-
-    earliest_possible = EARLIEST_WEEK_BY_TOUR.get(canonical_tour, {}).get(w_order)
-    debug_info["earliest_possible_week"] = earliest_possible
-    if earliest_possible is None:
         return _return_with_debug("")
 
     schedule_code = _get_schedule_code_for_tour(tour)
@@ -234,38 +257,63 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
     if not valid_weeks:
         return _return_with_debug("")
 
-    min_allowed = earliest_possible
-    max_allowed = None
-    requested_year = None
+    settings = _get_delivery_preparation_settings_cached()
+    prep_weeks = resolve_delivery_preparation_weeks(settings, y_order, w_order)
+    debug_info["prep_weeks"] = prep_weeks
+
+    candidate_year_week = _year_week_from_date(dt_order + datetime.timedelta(weeks=prep_weeks))
+    debug_info["candidate_week"] = _format_year_week(*candidate_year_week)
+
+    earliest_candidates = _collect_valid_service_weeks(valid_weeks, candidate_year_week, horizon_years=2)
+    if not earliest_candidates:
+        return _return_with_debug("")
+
+    earliest_possible_year_week = earliest_candidates[0]
+    debug_info["earliest_possible_week"] = _format_year_week(*earliest_possible_year_week)
+
+    min_allowed_year_week = earliest_possible_year_week
+    max_allowed_year_week = None
     if requested_week_str:
         req = _extract_week_year(requested_week_str, default_year=y_order)
         if req:
             req_w, req_y = req
-            requested_year = req_y
-            debug_info["requested_week"] = req_w
-            is_braun = isinstance(client_name, str) and "braun" in client_name.lower()
-            early_offset = 2 if is_braun else 5
-            debug_info["earliest_allowed_by_request"] = req_w - early_offset
-            min_allowed = max(earliest_possible, req_w - early_offset)
-            max_allowed = req_w + 1
+            debug_info["requested_week"] = _format_year_week(req_y, req_w)
+            request_week_start = _iso_week_start(req_y, req_w)
+            if request_week_start is not None:
+                is_braun = isinstance(client_name, str) and "braun" in client_name.lower()
+                early_offset = 2 if is_braun else 5
+                earliest_allowed_by_request = _year_week_from_date(
+                    request_week_start - datetime.timedelta(weeks=early_offset)
+                )
+                max_allowed_year_week = _year_week_from_date(
+                    request_week_start + datetime.timedelta(weeks=1)
+                )
+                debug_info["earliest_allowed_by_request"] = _format_year_week(*earliest_allowed_by_request)
+                if earliest_allowed_by_request > min_allowed_year_week:
+                    min_allowed_year_week = earliest_allowed_by_request
     else:
         debug_info["requested_week"] = None
         debug_info["earliest_allowed_by_request"] = None
 
-    debug_info["final_min_week"] = min_allowed
-    if max_allowed is not None:
-        candidate_weeks = [week for week in valid_weeks if min_allowed <= week <= max_allowed]
+    debug_info["final_min_week"] = _format_year_week(*min_allowed_year_week)
+    if max_allowed_year_week is not None:
+        candidate_weeks = _collect_valid_service_weeks(valid_weeks, min_allowed_year_week, max_allowed_year_week)
         if not candidate_weeks:
-            candidate_weeks = [week for week in valid_weeks if week > max_allowed]
+            next_search_start = _shift_year_week(max_allowed_year_week[0], max_allowed_year_week[1], 1)
+            if next_search_start is None:
+                return _return_with_debug("")
+            if next_search_start < min_allowed_year_week:
+                next_search_start = min_allowed_year_week
+            candidate_weeks = _collect_valid_service_weeks(valid_weeks, next_search_start, horizon_years=2)
     else:
-        candidate_weeks = [week for week in valid_weeks if week >= min_allowed]
-    debug_info["valid_tour_weeks_checked"] = candidate_weeks
+        candidate_weeks = _collect_valid_service_weeks(valid_weeks, min_allowed_year_week, horizon_years=2)
+    debug_info["valid_tour_weeks_checked"] = [
+        _format_year_week(candidate_year, candidate_week)
+        for candidate_year, candidate_week in candidate_weeks
+    ]
 
     if not candidate_weeks:
         return _return_with_debug("")
 
-    final_w = min(candidate_weeks)
-    final_y = requested_year if requested_year is not None else y_order
-    if final_w is not None and final_y is not None:
-        return _return_with_debug(f"{final_y} Week - {final_w:02d}")
-    return _return_with_debug("")
+    final_y, final_w = candidate_weeks[0]
+    return _return_with_debug(_format_year_week(final_y, final_w))

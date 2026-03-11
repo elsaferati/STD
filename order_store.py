@@ -9,25 +9,36 @@ import uuid
 
 from db import fetch_all, fetch_one, get_connection
 from extraction_branches import BRANCHES
+from gemini_validation import (
+    VALIDATION_PROVIDER_GEMINI,
+    VALIDATION_REVIEW_STATUSES,
+    VALIDATION_STATUS_NOT_RUN,
+    VALIDATION_STATUS_RESOLVED,
+    VALID_VALIDATION_STATUSES,
+    normalize_validation_status,
+)
 
 STATUS_OK = "ok"
-STATUS_REPLY = "reply"
 STATUS_HUMAN = "human_in_the_loop"
 STATUS_POST = "post"
 STATUS_FAILED = "failed"
 STATUS_PARTIAL = "partial"
 STATUS_UNKNOWN = "unknown"
+STATUS_WAITING_REPLY = "waiting_for_reply"
+STATUS_CLIENT_REPLIED = "client_replied"
+STATUS_UPDATED_AFTER_REPLY = "updated_after_reply"
 
 VALID_STATUSES = {
     STATUS_OK,
-    STATUS_REPLY,
     STATUS_HUMAN,
     STATUS_POST,
     STATUS_FAILED,
-    STATUS_PARTIAL,
     STATUS_UNKNOWN,
+    STATUS_WAITING_REPLY,
+    STATUS_CLIENT_REPLIED,
+    STATUS_UPDATED_AFTER_REPLY,
 }
-REVIEWABLE_STATUSES = {STATUS_REPLY, STATUS_HUMAN, STATUS_POST}
+REVIEWABLE_STATUSES = {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}
 TASK_DONE_STATES = {"resolved", "cancelled"}
 UNKNOWN_EXTRACTION_BRANCH = "unknown"
 KNOWN_EXTRACTION_BRANCHES = frozenset(BRANCHES.keys())
@@ -35,9 +46,12 @@ ALLOWED_EXTRACTION_BRANCHES = KNOWN_EXTRACTION_BRANCHES | {UNKNOWN_EXTRACTION_BR
 _KNOWN_BRANCHES_SQL = ", ".join(f"'{branch}'" for branch in sorted(ALLOWED_EXTRACTION_BRANCHES))
 _STATUS_SQL = """
 CASE
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'partial' THEN 'reply'
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'unknown' THEN 'ok'
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) IN ('ok', 'reply', 'human_in_the_loop', 'post', 'failed')
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'partial' THEN 'waiting_for_reply'
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'reply'   THEN 'waiting_for_reply'
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) IN (
+        'ok', 'human_in_the_loop', 'post', 'failed',
+        'waiting_for_reply', 'client_replied', 'updated_after_reply', 'unknown'
+    )
         THEN LOWER(BTRIM(COALESCE(o.status, '')))
     ELSE 'ok'
 END
@@ -93,6 +107,78 @@ def _normalize_extraction_branch(value: Any) -> str:
     return UNKNOWN_EXTRACTION_BRANCH
 
 
+def _normalize_validation_issues(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    issues: list[dict[str, str]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        issues.append(
+            {
+                "severity": str(raw.get("severity") or "warning").strip().lower() or "warning",
+                "scope": str(raw.get("scope") or "general").strip() or "general",
+                "field_path": str(raw.get("field_path") or "").strip(),
+                "source_evidence": str(raw.get("source_evidence") or "").strip(),
+                "expected_value": str(raw.get("expected_value") or "").strip(),
+                "xml_value": str(raw.get("xml_value") or "").strip(),
+                "reason": str(raw.get("reason") or "").strip(),
+            }
+        )
+    return issues
+
+
+def _default_validation_projection() -> dict[str, Any]:
+    return {
+        "validation_status": VALIDATION_STATUS_NOT_RUN,
+        "validation_summary": "",
+        "validation_checked_at": None,
+        "validation_provider": "",
+        "validation_model": "",
+        "validation_stale_reason": "",
+    }
+
+
+def _existing_validation_projection(row: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return _default_validation_projection()
+    return {
+        "validation_status": normalize_validation_status(row.get("validation_status")),
+        "validation_summary": str(row.get("validation_summary") or ""),
+        "validation_checked_at": row.get("validation_checked_at"),
+        "validation_provider": str(row.get("validation_provider") or ""),
+        "validation_model": str(row.get("validation_model") or ""),
+        "validation_stale_reason": str(row.get("validation_stale_reason") or ""),
+    }
+
+
+def _normalize_validation_result_payload(validation_result: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(validation_result, dict):
+        projection = _default_validation_projection()
+        projection["validation_issues"] = []
+        projection["validation_raw_result"] = {}
+        return projection
+
+    raw_result = validation_result.get("validation_raw_result")
+    projection = {
+        "validation_status": normalize_validation_status(validation_result.get("validation_status")),
+        "validation_summary": str(validation_result.get("validation_summary") or "").strip(),
+        "validation_checked_at": _parse_iso(validation_result.get("validation_checked_at")),
+        "validation_provider": str(validation_result.get("validation_provider") or ""),
+        "validation_model": str(validation_result.get("validation_model") or ""),
+        "validation_stale_reason": str(validation_result.get("validation_stale_reason") or ""),
+        "validation_issues": _normalize_validation_issues(validation_result.get("validation_issues")),
+        "validation_raw_result": raw_result if isinstance(raw_result, dict) else {},
+    }
+    if projection["validation_status"] not in VALID_VALIDATION_STATUSES:
+        projection["validation_status"] = VALIDATION_STATUS_NOT_RUN
+    return projection
+
+
+def validation_status_needs_review(value: Any) -> bool:
+    return normalize_validation_status(value) in VALIDATION_REVIEW_STATUSES
+
+
 def _normalize_branch_set(branches: set[str] | None) -> list[str] | None:
     if branches is None:
         return None
@@ -135,10 +221,8 @@ def _scope_where_fragments(
 
 def normalize_status(value: Any) -> str:
     status = str(value or STATUS_OK).strip().lower()
-    if status == STATUS_PARTIAL:
-        return STATUS_REPLY
-    if status == STATUS_UNKNOWN:
-        return STATUS_OK
+    if status == STATUS_PARTIAL or status == "reply":
+        return STATUS_WAITING_REPLY
     if status not in VALID_STATUSES:
         return STATUS_OK
     return status
@@ -152,13 +236,13 @@ def derive_status(payload: dict[str, Any]) -> str:
     if not isinstance(header, dict) or not isinstance(items, list):
         return STATUS_FAILED
     if _entry_bool(header.get("reply_needed")):
-        return STATUS_REPLY
+        return STATUS_WAITING_REPLY
     if _entry_bool(header.get("human_review_needed")):
         return STATUS_HUMAN
     if _entry_bool(header.get("post_case")):
         return STATUS_POST
     legacy = normalize_status(payload.get("status"))
-    if legacy in {STATUS_REPLY, STATUS_HUMAN, STATUS_POST}:
+    if legacy in {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}:
         return legacy
     return STATUS_OK
 
@@ -229,6 +313,7 @@ def _projection(payload: dict[str, Any], parse_error: str | None) -> dict[str, A
         "store_name": _entry_text(header.get("store_name")),
         "store_address": _entry_text(header.get("store_address")),
         "iln": _entry_text(header.get("iln")),
+        "mail_to": _entry_text(header.get("mail_to")),
         "extraction_branch": _normalize_extraction_branch(payload.get("extraction_branch")),
         "item_count": len(items),
         "warnings_count": len(warnings),
@@ -394,6 +479,7 @@ def _upsert_revision(
     changed_by_user_id: str | None,
     parse_error: str | None,
     diff_json: dict[str, Any] | None,
+    validation_result: dict[str, Any] | None,
 ) -> dict[str, Any]:
     now = _now()
     projection = _projection(payload, parse_error)
@@ -401,7 +487,14 @@ def _upsert_revision(
     with conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, current_revision_no
+            SELECT id,
+                   current_revision_no,
+                   validation_status,
+                   validation_summary,
+                   validation_checked_at,
+                   validation_provider,
+                   validation_model,
+                   validation_stale_reason
             FROM orders
             WHERE dedupe_key = %s
             FOR UPDATE
@@ -423,6 +516,11 @@ def _upsert_revision(
                 (order_id, external_message_id, dedupe_key, now, now),
             )
 
+        validation_projection = (
+            _normalize_validation_result_payload(validation_result)
+            if validation_result is not None
+            else _existing_validation_projection(existing)
+        )
         revision_id = str(uuid.uuid4())
         cursor.execute(
             """
@@ -461,16 +559,23 @@ def _upsert_revision(
                 store_name = %s,
                 store_address = %s,
                 iln = %s,
+                mail_to = %s,
                 extraction_branch = %s,
                 item_count = %s,
                 warnings_count = %s,
                 errors_count = %s,
+                validation_status = %s,
+                validation_summary = %s,
+                validation_checked_at = %s,
+                validation_provider = %s,
+                validation_model = %s,
+                validation_stale_reason = %s,
                 parse_error = %s,
                 current_revision_id = %s,
                 current_revision_no = %s,
-                updated_at = %s,
-                deleted_at = NULL
+                updated_at = %s
             WHERE id = %s
+              AND deleted_at IS NULL
             """,
             (
                 external_message_id,
@@ -489,10 +594,17 @@ def _upsert_revision(
                 projection["store_name"],
                 projection["store_address"],
                 projection["iln"],
+                projection["mail_to"],
                 projection["extraction_branch"],
                 projection["item_count"],
                 projection["warnings_count"],
                 projection["errors_count"],
+                validation_projection["validation_status"],
+                validation_projection["validation_summary"],
+                validation_projection["validation_checked_at"],
+                validation_projection["validation_provider"],
+                validation_projection["validation_model"],
+                validation_projection["validation_stale_reason"],
                 projection["parse_error"],
                 revision_id,
                 revision_no,
@@ -540,6 +652,7 @@ def upsert_order_payload(
     changed_by_user_id: str | None = None,
     parse_error: str | None = None,
     diff_json: dict[str, Any] | None = None,
+    validation_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized = _normalize_payload(payload)
     message_id = str(external_message_id or normalized.get("message_id") or uuid.uuid4())
@@ -552,9 +665,197 @@ def upsert_order_payload(
             changed_by_user_id=changed_by_user_id,
             parse_error=parse_error,
             diff_json=diff_json,
+            validation_result=validation_result,
         )
         conn.commit()
     return result
+
+
+def mark_reply_email_sent(order_id: str, missing_fields: list[str]) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET reply_email_sent_at = %s,
+                    waiting_for_client_reply = TRUE,
+                    missing_fields_snapshot = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (now, missing_fields, STATUS_WAITING_REPLY, now, order_id),
+            )
+        conn.commit()
+
+
+def find_reply_needed_order_by_kom(kom_number: str) -> dict[str, Any] | None:
+    """Find an order that is awaiting or recently received a client reply, by KOM/ticket number.
+
+    Looks back up to 14 days to also catch orders where the first reply was already
+    processed (client_replied / updated_after_reply) so that follow-up emails can still
+    be merged into the original order instead of creating a new one.
+    """
+    row = fetch_one(
+        """
+        SELECT id, status, missing_fields_snapshot, external_message_id
+        FROM orders
+        WHERE (
+            waiting_for_client_reply = TRUE
+            OR reply_needed = TRUE
+            OR status IN ('waiting_for_reply', 'client_replied', 'updated_after_reply')
+        )
+          AND (kom_nr = %s OR ticket_number = %s)
+          AND deleted_at IS NULL
+          AND updated_at >= NOW() - INTERVAL '30 days'
+        ORDER BY received_at DESC
+        LIMIT 1
+        """,
+        (kom_number, kom_number),
+    )
+    return dict(row) if row else None
+
+
+def find_order_awaiting_reply_by_kom(kom_number: str) -> dict[str, Any] | None:
+    """Find an order awaiting or recently received a client reply, by KOM/ticket number.
+
+    Like find_reply_needed_order_by_kom but used specifically for the Re: email path.
+    Also covers recently-processed orders within 14 days so repeated replies work.
+    """
+    row = fetch_one(
+        """
+        SELECT id, status, missing_fields_snapshot, external_message_id
+        FROM orders
+        WHERE (
+            waiting_for_client_reply = TRUE
+            OR status IN ('waiting_for_reply', 'client_replied', 'updated_after_reply')
+        )
+          AND (kom_nr = %s OR ticket_number = %s)
+          AND deleted_at IS NULL
+          AND updated_at >= NOW() - INTERVAL '30 days'
+        ORDER BY received_at DESC
+        LIMIT 1
+        """,
+        (kom_number, kom_number),
+    )
+    return dict(row) if row else None
+
+
+def reopen_waiting_for_reply(order_id: str, missing_fields: list[str]) -> None:
+    """Re-mark an order as waiting for client reply after a partial follow-up.
+
+    Called when a follow-up email was processed but some fields are still missing.
+    Updates the missing_fields_snapshot without touching reply_email_sent_at.
+    """
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET waiting_for_client_reply = TRUE,
+                    missing_fields_snapshot = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (missing_fields, STATUS_WAITING_REPLY, now, order_id),
+            )
+        conn.commit()
+
+
+def get_order_current_payload(order_id: str) -> dict[str, Any] | None:
+    row = fetch_one(
+        """
+        SELECT r.payload_json
+        FROM order_revisions r
+        WHERE r.order_id = %s
+        ORDER BY r.revision_no DESC
+        LIMIT 1
+        """,
+        (order_id,),
+    )
+    if not row:
+        return None
+    payload = row.get("payload_json")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def mark_client_replied(order_id: str, reply_message_id: str) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET waiting_for_client_reply = FALSE,
+                    client_replied_at = %s,
+                    client_reply_message_id = %s,
+                    status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (now, reply_message_id, STATUS_CLIENT_REPLIED, now, order_id),
+            )
+        conn.commit()
+
+
+def mark_order_updated_after_reply(order_id: str) -> None:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET status = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (STATUS_UPDATED_AFTER_REPLY, now, order_id),
+            )
+        conn.commit()
+
+
+def get_stale_waiting_orders(cutoff_dt: datetime) -> list[dict[str, Any]]:
+    """Return orders waiting_for_client_reply where reply_email_sent_at < cutoff_dt."""
+    rows = fetch_all(
+        """
+        SELECT id, kom_nr, reply_email_sent_at
+        FROM orders
+        WHERE status = %s
+          AND waiting_for_client_reply = TRUE
+          AND reply_email_sent_at IS NOT NULL
+          AND reply_email_sent_at < %s
+          AND deleted_at IS NULL
+        ORDER BY reply_email_sent_at ASC
+        """,
+        (STATUS_WAITING_REPLY, cutoff_dt),
+    )
+    return [dict(row) for row in rows]
+
+
+def mark_order_escalated(order_id: str) -> None:
+    """Set status=human_in_the_loop, clear waiting_for_client_reply."""
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET status = %s,
+                    waiting_for_client_reply = FALSE,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (STATUS_HUMAN, now, order_id),
+            )
+        conn.commit()
 
 
 def list_order_summaries() -> list[dict[str, Any]]:
@@ -577,10 +878,17 @@ def list_order_summaries() -> list[dict[str, Any]]:
                o.store_name,
                o.store_address,
                o.iln,
+               o.mail_to,
                o.extraction_branch,
                o.reply_needed,
                o.human_review_needed,
                o.post_case,
+               o.validation_status,
+               o.validation_summary,
+               o.validation_checked_at,
+               o.validation_provider,
+               o.validation_model,
+               o.validation_stale_reason,
                o.parse_error,
                o.updated_at AS mtime
         FROM orders o
@@ -618,10 +926,17 @@ def _summary_row_to_order(
         "store_name": row.get("store_name") or "",
         "store_address": row.get("store_address") or "",
         "iln": row.get("iln") or "",
+        "mail_to": row.get("mail_to") or "",
         "extraction_branch": _normalize_extraction_branch(row.get(branch_field)),
         "human_review_needed": bool(row.get("human_review_needed")),
         "reply_needed": bool(row.get("reply_needed")),
         "post_case": bool(row.get("post_case")),
+        "validation_status": normalize_validation_status(row.get("validation_status")),
+        "validation_summary": row.get("validation_summary") or "",
+        "validation_checked_at": _to_iso(row.get("validation_checked_at")) if row.get("validation_checked_at") else "",
+        "validation_provider": row.get("validation_provider") or "",
+        "validation_model": row.get("validation_model") or "",
+        "validation_stale_reason": row.get("validation_stale_reason") or "",
         "reply_mailto": "",
         "parse_error": row.get("parse_error"),
         "mtime": row.get("mtime"),
@@ -637,6 +952,7 @@ def _build_orders_where_clause(
     reply_needed: bool | None,
     human_review_needed: bool | None,
     post_case: bool | None,
+    validation_statuses: set[str] | None,
     client_branches: set[str] | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
@@ -685,6 +1001,13 @@ def _build_orders_where_clause(
         clauses.append("o.post_case = %s")
         params.append(bool(post_case))
 
+    if validation_statuses:
+        normalized_validation_statuses = sorted(
+            {normalize_validation_status(status) for status in validation_statuses}
+        )
+        clauses.append("o.validation_status = ANY(%s)")
+        params.append(normalized_validation_statuses)
+
     normalized_branches = _normalize_branch_set(client_branches)
     if normalized_branches:
         clauses.append(f"{_EXTRACTION_BRANCH_SQL} = ANY(%s)")
@@ -709,6 +1032,7 @@ def query_order_summaries(
     reply_needed: bool | None,
     human_review_needed: bool | None,
     post_case: bool | None,
+    validation_statuses: set[str] | None,
     client_branches: set[str] | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
@@ -728,6 +1052,7 @@ def query_order_summaries(
         reply_needed=reply_needed,
         human_review_needed=human_review_needed,
         post_case=post_case,
+        validation_statuses=validation_statuses,
         client_branches=client_branches,
         assigned_user_id=assigned_user_id,
         allowed_client_branches=allowed_client_branches,
@@ -739,26 +1064,30 @@ def query_order_summaries(
         counts_payload = {
             "total": int(counts_override.get("total") or 0),
             "today": int(counts_override.get("today") or 0),
-            "needs_reply": int(counts_override.get("needs_reply") or 0),
+            "waiting_for_reply": int(counts_override.get("waiting_for_reply") or 0),
             "manual_review": int(counts_override.get("manual_review") or 0),
+            "gemini_review": int(counts_override.get("gemini_review") or 0),
             "status_ok": int(counts_override.get("status_ok") or 0),
-            "status_reply": int(counts_override.get("status_reply") or 0),
+            "status_waiting_for_reply": int(counts_override.get("status_waiting_for_reply") or 0),
             "status_human_in_the_loop": int(counts_override.get("status_human_in_the_loop") or 0),
             "status_post": int(counts_override.get("status_post") or 0),
             "status_failed": int(counts_override.get("status_failed") or 0),
+            "status_unknown": int(counts_override.get("status_unknown") or 0),
         }
     else:
         counts_row = fetch_one(
             f"""
             SELECT COUNT(*)::bigint AS total,
                    SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS today,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS needs_reply,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS waiting_for_reply,
                    SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS manual_review,
+                   SUM(CASE WHEN o.validation_status IN ('flagged', 'stale') THEN 1 ELSE 0 END)::bigint AS gemini_review,
                    SUM(CASE WHEN {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS status_ok,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS status_reply,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS status_waiting_for_reply,
                    SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS status_human_in_the_loop,
                    SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS status_post,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS status_failed
+                   SUM(CASE WHEN {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS status_failed,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS status_unknown
             FROM orders o
             WHERE {where_sql}
             """,
@@ -767,13 +1096,15 @@ def query_order_summaries(
         counts_payload = {
             "total": int(counts_row.get("total") or 0),
             "today": int(counts_row.get("today") or 0),
-            "needs_reply": int(counts_row.get("needs_reply") or 0),
+            "waiting_for_reply": int(counts_row.get("waiting_for_reply") or 0),
             "manual_review": int(counts_row.get("manual_review") or 0),
+            "gemini_review": int(counts_row.get("gemini_review") or 0),
             "status_ok": int(counts_row.get("status_ok") or 0),
-            "status_reply": int(counts_row.get("status_reply") or 0),
+            "status_waiting_for_reply": int(counts_row.get("status_waiting_for_reply") or 0),
             "status_human_in_the_loop": int(counts_row.get("status_human_in_the_loop") or 0),
             "status_post": int(counts_row.get("status_post") or 0),
             "status_failed": int(counts_row.get("status_failed") or 0),
+            "status_unknown": int(counts_row.get("status_unknown") or 0),
         }
 
     total = counts_payload["total"]
@@ -804,10 +1135,17 @@ def query_order_summaries(
                o.store_name,
                o.store_address,
                o.iln,
+               o.mail_to,
                {_EXTRACTION_BRANCH_SQL} AS normalized_extraction_branch,
                o.reply_needed,
                o.human_review_needed,
                o.post_case,
+               o.validation_status,
+               o.validation_summary,
+               o.validation_checked_at,
+               o.validation_provider,
+               o.validation_model,
+               o.validation_stale_reason,
                o.parse_error,
                o.updated_at AS mtime
         FROM orders o
@@ -837,14 +1175,18 @@ def query_order_summaries(
         "counts": {
             "all": total,
             "today": counts_payload["today"],
-            "needs_reply": counts_payload["needs_reply"],
+            "waiting_for_reply": counts_payload["waiting_for_reply"],
             "manual_review": counts_payload["manual_review"],
+            "unknown": counts_payload["status_unknown"],
+            "unknown": counts_payload["status_unknown"],
+            "gemini_review": counts_payload["gemini_review"],
             "status": {
                 "ok": counts_payload["status_ok"],
-                "reply": counts_payload["status_reply"],
+                "waiting_for_reply": counts_payload["status_waiting_for_reply"],
                 "human_in_the_loop": counts_payload["status_human_in_the_loop"],
                 "post": counts_payload["status_post"],
                 "failed": counts_payload["status_failed"],
+                "unknown": counts_payload["status_unknown"],
                 "total": total,
             },
         },
@@ -890,7 +1232,6 @@ def query_overview_snapshot(
     hourly_start: datetime,
     assigned_user_id: str | None = None,
     allowed_client_branches: set[str] | None = None,
-    latest_limit: int = 20,
 ) -> dict[str, Any]:
     scope_clauses, scope_params = _scope_where_fragments(
         assigned_user_id=assigned_user_id,
@@ -906,17 +1247,17 @@ def query_overview_snapshot(
         SELECT
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS today_total,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS today_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS today_reply,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS today_reply,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS today_human,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS today_post,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS today_failed,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS last24_total,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS last24_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS last24_reply,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS last24_reply,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS last24_human,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS last24_post,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS last24_failed,
-            SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS queue_reply,
+            SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS queue_reply,
             SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS queue_human,
             SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS queue_post
         FROM orders o
@@ -958,7 +1299,7 @@ def query_overview_snapshot(
         )
         SELECT b.bucket_start,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS ok,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS reply,
+               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS reply,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS human_in_the_loop,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS post,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS failed,
@@ -992,39 +1333,6 @@ def query_overview_snapshot(
         ORDER BY b.bucket_start
         """,
         [hourly_start, current_hour, *scope_params],
-    )
-
-    latest_rows = fetch_all(
-        f"""
-        SELECT o.id,
-               o.external_message_id,
-               o.received_at,
-               {_STATUS_SQL} AS normalized_status,
-               o.item_count,
-               o.warnings_count,
-               o.errors_count,
-               o.ticket_number,
-               o.kundennummer,
-               o.kom_nr,
-               o.kom_name,
-               o.liefertermin,
-               o.wunschtermin,
-               o.delivery_week,
-               o.store_name,
-               o.store_address,
-               o.iln,
-               {_EXTRACTION_BRANCH_SQL} AS normalized_extraction_branch,
-               o.reply_needed,
-               o.human_review_needed,
-               o.post_case,
-               o.parse_error,
-               o.updated_at AS mtime
-        FROM orders o
-        WHERE {where_sql}
-        ORDER BY {_EFFECTIVE_RECEIVED_SQL} DESC, o.id DESC
-        LIMIT %s
-        """,
-        [*scope_params, max(1, int(latest_limit))],
     )
 
     return {
@@ -1064,10 +1372,6 @@ def query_overview_snapshot(
             }
             for row in hour_rows
         ],
-        "latest_orders": [
-            _summary_row_to_order(row, status_field="normalized_status", branch_field="normalized_extraction_branch")
-            for row in latest_rows
-        ],
     }
 
 
@@ -1094,6 +1398,11 @@ def get_order_detail(
         f"""
         SELECT o.*,
                r.payload_json,
+               vr.status AS latest_validation_run_status,
+               vr.summary AS latest_validation_run_summary,
+               vr.issues_json AS latest_validation_run_issues,
+               vr.result_json AS latest_validation_run_result,
+               vr.created_at AS latest_validation_run_created_at,
                t.id AS review_task_id,
                t.state AS review_state,
                t.assigned_user_id,
@@ -1103,6 +1412,17 @@ def get_order_detail(
                e.last_event_at
         FROM orders o
         LEFT JOIN order_revisions r ON r.id = o.current_revision_id
+        LEFT JOIN LATERAL (
+            SELECT v1.status,
+                   v1.summary,
+                   v1.issues_json,
+                   v1.result_json,
+                   v1.created_at
+            FROM order_validation_runs v1
+            WHERE v1.order_id = o.id
+            ORDER BY v1.created_at DESC
+            LIMIT 1
+        ) vr ON TRUE
         LEFT JOIN LATERAL (
             SELECT t1.*
             FROM order_review_tasks t1
@@ -1136,6 +1456,15 @@ def get_order_detail(
 
     warnings = payload.get("warnings", [])
     errors = payload.get("errors", [])
+    validation_issues = _normalize_validation_issues(row.get("latest_validation_run_issues"))
+    validation_result_json = row.get("latest_validation_run_result")
+    if isinstance(validation_result_json, str):
+        try:
+            validation_result_json = json.loads(validation_result_json)
+        except json.JSONDecodeError:
+            validation_result_json = {}
+    if not isinstance(validation_result_json, dict):
+        validation_result_json = {}
     return {
         "safe_id": str(row["id"]),
         "data": payload,
@@ -1148,6 +1477,17 @@ def get_order_detail(
         "human_review_needed": bool(row.get("human_review_needed")),
         "reply_needed": bool(row.get("reply_needed")),
         "post_case": bool(row.get("post_case")),
+        "validation_status": normalize_validation_status(row.get("validation_status")),
+        "validation_summary": str(row.get("validation_summary") or ""),
+        "validation_checked_at": _to_iso(row.get("validation_checked_at")) if row.get("validation_checked_at") else "",
+        "validation_provider": str(row.get("validation_provider") or ""),
+        "validation_model": str(row.get("validation_model") or ""),
+        "validation_stale_reason": str(row.get("validation_stale_reason") or ""),
+        "validation_issues": validation_issues,
+        "validation_result": validation_result_json,
+        "validation_run_created_at": _to_iso(row.get("latest_validation_run_created_at"))
+        if row.get("latest_validation_run_created_at")
+        else "",
         "message_id": row.get("external_message_id") or str(row["id"]),
         "received_at": _to_iso(row.get("received_at")),
         "review_task_id": str(row["review_task_id"]) if row.get("review_task_id") else None,
@@ -1169,9 +1509,23 @@ def get_order_payload_map(order_ids: list[str]) -> dict[str, dict[str, Any]]:
         """
         SELECT o.id,
                o.parse_error,
+               o.validation_status,
+               o.validation_summary,
+               o.validation_checked_at,
+               o.validation_provider,
+               o.validation_model,
+               o.validation_stale_reason,
+               vr.issues_json AS latest_validation_run_issues,
                r.payload_json
         FROM orders o
         LEFT JOIN order_revisions r ON r.id = o.current_revision_id
+        LEFT JOIN LATERAL (
+            SELECT v1.issues_json
+            FROM order_validation_runs v1
+            WHERE v1.order_id = o.id
+            ORDER BY v1.created_at DESC
+            LIMIT 1
+        ) vr ON TRUE
         WHERE o.deleted_at IS NULL
           AND o.id = ANY(%s)
         """,
@@ -1190,6 +1544,13 @@ def get_order_payload_map(order_ids: list[str]) -> dict[str, dict[str, Any]]:
         payload_map[str(row["id"])] = {
             "data": _normalize_payload(payload),
             "parse_error": row.get("parse_error"),
+            "validation_status": normalize_validation_status(row.get("validation_status")),
+            "validation_summary": str(row.get("validation_summary") or ""),
+            "validation_checked_at": _to_iso(row.get("validation_checked_at")) if row.get("validation_checked_at") else "",
+            "validation_provider": str(row.get("validation_provider") or ""),
+            "validation_model": str(row.get("validation_model") or ""),
+            "validation_stale_reason": str(row.get("validation_stale_reason") or ""),
+            "validation_issues": _normalize_validation_issues(row.get("latest_validation_run_issues")),
         }
     return payload_map
 
@@ -1239,6 +1600,7 @@ def save_manual_revision(
             changed_by_user_id=actor_user_id,
             parse_error=None,
             diff_json=diff_json,
+            validation_result=None,
         )
         conn.commit()
     return result
@@ -1248,40 +1610,9 @@ def soft_delete_order(*, order_id: str, actor_user_id: str | None) -> bool:
     detail = get_order_detail(order_id)
     if not detail:
         return False
-    now = _now()
     with get_connection() as conn:
-        revision = _upsert_revision(
-            conn,
-            payload=_normalize_payload(detail.get("data") if isinstance(detail.get("data"), dict) else {}),
-            external_message_id=str(detail.get("message_id") or order_id),
-            change_type="delete",
-            changed_by_user_id=actor_user_id,
-            parse_error=detail.get("parse_error"),
-            diff_json={"deleted": True},
-        )
         with conn.cursor() as cursor:
-            cursor.execute("UPDATE orders SET deleted_at = %s, updated_at = %s WHERE id = %s", (now, now, order_id))
-            cursor.execute(
-                """
-                UPDATE order_review_tasks
-                SET state = 'cancelled',
-                    resolution_outcome = COALESCE(resolution_outcome, 'deleted'),
-                    resolution_note = COALESCE(resolution_note, 'Order deleted'),
-                    resolved_at = COALESCE(resolved_at, %s),
-                    claim_expires_at = NULL,
-                    updated_at = %s
-                WHERE order_id = %s
-                  AND state NOT IN ('resolved', 'cancelled')
-                """,
-                (now, now, order_id),
-            )
-            cursor.execute(
-                """
-                INSERT INTO order_events (order_id, revision_id, event_type, actor_type, actor_user_id, event_data, created_at)
-                VALUES (%s, %s, 'order_deleted', %s, %s, %s::jsonb, %s)
-                """,
-                (order_id, revision["revision_id"], "user" if actor_user_id else "system", actor_user_id, _jsonb({"soft_delete": True}), now),
-            )
+            cursor.execute("DELETE FROM orders WHERE id = %s", (order_id,))
         conn.commit()
     return True
 
@@ -1313,6 +1644,154 @@ def record_order_event(
                 ),
             )
         conn.commit()
+
+
+def record_validation_run(
+    *,
+    order_id: str,
+    revision_id: str,
+    validation_result: dict[str, Any],
+) -> None:
+    normalized = _normalize_validation_result_payload(validation_result)
+    status = normalize_validation_status(normalized.get("validation_status"))
+    if status in {VALIDATION_STATUS_NOT_RUN, "stale", VALIDATION_STATUS_RESOLVED}:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO order_validation_runs (
+                    id,
+                    order_id,
+                    revision_id,
+                    provider,
+                    model,
+                    status,
+                    summary,
+                    issues_json,
+                    result_json,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)
+                ON CONFLICT (order_id, revision_id, provider)
+                DO UPDATE SET
+                    model = EXCLUDED.model,
+                    status = EXCLUDED.status,
+                    summary = EXCLUDED.summary,
+                    issues_json = EXCLUDED.issues_json,
+                    result_json = EXCLUDED.result_json,
+                    created_at = EXCLUDED.created_at
+                """,
+                (
+                    str(uuid.uuid4()),
+                    order_id,
+                    revision_id,
+                    normalized["validation_provider"] or VALIDATION_PROVIDER_GEMINI,
+                    normalized["validation_model"],
+                    status,
+                    normalized["validation_summary"],
+                    _jsonb(normalized["validation_issues"]),
+                    _jsonb(normalized["validation_raw_result"]),
+                    _parse_iso(normalized.get("validation_checked_at")) or _now(),
+                ),
+            )
+        conn.commit()
+
+
+def mark_validation_stale(
+    *,
+    order_id: str,
+    reason: str,
+    actor_user_id: str | None = None,
+) -> bool:
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET validation_status = 'stale',
+                    validation_summary = %s,
+                    validation_checked_at = %s,
+                    validation_stale_reason = %s,
+                    updated_at = %s
+                WHERE id = %s
+                  AND deleted_at IS NULL
+                  AND validation_status IN ('passed', 'flagged', 'resolved', 'skipped')
+                """,
+                (
+                    "Gemini validation is stale after a manual change.",
+                    now,
+                    str(reason or "").strip() or "manual_change",
+                    now,
+                    order_id,
+                ),
+            )
+            updated = cursor.rowcount > 0
+        conn.commit()
+    if updated:
+        record_order_event(
+            order_id=order_id,
+            event_type="validation_marked_stale",
+            actor_user_id=actor_user_id,
+            event_data={"reason": str(reason or "").strip() or "manual_change"},
+        )
+    return updated
+
+
+def resolve_validation(
+    *,
+    order_id: str,
+    actor_user_id: str | None,
+    note: str,
+) -> dict[str, Any]:
+    now = _now()
+    note_text = str(note or "").strip()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE orders
+                SET validation_status = %s,
+                    validation_summary = %s,
+                    validation_checked_at = %s,
+                    validation_stale_reason = '',
+                    updated_at = %s
+                WHERE id = %s
+                  AND deleted_at IS NULL
+                RETURNING validation_status,
+                          validation_summary,
+                          validation_checked_at,
+                          validation_provider,
+                          validation_model,
+                          validation_stale_reason
+                """,
+                (
+                    VALIDATION_STATUS_RESOLVED,
+                    "Gemini validation resolved manually.",
+                    now,
+                    now,
+                    order_id,
+                ),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise OrderStoreError(404, "not_found", "Order not found")
+        conn.commit()
+    record_order_event(
+        order_id=order_id,
+        event_type="validation_resolved",
+        actor_user_id=actor_user_id,
+        event_data={"note": note_text},
+    )
+    return {
+        "validation_status": normalize_validation_status(row.get("validation_status")),
+        "validation_summary": str(row.get("validation_summary") or ""),
+        "validation_checked_at": _to_iso(row.get("validation_checked_at")) if row.get("validation_checked_at") else "",
+        "validation_provider": str(row.get("validation_provider") or ""),
+        "validation_model": str(row.get("validation_model") or ""),
+        "validation_stale_reason": str(row.get("validation_stale_reason") or ""),
+    }
 
 
 def _checksum(path: Path) -> tuple[str, int]:

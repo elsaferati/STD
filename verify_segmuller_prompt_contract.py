@@ -21,10 +21,16 @@ def test_segmuller_prompt_contract() -> None:
     assert "Priority 2: Order-table rows only if Furnplan codes are missing or unreadable." in prompt
     assert "Article codes from Furnplan rows -> same split rules as above" in prompt
     assert "From order-table fallback rows: use only as fallback; prefer richer code fields from Furnplan." in prompt
+    assert "Primary BESTELLUNG pages define the authoritative ordered Seg-Nr scope for the order." in prompt
+    assert "=== SEGMULLER VENDOR SECTION FILTER ===" in prompt
+    assert "Extract rows ONLY from sections headed by Staud." in prompt
+    assert "Ignore sections headed by any other firm, including OCR variants like Wiemman/Wiemann." in prompt
+    assert "Cross-check retained Staud sections against the ordered Seg-Nr values from BESTELLUNG pages." in prompt
+    assert "Do not extract rows from unmatched or non-Staud sections even if they appear earlier on the page." in prompt
     assert "### PDF/TIF Attachment (furnplan style):" in prompt
     assert "'Menge' or quantity column -> menge" in prompt
     assert "'[xxxx xxxx]' bracket codes (may be sideways/rotated) -> furncloud_id" in prompt
-    assert "Extract ALL items from ALL pages - don't stop after first table!" in prompt
+    assert "Extract ALL Staud items from ALL pages - don't stop after first retained table!" in prompt
 
     assert "=== SEGMULLER FURNCLOUD_ID ===" in prompt
     assert "Find furncloud_id anywhere in email or PDF (all pages, including scanned/drawing pages)." in prompt

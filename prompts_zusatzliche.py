@@ -1,12 +1,15 @@
 """
-Prompts for XXLUTZ order extraction.
+Prompts for XXLUTZ "Zusätzliche Information" order extraction.
 Handles two formats:
 1. Email body + PDF attachment (furnplan-style orders)
 2. Email body only (MÖMAX branch/Lagerbestellung orders)
+
+These orders contain 'Zusätzliche Information' sections and always require human review.
 """
 
 SYSTEM_PROMPT = (
-    "You are an expert order extraction system for XXLUTZ/MÖMAX furniture orders. "
+    "You are an expert order extraction system for XXLUTZ/MÖMAX furniture orders "
+    "with 'Zusätzliche Information' (additional information) sections. "
     "You extract structured data from order documents (emails, PDFs, images) into a consistent JSON schema. "
     "\n\n"
     "CRITICAL RULES:\n"
@@ -255,6 +258,10 @@ def build_user_instructions(source_priority: list[str]) -> str:
         "9. IF you find '+++ WEITERE INFO SIEHE ZEICHNUNG+++' anywhere:\n"
         "   - Set header.human_review_needed.value = true\n"
         "   - This means a human must check the drawing\n"
+        "9b. THIS IS A 'ZUSÄTZLICHE INFORMATION' ORDER:\n"
+        "    - Always set header.human_review_needed.value = true\n"
+        "    - A human must review this order before processing\n"
+        "    - Do NOT set reply_needed = true\n"
         "10. DETECT 'REPLY NEEDED' CASES (Item Swaps/Substitutions):\n"
         "    - Look for 'STATT TYP ... BITTE TYP ...' or similar swap requests\n"
         "    - ACTION: Set header.reply_needed.value = true\n"

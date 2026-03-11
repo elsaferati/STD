@@ -59,6 +59,19 @@ def get_connection():
         raise
 
 
+@contextmanager
+def transaction():
+    conn = _open_connection(autocommit=False)
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _execute_with_retry(
     query: str,
     params: Iterable[Any] | None = None,

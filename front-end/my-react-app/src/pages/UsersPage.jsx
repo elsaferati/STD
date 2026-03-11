@@ -3,7 +3,6 @@ import { Navigate } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import { useI18n } from "../i18n/I18nContext";
 import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBranches";
 
@@ -354,25 +353,21 @@ export function UsersPage() {
   }
 
   return (
-    <AppShell active="users">
-      <main className="flex-1 flex flex-col min-w-0">
-        <div className="sticky top-0 z-30">
-          <header className="h-16 bg-surface-light border-b border-slate-200 flex items-center justify-between px-6">
-            <div className="relative w-full max-w-xl">
-              <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-              <input
-                className="w-full bg-slate-50 border-none rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
-                placeholder={t("orders.searchPlaceholder")}
-                value={searchInput}
-                onChange={(event) => setSearchInput(event.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-3 ml-4">
-              <LanguageSwitcher compact className="hidden md:flex" />
-            </div>
-          </header>
+    <AppShell
+      active="users"
+      headerLeft={(
+        <div className="relative w-full max-w-xl">
+          <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+          <input
+            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:ring-2 focus:ring-primary"
+            placeholder={t("orders.searchPlaceholder")}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
+          />
         </div>
-
+      )}
+    >
+      <main className="flex-1 flex flex-col min-w-0">
         <div className="w-full px-6 py-6 space-y-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{t("users.title")}</h1>
