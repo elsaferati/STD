@@ -1178,6 +1178,7 @@ def query_order_summaries(
             "waiting_for_reply": counts_payload["waiting_for_reply"],
             "manual_review": counts_payload["manual_review"],
             "unknown": counts_payload["status_unknown"],
+            "unknown": counts_payload["status_unknown"],
             "gemini_review": counts_payload["gemini_review"],
             "status": {
                 "ok": counts_payload["status_ok"],
