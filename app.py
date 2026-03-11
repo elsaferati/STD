@@ -2402,6 +2402,41 @@ def api_orders_xlsx():
     return response
 
 
+@app.route("/api/orders/export-xml.zip")
+def api_orders_export_xml_zip():
+    import io, zipfile
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    result, error = _query_orders(allow_default_pagination=False, access_scope=scope)
+    if error is not None:
+        return error
+
+    orders = result["orders"]
+    payload_map = _preload_order_export_payloads(orders)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for order in orders:
+            order_id = str(order.get("id") or "").strip()
+            entry = payload_map.get(order_id)
+            if not entry or entry.get("parse_error"):
+                continue
+            data = entry["data"]
+            try:
+                documents = xml_exporter.render_xml_documents(data, "", config, Path("."))
+            except Exception:
+                continue
+            folder = xml_exporter._effective_xml_base_name(data) or order_id
+            for doc in documents:
+                zf.writestr(f"{folder}/{doc.filename}", doc.content)
+
+    date_stamp = datetime.now().astimezone().strftime("%Y-%m-%d")
+    filename = f"orders_xml_{date_stamp}.zip"
+    zip_buffer.seek(0)
+    response = Response(zip_buffer.read(), mimetype="application/zip")
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
+
 @app.route("/api/data-export/<table_name>.xlsx")
 def api_data_export_table_xlsx(table_name: str):
     normalized_table_name = str(table_name or "").strip()

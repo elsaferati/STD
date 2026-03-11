@@ -221,6 +221,23 @@ export function OrdersPage() {
     }
   };
 
+  const handleExportXmlZip = async () => {
+    setActionBusy("xmlzip");
+    setActionError("");
+    try {
+      const exportParams = new URLSearchParams(searchParams);
+      const exportQuery = exportParams.toString();
+      const blob = await fetchBlob(`/api/orders/export-xml.zip${exportQuery ? `?${exportQuery}` : ""}`);
+      const now = new Date();
+      const date = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+      downloadBlob(blob, `orders_xml_${date}.zip`);
+    } catch (requestError) {
+      setActionError(requestError.message || t("orders.xmlZipExportFailed"));
+    } finally {
+      setActionBusy("");
+    }
+  };
+
   const handleDownloadXml = async (orderId) => {
     setActionBusy(`download:${orderId}`);
     setActionError("");
@@ -547,6 +564,15 @@ export function OrdersPage() {
                 >
                   <span className="material-icons text-base">file_download</span>
                   {actionBusy === "excel" ? t("orders.exporting") : t("common.exportExcel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportXmlZip}
+                  disabled={actionBusy === "xmlzip"}
+                  className="bg-white border border-slate-200 text-slate-700 px-3.5 py-2 rounded-md text-sm font-medium hover:bg-slate-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+                >
+                  <span className="material-icons text-base">folder_zip</span>
+                  {actionBusy === "xmlzip" ? t("orders.exporting") : t("orders.exportXmlZip")}
                 </button>
                 <button type="button" disabled className="bg-primary/40 text-white px-3.5 py-2 rounded-md text-sm font-medium cursor-not-allowed">
                   {t("orders.manualOrder")}
