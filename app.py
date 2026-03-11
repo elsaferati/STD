@@ -105,7 +105,7 @@ EDITABLE_HEADER_FIELDS = [
 EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"]
 
 VALID_STATUSES = {
-    "ok", "reply", "human_in_the_loop", "post", "failed", "partial", "unknown",
+    "ok", "human_in_the_loop", "post", "failed", "unknown",
     "waiting_for_reply", "client_replied", "updated_after_reply",
 }
 VALID_VALIDATION_STATUSES = set(order_store.VALID_VALIDATION_STATUSES)
@@ -259,10 +259,8 @@ def _clean_form_value(value: str | None) -> str:
 
 def _normalize_status(value: Any) -> str:
     status = str(value or "ok").strip().lower()
-    if status == "partial":
-        return "reply"
-    if status == "unknown":
-        return "ok"
+    if status == "partial" or status == "reply":
+        return "waiting_for_reply"
     if status not in VALID_STATUSES:
         return "ok"
     return status
@@ -272,10 +270,11 @@ def _status_label(value: Any) -> str:
     status = _normalize_status(value)
     labels = {
         "ok": "OK",
-        "reply": "Reply",
+        "waiting_for_reply": "Waiting for Reply",
         "human_in_the_loop": "Human in the Loop",
         "post": "Post",
         "failed": "Failed",
+        "unknown": "Unknown Client",
     }
     return labels.get(status, "OK")
 
@@ -771,15 +770,14 @@ def _tab_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "all": len(orders),
         "today": sum(1 for order in orders if _effective_received_at(order).date() == today),
-        "needs_reply": sum(1 for order in orders if _normalize_status(order.get("status")) == "reply"),
+        "waiting_for_reply": sum(
+            1 for order in orders if _normalize_status(order.get("status")) == "waiting_for_reply"
+        ),
         "manual_review": sum(
             1 for order in orders if _normalize_status(order.get("status")) == "human_in_the_loop"
         ),
-        "waiting_for_reply": sum(
-            1 for order in orders if order.get("status") == "waiting_for_reply"
-        ),
-        "client_replied": sum(
-            1 for order in orders if order.get("status") == "client_replied"
+        "unknown": sum(
+            1 for order in orders if _normalize_status(order.get("status")) == "unknown"
         ),
         "updated_after_reply": sum(
             1 for order in orders if order.get("status") == "updated_after_reply"

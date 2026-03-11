@@ -3,11 +3,9 @@ import { statusLabel } from "../utils/format";
 
 const STYLES = {
   ok: "bg-success/10 text-success border-success/20",
-  reply: "bg-red-50 text-red-700 border-red-200",
   human_in_the_loop: "bg-orange-50 text-orange-700 border-orange-200",
   post: "bg-slate-100 text-slate-600 border-slate-200",
   failed: "bg-danger/10 text-danger border-danger/20",
-  partial: "bg-red-50 text-red-700 border-red-200",
   unknown: "bg-slate-100 text-slate-600 border-slate-200",
   waiting_for_reply: "bg-amber-50 text-amber-700 border-amber-200",
   client_replied: "bg-blue-50 text-blue-700 border-blue-200",
@@ -17,7 +15,7 @@ const STYLES = {
 export function StatusBadge({ status }) {
   const { t } = useI18n();
   const raw = (status || "ok").toLowerCase();
-  const normalized = raw === "partial" ? "reply" : raw === "unknown" ? "ok" : raw;
+  const normalized = (raw === "partial" || raw === "reply") ? "waiting_for_reply" : raw;
   const color = STYLES[normalized] || STYLES.unknown;
 
   return (

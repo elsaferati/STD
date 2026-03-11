@@ -65,24 +65,24 @@ export function formatPercent(value) {
 
 export function statusLabel(status, t) {
   const raw = (status || "ok").toLowerCase();
-  const normalized = raw === "partial" ? "reply" : raw === "unknown" ? "ok" : raw;
+  const normalized = (raw === "partial" || raw === "reply") ? "waiting_for_reply" : raw;
   if (typeof t === "function") {
-    if (normalized === "reply") return t("status.reply", null, "Reply");
+    if (normalized === "waiting_for_reply") return t("status.waiting_for_reply", null, "Waiting for Reply");
     if (normalized === "human_in_the_loop") return t("status.human_in_the_loop", null, "Human in the Loop");
     if (normalized === "post") return t("status.post", null, "Post");
     if (normalized === "ok") return t("status.ok", null, "OK");
     if (normalized === "failed") return t("status.failed", null, "Failed");
-    if (normalized === "waiting_for_reply") return t("status.waiting_for_reply", null, "Waiting for Reply");
+    if (normalized === "unknown") return t("status.unknown", null, "Unknown Client");
     if (normalized === "client_replied") return t("status.client_replied", null, "Client Replied");
     if (normalized === "updated_after_reply") return t("status.updated_after_reply", null, "Updated After Reply");
     return t(`status.${normalized}`, null, normalized);
   }
   if (normalized === "ok") return "OK";
-  if (normalized === "reply") return "Reply";
+  if (normalized === "waiting_for_reply") return "Waiting for Reply";
   if (normalized === "human_in_the_loop") return "Human in the Loop";
   if (normalized === "post") return "Post";
   if (normalized === "failed") return "Failed";
-  if (normalized === "waiting_for_reply") return "Waiting for Reply";
+  if (normalized === "unknown") return "Unknown Client";
   if (normalized === "client_replied") return "Client Replied";
   if (normalized === "updated_after_reply") return "Updated After Reply";
   return normalized;

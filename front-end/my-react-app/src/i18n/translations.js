@@ -97,12 +97,11 @@ export const translations = {
     },
     status: {
       ok: "OK",
-      reply: "Reply",
       human_in_the_loop: "Human in the Loop",
       post: "Post",
       failed: "Failed",
       waiting_for_reply: "Waiting for Reply",
-      client_replied: "Client Replied",
+      unknown: "Unknown Client",
       updated_after_reply: "Updated After Reply",
     },
     fields: {
@@ -432,12 +431,11 @@ export const translations = {
     },
     status: {
       ok: "OK",
-      reply: "Antwort",
       human_in_the_loop: "Menschliche Überprüfung",
       post: "Post",
       failed: "Fehlgeschlagen",
       waiting_for_reply: "Warte auf Antwort",
-      client_replied: "Kunde hat geantwortet",
+      unknown: "Unbekannter Kunde",
       updated_after_reply: "Nach Antwort aktualisiert",
     },
     fields: {

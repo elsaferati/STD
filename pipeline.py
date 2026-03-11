@@ -89,6 +89,18 @@ _PORTA_KOM_NAME_LABEL_RE = re.compile(
     r"\b(?:kommissionsname|kommissions-?name|commissionname)\b",
     re.IGNORECASE,
 )
+# Matches bracketed Furnplan furncloud codes even when PyMuPDF inserts
+# whitespace/newlines between individual rotated characters.
+# Group 1 and 2 capture exactly 4 alphanumeric chars each (with optional
+# inter-character whitespace); caller must strip whitespace from groups.
+_PORTA_FURNCLOUD_BRACKET_RE = re.compile(
+    r'\[\s*'
+    r'([A-Za-z0-9](?:[ \t\n\r]*[A-Za-z0-9]){3})'
+    r'[ \t\n\r]+'
+    r'([A-Za-z0-9](?:[ \t\n\r]*[A-Za-z0-9]){3})'
+    r'[ \t\n\r]*\]',
+    re.DOTALL,
+)
 _PORTA_KOM_LINE_RE = re.compile(
     r"\b(?:kommission|komm)\b", re.IGNORECASE
 )
@@ -399,6 +411,10 @@ def _extract_pdf_page_texts(
         limit = total_pages if max_pages <= 0 else min(total_pages, max_pages)
         for page_index in range(limit):
             text = doc[page_index].get_text() or ""
+            if not text.strip():
+                # Fallback: stream-order extraction captures rotated text that sorted
+                # extraction misses (e.g., Furnplan title-block sidebar at 90°).
+                text = doc[page_index].get_text(sort=False) or ""
             if max_chars_per_page > 0 and len(text) > max_chars_per_page:
                 warnings.append(
                     f"PDF text truncated for {filename} page {page_index + 1} to {max_chars_per_page} chars"
@@ -838,6 +854,93 @@ def _prune_porta_items_without_explicit_pdf_pairs(
     )
 
     return removed_count
+
+
+def _prune_porta_empty_art_mod_items(normalized: dict[str, Any]) -> int:
+    """Remove Porta placeholder items with no artikelnummer AND no modellnummer.
+
+    These placeholders are created when a Porta Kundenkommission row's Artikel-Nr
+    is Rule-0-ignored (e.g., '1005141 / 88') and Furnplan items replace it.
+    Only removes when other items with at least one code field exist.
+    """
+    items = normalized.get("items")
+    if not isinstance(items, list) or len(items) <= 1:
+        return 0
+
+    kept = [
+        item for item in items
+        if isinstance(item, dict)
+        and (
+            str(_entry_value(item.get("artikelnummer")) or "").strip()
+            or str(_entry_value(item.get("modellnummer")) or "").strip()
+        )
+    ]
+
+    removed_count = len(items) - len(kept)
+    if removed_count <= 0 or not kept:
+        return 0
+
+    for line_no, item in enumerate(kept, start=1):
+        if isinstance(item, dict):
+            item["line_no"] = line_no
+
+    normalized["items"] = kept
+    return removed_count
+
+
+def _apply_porta_furncloud_id_from_pdf_text(
+    normalized: dict[str, Any],
+    page_text_by_image_name: dict[str, str],
+) -> None:
+    """Backfill furncloud_id for Porta items from bracketed [XXXX XXXX] codes in PDF text.
+
+    When the LLM misses a furncloud code printed in a rotated Furnplan margin label,
+    this scans the raw digital text layer for [XXXX XXXX] candidates and assigns
+    the single found candidate to all items (document-level fallback only).
+
+    Skips if any item already has a furncloud_id.
+    """
+    items = normalized.get("items")
+    if not isinstance(items, list) or not items:
+        return
+
+    # Skip if any item already has furncloud_id
+    if any(
+        str(_entry_value(item.get("furncloud_id")) or "").strip()
+        for item in items
+        if isinstance(item, dict)
+    ):
+        return
+
+    # Scan all pages for bracketed candidates
+    candidates: list[str] = []
+    ordered_pages = _ordered_verification_page_texts(page_text_by_image_name)
+    for _image_name, page_text in (ordered_pages or {}).items():
+        raw = str(page_text or "")
+        for text_variant in (raw, raw[::-1]):
+            for match in _PORTA_FURNCLOUD_BRACKET_RE.finditer(text_variant):
+                part1 = re.sub(r'\s+', '', match.group(1))
+                part2 = re.sub(r'\s+', '', match.group(2))
+                if len(part1) != 4 or len(part2) != 4:
+                    continue
+                candidate = f"{part1} {part2}"
+                if candidate not in candidates:
+                    candidates.append(candidate)
+
+    # Document-level fallback: only apply when exactly one candidate found
+    if len(candidates) != 1:
+        return
+
+    furncloud_val = candidates[0]
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item["furncloud_id"] = {
+            "value": furncloud_val,
+            "source": "pdf",
+            "confidence": 0.85,
+            "derived_from": "porta_furncloud_bracket_text_backfill",
+        }
 
 
 def _porta_has_bestehend_aus_je_block(
@@ -2659,6 +2762,8 @@ def process_message(
         _apply_porta_quantity_corrections(normalized, pdf_text_by_image_name)
         _trim_porta_component_excess_items(normalized, pdf_text_by_image_name)
         _prune_porta_items_without_explicit_pdf_pairs(normalized, pdf_text_by_image_name)
+        _prune_porta_empty_art_mod_items(normalized)
+        _apply_porta_furncloud_id_from_pdf_text(normalized, pdf_text_by_image_name)
         _force_porta_reply_needed_for_ambiguous_ignored_codes(normalized)
 
     # --- Braun: reply email for missing modellnummer (after ZB lookup) or artikelnummer ---
@@ -2880,6 +2985,11 @@ def process_message(
         if isinstance(w, list):
             w.append(f"Auto-reply email failed: {exc}")
         print(f"Auto-reply email failed for {message.message_id}: {exc}")
+
+    # If the router could not identify the client, override status to "unknown"
+    # so the order appears in the Unknown Client tab for human review.
+    if route.classifier_branch_id == "unknown":
+        normalized["status"] = "unknown"
 
     output_name = _safe_name(message.message_id)
 

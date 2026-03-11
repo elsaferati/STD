@@ -1796,7 +1796,7 @@ def normalize_output(
         )
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
-    if missing_critical_fields and not segmuller_review_only:
+    if missing_critical_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
@@ -1811,23 +1811,25 @@ def normalize_output(
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields and not segmuller_review_only:
+    if missing_critical_item_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
         _append_unique_warning(
             data["warnings"],
             _missing_critical_item_reply_warning(missing_critical_item_fields),
         )
 
-    if not items and not segmuller_review_only:
+    if not items and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
     elif segmuller_review_only:
+        _clear_reply_needed(header)
+    elif is_zusatzliche:
         _clear_reply_needed(header)
 
     # Status: furncloud_id alone is non-blocking (OK with warning)
     if not had_structure and not items:
         data["status"] = "failed"
     elif _flag_true(header, "human_review_needed") and (
-        _is_ab_nr_order(header) or segmuller_review_only
+        _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
     ):
         data["status"] = "human_in_the_loop"
         _clear_reply_needed(header)
@@ -1903,7 +1905,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         missing_header = [field for field in missing_header if field != "store_address"]
     missing_header_no_ticket = [field for field in missing_header if field != "ticket_number"]
     missing_critical_fields = _missing_critical_fields(missing_header)
-    if missing_critical_fields and not segmuller_review_only:
+    if missing_critical_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
     missing_items: list[tuple[int, str]] = []
     if not items:
@@ -1916,16 +1918,18 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
                 if _is_missing(item.get(field, {})):
                     missing_items.append((idx, field))
     missing_critical_item_fields = _missing_critical_item_fields(missing_items)
-    if missing_critical_item_fields and not segmuller_review_only:
+    if missing_critical_item_fields and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
 
-    if not items and not segmuller_review_only:
+    if not items and not segmuller_review_only and not is_zusatzliche:
         _set_reply_needed_from_derived(header)
     elif segmuller_review_only:
         _clear_reply_needed(header)
+    elif is_zusatzliche:
+        _clear_reply_needed(header)
 
     if _flag_true(header, "human_review_needed") and (
-        _is_ab_nr_order(header) or segmuller_review_only
+        _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
     ):
         data["status"] = "human_in_the_loop"
         _clear_reply_needed(header)

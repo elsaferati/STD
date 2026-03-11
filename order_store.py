@@ -19,7 +19,6 @@ from gemini_validation import (
 )
 
 STATUS_OK = "ok"
-STATUS_REPLY = "reply"
 STATUS_HUMAN = "human_in_the_loop"
 STATUS_POST = "post"
 STATUS_FAILED = "failed"
@@ -31,17 +30,15 @@ STATUS_UPDATED_AFTER_REPLY = "updated_after_reply"
 
 VALID_STATUSES = {
     STATUS_OK,
-    STATUS_REPLY,
     STATUS_HUMAN,
     STATUS_POST,
     STATUS_FAILED,
-    STATUS_PARTIAL,
     STATUS_UNKNOWN,
     STATUS_WAITING_REPLY,
     STATUS_CLIENT_REPLIED,
     STATUS_UPDATED_AFTER_REPLY,
 }
-REVIEWABLE_STATUSES = {STATUS_REPLY, STATUS_HUMAN, STATUS_POST}
+REVIEWABLE_STATUSES = {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}
 TASK_DONE_STATES = {"resolved", "cancelled"}
 UNKNOWN_EXTRACTION_BRANCH = "unknown"
 KNOWN_EXTRACTION_BRANCHES = frozenset(BRANCHES.keys())
@@ -49,11 +46,11 @@ ALLOWED_EXTRACTION_BRANCHES = KNOWN_EXTRACTION_BRANCHES | {UNKNOWN_EXTRACTION_BR
 _KNOWN_BRANCHES_SQL = ", ".join(f"'{branch}'" for branch in sorted(ALLOWED_EXTRACTION_BRANCHES))
 _STATUS_SQL = """
 CASE
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'partial' THEN 'reply'
-    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'unknown' THEN 'ok'
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'partial' THEN 'waiting_for_reply'
+    WHEN LOWER(BTRIM(COALESCE(o.status, ''))) = 'reply'   THEN 'waiting_for_reply'
     WHEN LOWER(BTRIM(COALESCE(o.status, ''))) IN (
-        'ok', 'reply', 'human_in_the_loop', 'post', 'failed',
-        'waiting_for_reply', 'client_replied', 'updated_after_reply'
+        'ok', 'human_in_the_loop', 'post', 'failed',
+        'waiting_for_reply', 'client_replied', 'updated_after_reply', 'unknown'
     )
         THEN LOWER(BTRIM(COALESCE(o.status, '')))
     ELSE 'ok'
@@ -224,10 +221,8 @@ def _scope_where_fragments(
 
 def normalize_status(value: Any) -> str:
     status = str(value or STATUS_OK).strip().lower()
-    if status == STATUS_PARTIAL:
-        return STATUS_REPLY
-    if status == STATUS_UNKNOWN:
-        return STATUS_OK
+    if status == STATUS_PARTIAL or status == "reply":
+        return STATUS_WAITING_REPLY
     if status not in VALID_STATUSES:
         return STATUS_OK
     return status
@@ -241,13 +236,13 @@ def derive_status(payload: dict[str, Any]) -> str:
     if not isinstance(header, dict) or not isinstance(items, list):
         return STATUS_FAILED
     if _entry_bool(header.get("reply_needed")):
-        return STATUS_REPLY
+        return STATUS_WAITING_REPLY
     if _entry_bool(header.get("human_review_needed")):
         return STATUS_HUMAN
     if _entry_bool(header.get("post_case")):
         return STATUS_POST
     legacy = normalize_status(payload.get("status"))
-    if legacy in {STATUS_REPLY, STATUS_HUMAN, STATUS_POST}:
+    if legacy in {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}:
         return legacy
     return STATUS_OK
 
@@ -1069,28 +1064,30 @@ def query_order_summaries(
         counts_payload = {
             "total": int(counts_override.get("total") or 0),
             "today": int(counts_override.get("today") or 0),
-            "needs_reply": int(counts_override.get("needs_reply") or 0),
+            "waiting_for_reply": int(counts_override.get("waiting_for_reply") or 0),
             "manual_review": int(counts_override.get("manual_review") or 0),
             "gemini_review": int(counts_override.get("gemini_review") or 0),
             "status_ok": int(counts_override.get("status_ok") or 0),
-            "status_reply": int(counts_override.get("status_reply") or 0),
+            "status_waiting_for_reply": int(counts_override.get("status_waiting_for_reply") or 0),
             "status_human_in_the_loop": int(counts_override.get("status_human_in_the_loop") or 0),
             "status_post": int(counts_override.get("status_post") or 0),
             "status_failed": int(counts_override.get("status_failed") or 0),
+            "status_unknown": int(counts_override.get("status_unknown") or 0),
         }
     else:
         counts_row = fetch_one(
             f"""
             SELECT COUNT(*)::bigint AS total,
                    SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS today,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS needs_reply,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS waiting_for_reply,
                    SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS manual_review,
                    SUM(CASE WHEN o.validation_status IN ('flagged', 'stale') THEN 1 ELSE 0 END)::bigint AS gemini_review,
                    SUM(CASE WHEN {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS status_ok,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS status_reply,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS status_waiting_for_reply,
                    SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS status_human_in_the_loop,
                    SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS status_post,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS status_failed
+                   SUM(CASE WHEN {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS status_failed,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS status_unknown
             FROM orders o
             WHERE {where_sql}
             """,
@@ -1099,14 +1096,15 @@ def query_order_summaries(
         counts_payload = {
             "total": int(counts_row.get("total") or 0),
             "today": int(counts_row.get("today") or 0),
-            "needs_reply": int(counts_row.get("needs_reply") or 0),
+            "waiting_for_reply": int(counts_row.get("waiting_for_reply") or 0),
             "manual_review": int(counts_row.get("manual_review") or 0),
             "gemini_review": int(counts_row.get("gemini_review") or 0),
             "status_ok": int(counts_row.get("status_ok") or 0),
-            "status_reply": int(counts_row.get("status_reply") or 0),
+            "status_waiting_for_reply": int(counts_row.get("status_waiting_for_reply") or 0),
             "status_human_in_the_loop": int(counts_row.get("status_human_in_the_loop") or 0),
             "status_post": int(counts_row.get("status_post") or 0),
             "status_failed": int(counts_row.get("status_failed") or 0),
+            "status_unknown": int(counts_row.get("status_unknown") or 0),
         }
 
     total = counts_payload["total"]
@@ -1177,15 +1175,17 @@ def query_order_summaries(
         "counts": {
             "all": total,
             "today": counts_payload["today"],
-            "needs_reply": counts_payload["needs_reply"],
+            "waiting_for_reply": counts_payload["waiting_for_reply"],
             "manual_review": counts_payload["manual_review"],
+            "unknown": counts_payload["status_unknown"],
             "gemini_review": counts_payload["gemini_review"],
             "status": {
                 "ok": counts_payload["status_ok"],
-                "reply": counts_payload["status_reply"],
+                "waiting_for_reply": counts_payload["status_waiting_for_reply"],
                 "human_in_the_loop": counts_payload["status_human_in_the_loop"],
                 "post": counts_payload["status_post"],
                 "failed": counts_payload["status_failed"],
+                "unknown": counts_payload["status_unknown"],
                 "total": total,
             },
         },
@@ -1246,17 +1246,17 @@ def query_overview_snapshot(
         SELECT
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS today_total,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS today_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS today_reply,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS today_reply,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS today_human,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS today_post,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS today_failed,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s THEN 1 ELSE 0 END)::bigint AS last24_total,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS last24_ok,
-            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS last24_reply,
+            SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS last24_reply,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS last24_human,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS last24_post,
             SUM(CASE WHEN {_EFFECTIVE_RECEIVED_SQL} >= %s AND {_EFFECTIVE_RECEIVED_SQL} < %s AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS last24_failed,
-            SUM(CASE WHEN {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS queue_reply,
+            SUM(CASE WHEN {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS queue_reply,
             SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS queue_human,
             SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS queue_post
         FROM orders o
@@ -1298,7 +1298,7 @@ def query_overview_snapshot(
         )
         SELECT b.bucket_start,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'ok' THEN 1 ELSE 0 END)::bigint AS ok,
-               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'reply' THEN 1 ELSE 0 END)::bigint AS reply,
+               SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'waiting_for_reply' THEN 1 ELSE 0 END)::bigint AS reply,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS human_in_the_loop,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS post,
                SUM(CASE WHEN o.id IS NOT NULL AND {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS failed,
