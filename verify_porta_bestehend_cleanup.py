@@ -600,6 +600,21 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     porta_prompt = prompts_porta.build_user_instructions_porta(["pdf", "email", "image"])
     verify_prompt = prompts_verify_items.build_verify_items_instructions("porta")
 
+    assert "Observed Porta model-number shapes are mostly 8, 10, or 12 characters with no separators." in porta_prompt
+    assert "Rare 4-letter all-alpha model forms can exist" in porta_prompt
+    assert "artikelnummer is ALWAYS exactly one of these forms: '12345', 'A12345', or '12345A'." in porta_prompt
+    assert "artikelnummer must be exactly one of these forms: '12345', 'A12345', or '12345A'." in verify_prompt
+    assert "56A789" not in porta_prompt
+    assert "56A789" not in verify_prompt
+    assert "Artikel-Nr. 4611217 / 841" in porta_prompt
+    assert "HRB 9684" in porta_prompt
+    assert "descriptor words like 'SONATE'" in porta_prompt
+    assert "CQEG5899 76808G" in porta_prompt
+    assert "CQEG00 09387" in porta_prompt
+    assert "CQ 9696XA56062" in porta_prompt
+    assert "CQ 9696XA56062" in verify_prompt
+    assert "Nr. OJ363612782" in porta_prompt
+    assert "Nr. OJ363612782" in verify_prompt
     assert "Do NOT deduplicate identical component pairs across different pages." in porta_prompt
     assert "A repeated occurrence on another page is a NEW item occurrence and must be output again." in porta_prompt
     assert "Repeated PDF table 'Artikel-Nr.' values do not suppress item creation." in porta_prompt
@@ -617,8 +632,14 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "'Typ' is an article label and is NEVER a modellnummer token." in verify_prompt
     assert "This rule does NOT make table-column 'Artikel-Nr.' valid" in porta_prompt
     assert "This rule does NOT make table-column 'Artikel-Nr.' valid" in verify_prompt
-    assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in porta_prompt
-    assert "Standalone numeric tokens (e.g., '66015') and plus-joined numeric tokens (e.g., '30156+15237')" in verify_prompt
+    assert "Standalone article-only tokens are valid Porta item rows" in porta_prompt
+    assert "'30156+15237' -> create two separate item rows" in porta_prompt
+    assert "Standalone article-only tokens remain valid Porta item rows" in verify_prompt
+    assert "'30156+15237' means two separate article-only rows with empty modellnummer" in verify_prompt
+    assert "Standalone model-only tokens are also valid Porta item rows" in porta_prompt
+    assert "OFSN0699" in porta_prompt
+    assert "Standalone model-only tokens remain valid Porta item rows" in verify_prompt
+    assert "OFSN0699" in verify_prompt
     assert "1xPDSL71SP44-57383" in porta_prompt
     assert "2xCQ1212-09377G" in porta_prompt
     assert "strip it from modellnummer" in porta_prompt
@@ -632,6 +653,89 @@ def test_prompt_contract_mentions_cross_page_no_dedupe() -> None:
     assert "If an explicit Verkaufshaus store address is present, keep it and do not overwrite it with lieferanschrift." in porta_prompt
     assert "NEVER copy delivery address into store_address." not in porta_prompt
     print("SUCCESS: prompt contract explicitly enforces cross-page no-dedupe behavior.")
+
+
+def test_porta_pipeline_keeps_plausible_llm_pair_even_when_pdf_pair_differs() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 Stk CQEG4112G5 85951K Startelement 42/240\n"
+            "Anlieferung:\n"
+        )
+    }
+    data = _run_pipeline_with_items(
+        branch_id="porta",
+        items=[_item(1, "CQEG4112GS", "85951K")],
+        page_text_map=page_texts,
+    )
+
+    items = data.get("items") or []
+    assert len(items) == 1
+    item = items[0]
+    assert (item.get("modellnummer") or {}).get("value") == "CQEG4112GS"
+    assert (item.get("modellnummer") or {}).get("derived_from") != "porta_pdf_code_consistency_correction"
+    assert (item.get("artikelnummer") or {}).get("value") == "85951K"
+    print("SUCCESS: Porta pipeline no longer overwrites plausible LLM pairs from unique PDF pair evidence.")
+
+
+def test_porta_pipeline_adds_article_only_rows_from_standalone_article_lines() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ9191XA 42889\n"
+            "66015\n"
+            "30156+15237\n"
+            "OJ9191-53669\n"
+            "Anlieferung:\n"
+        )
+    }
+    data = _run_pipeline_with_items(
+        branch_id="porta",
+        items=[
+            _item(1, "CQ9191XA", "42889"),
+            _item(2, "OJ9191", "53669"),
+        ],
+        page_text_map=page_texts,
+    )
+
+    items = data.get("items") or []
+    article_only = [
+        str((item.get("artikelnummer") or {}).get("value") or "")
+        for item in items
+        if isinstance(item, dict)
+        and not str((item.get("modellnummer") or {}).get("value") or "").strip()
+    ]
+    assert "66015" in article_only
+    assert "30156" in article_only
+    assert "15237" in article_only
+    print("SUCCESS: Porta pipeline adds standalone article-only lines as separate items.")
+
+
+def test_porta_pipeline_adds_model_only_rows_from_standalone_model_lines() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ0606XA 42912\n"
+            "1 Stk OJ00-13076\n"
+            "1 Stk Kommode mit 4 Schubkasten OFSN0699\n"
+            "Anlieferung:\n"
+        )
+    }
+    data = _run_pipeline_with_items(
+        branch_id="porta",
+        items=[
+            _item(1, "CQ0606XA", "42912"),
+            _item(2, "OJ00", "13076"),
+        ],
+        page_text_map=page_texts,
+    )
+
+    items = data.get("items") or []
+    model_only = [
+        str((item.get("modellnummer") or {}).get("value") or "")
+        for item in items
+        if isinstance(item, dict)
+        and not str((item.get("artikelnummer") or {}).get("value") or "").strip()
+    ]
+    assert "OFSN0699" in model_only
+    print("SUCCESS: Porta pipeline adds standalone model-only lines as separate items.")
 
 
 def test_porta_typ_ausf_backfill_fills_missing_codes() -> None:
@@ -838,6 +942,31 @@ def test_porta_ojoo_accessory_article_backfill_from_hyphen_pair() -> None:
     print("SUCCESS: OJOO accessory article number is backfilled from hyphen-separated PDF pair.")
 
 
+def test_porta_oj_accessory_article_backfill_from_labeled_fused_token() -> None:
+    normalized = {
+        "header": {"human_review_needed": {"value": False, "source": "derived", "confidence": 1.0}},
+        "items": [
+            _item(1, "OJ3636", ""),
+        ],
+        "warnings": [],
+    }
+    page_texts = {
+        "order-1.png": (
+            "Nr. OJ363612782\n"
+        )
+    }
+
+    pipeline._apply_porta_oj_accessory_article_backfill(  # type: ignore[attr-defined]
+        normalized, page_texts
+    )
+    items = normalized.get("items") or []
+    assert (items[0].get("modellnummer") or {}).get("value") == "OJ3636"
+    assert (items[0].get("artikelnummer") or {}).get("value") == "12782"
+    assert (items[0].get("artikelnummer") or {}).get("derived_from") == "porta_oj_accessory_backfill"
+    assert (normalized.get("header") or {}).get("human_review_needed", {}).get("value") is True
+    print("SUCCESS: OJ/0J accessory article number is backfilled from labeled fused token Nr. OJ363612782.")
+
+
 def _qty_for_pair(normalized: dict, modell: str, artikel: str) -> int | float | str | None:
     items = normalized.get("items") or []
     for item in items:
@@ -972,6 +1101,9 @@ if __name__ == "__main__":
     test_non_porta_branch_no_reconciliation()
     test_extract_porta_store_name_prefers_full_legal_line()
     test_porta_store_address_uses_lieferanschrift_when_verkaufshaus_missing()
+    test_porta_pipeline_keeps_plausible_llm_pair_even_when_pdf_pair_differs()
+    test_porta_pipeline_adds_article_only_rows_from_standalone_article_lines()
+    test_porta_pipeline_adds_model_only_rows_from_standalone_model_lines()
     test_prompt_contract_mentions_cross_page_no_dedupe()
     test_porta_typ_ausf_backfill_fills_missing_codes()
     test_porta_typ_ausf_backfill_does_not_overwrite_partial_item()
@@ -981,6 +1113,7 @@ if __name__ == "__main__":
     test_porta_typ_ausf_backfill_skips_when_pair_count_mismatch()
     test_porta_oj_accessory_article_backfill_from_space_separated_pair()
     test_porta_ojoo_accessory_article_backfill_from_hyphen_pair()
+    test_porta_oj_accessory_article_backfill_from_labeled_fused_token()
     test_qty_correction_no_adjacent_swap_for_cq12_cq1212_pairs()
     test_qty_correction_no_adjacent_swap_for_cq124112g5_cq12411212g1_pairs()
     test_qty_correction_keeps_parent_row_qty_for_cqeg1299_76947g()

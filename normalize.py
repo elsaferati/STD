@@ -1745,6 +1745,20 @@ def normalize_output(
             if formatted != value:
                 entry["value"] = formatted
 
+    if is_momax_bg:
+        store_entry = _ensure_field(header, "store_address")
+        delivery_entry = _ensure_field(header, "lieferanschrift")
+        store_val = str(store_entry.get("value", "") or "")
+        store_conf = store_entry.get("confidence", 0.0)
+        try:
+            delivery_conf = float(store_conf) if store_val else 0.0
+        except (TypeError, ValueError):
+            delivery_conf = 0.0
+        delivery_entry["value"] = store_val
+        delivery_entry["source"] = "derived"
+        delivery_entry["confidence"] = delivery_conf
+        delivery_entry["derived_from"] = "momax_bg_delivery_equals_store_address"
+
     if (branch_id or "").strip() == "porta":
         store_entry = _ensure_field(header, "store_address")
         delivery_entry = header.get("lieferanschrift", {})

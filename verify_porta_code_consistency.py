@@ -277,11 +277,44 @@ def test_collect_pairs_accepts_liefermodell_article_model_order() -> None:
     print("SUCCESS: pair collector accepts Liefermodell ARTICLE MODEL order deterministically.")
 
 
-def test_collect_pairs_accepts_article_letter_in_any_position() -> None:
+def test_collect_pairs_accepts_spaced_prefix_fused_code() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 Stk CQ 9696XA56062\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    _model_to_articles, _article_to_models, pair_set = pipeline._collect_porta_pdf_code_pairs(  # type: ignore[attr-defined]
+        page_texts
+    )
+
+    assert ("CQ9696XA", "56062") in pair_set
+    print("SUCCESS: pair collector splits spaced-prefix fused Porta code CQ 9696XA56062.")
+
+
+def test_collect_pairs_accepts_labeled_fused_oj_token() -> None:
+    page_texts = {
+        "order-1.png": (
+            "Nr. OJ363612782\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    _model_to_articles, _article_to_models, pair_set = pipeline._collect_porta_pdf_code_pairs(  # type: ignore[attr-defined]
+        page_texts
+    )
+
+    assert ("OJ3636", "12782") in pair_set
+    print("SUCCESS: pair collector splits labeled fused OJ token Nr. OJ363612782.")
+
+
+def test_collect_pairs_accepts_article_prefix_or_suffix_only() -> None:
     page_texts = {
         "order-1.png": (
             "1 Stk CQ9191XA A34555\n"
             "1 Stk CQ9191XB 56A789\n"
+            "1 Stk DMAW 12345A\n"
         )
     }
 
@@ -290,8 +323,9 @@ def test_collect_pairs_accepts_article_letter_in_any_position() -> None:
     )
 
     assert ("CQ9191XA", "A34555") in pair_set
-    assert ("CQ9191XB", "56A789") in pair_set
-    print("SUCCESS: pair collector accepts Porta artikelnummer tokens with one letter in any position.")
+    assert ("DMAW", "12345A") in pair_set
+    assert ("CQ9191XB", "56A789") not in pair_set
+    print("SUCCESS: pair collector accepts prefix/suffix article letters and rejects embedded-letter variants.")
 
 
 def test_inline_pair_reconciliation_adds_missing_item_non_bestehend() -> None:
@@ -544,11 +578,12 @@ def test_porta_code_shape_validation_keeps_valid_codes() -> None:
     print("SUCCESS: code-shape validation leaves valid code-like pairs unchanged.")
 
 
-def test_porta_code_shape_validation_keeps_article_letter_in_any_position() -> None:
+def test_porta_code_shape_validation_keeps_prefix_suffix_articles_and_clears_embedded_letter() -> None:
     normalized = _normalized(
         [
             _item(1, "CQ9191XA", "A34555", menge=1),
             _item(2, "CQ9191XB", "56A789", menge=1),
+            _item(3, "DMAW", "12345A", menge=1),
         ]
     )
 
@@ -556,11 +591,34 @@ def test_porta_code_shape_validation_keeps_article_letter_in_any_position() -> N
         normalized
     )
 
-    assert changed == 0
+    assert changed == 1
     items = normalized.get("items") or []
     assert (items[0].get("artikelnummer") or {}).get("value") == "A34555"
-    assert (items[1].get("artikelnummer") or {}).get("value") == "56A789"
-    print("SUCCESS: code-shape validation keeps artikelnummer values with one letter in any position.")
+    assert (items[1].get("artikelnummer") or {}).get("value") == ""
+    assert (items[1].get("artikelnummer") or {}).get("derived_from") == "porta_code_shape_validation"
+    assert (items[2].get("modellnummer") or {}).get("value") == "DMAW"
+    assert (items[2].get("artikelnummer") or {}).get("value") == "12345A"
+    print("SUCCESS: code-shape validation keeps prefix/suffix articles, accepts rare alpha-only models, and clears embedded-letter articles.")
+
+
+def test_porta_code_shape_helpers_accept_and_reject_expected_forms() -> None:
+    assert pipeline._is_porta_article_code_like("09387")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_article_code_like("76808G")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_article_code_like("A12345")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_article_code_like("12345A")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_article_code_like("56A789")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_article_code_like("4008")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_article_code_like("4611217 / 841")  # type: ignore[attr-defined]
+
+    assert pipeline._is_porta_model_code_like("CQEG5899")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_model_code_like("CQEG00")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_model_code_like("PD96713696")  # type: ignore[attr-defined]
+    assert pipeline._is_porta_model_code_like("DMAW")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_model_code_like("SONATE")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_model_code_like("HRB")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_model_code_like("9684")  # type: ignore[attr-defined]
+    assert not pipeline._is_porta_model_code_like("STK")  # type: ignore[attr-defined]
+    print("SUCCESS: helper validators enforce strict Porta article formats and model-code shapes.")
 
 
 def test_porta_code_shape_validation_normalizes_ojoo_to_oj00() -> None:
@@ -583,7 +641,25 @@ def test_porta_code_shape_validation_normalizes_ojoo_to_oj00() -> None:
     print("SUCCESS: code-shape validation normalizes OJOO accessory OCR to OJ00.")
 
 
-def test_porta_explicit_pair_prune_retains_ambiguous_rows_and_sets_human_review() -> None:
+def test_porta_code_shape_validation_splits_fused_oj_model_when_article_missing() -> None:
+    normalized = _normalized([_item(1, "OJ363612782", "", menge=1)])
+
+    changed = pipeline._apply_porta_code_shape_validation(  # type: ignore[attr-defined]
+        normalized
+    )
+
+    assert changed == 2
+    item = (normalized.get("items") or [])[0]
+    assert (item.get("modellnummer") or {}).get("value") == "OJ3636"
+    assert (item.get("artikelnummer") or {}).get("value") == "12782"
+    assert (item.get("modellnummer") or {}).get("derived_from") == "porta_code_shape_validation"
+    assert (item.get("artikelnummer") or {}).get("derived_from") == "porta_code_shape_validation"
+    warnings = normalized.get("warnings") or []
+    assert any("split fused OJ model/article token" in str(w) for w in warnings)
+    print("SUCCESS: code-shape validation splits fused OJ model token into modellnummer/artikelnummer.")
+
+
+def test_porta_explicit_pair_prune_retains_model_inferred_rows_and_sets_human_review() -> None:
     normalized = _normalized(
         [
             _item(1, "CQ9191XA", "42889"),
@@ -608,7 +684,7 @@ def test_porta_explicit_pair_prune_retains_ambiguous_rows_and_sets_human_review(
         page_texts,
     )
 
-    assert flagged == 3
+    assert flagged == 2
     items = normalized.get("items") or []
     assert len(items) == 5
     pairs = [
@@ -623,7 +699,7 @@ def test_porta_explicit_pair_prune_retains_ambiguous_rows_and_sets_human_review(
     assert ("OJ00", "30156") in pairs
     assert ("OJ00", "15237") in pairs
     assert ("OJ9191", "53669") in pairs
-    assert pairs.count(("OJ9191", "53669")) == 2
+    assert pairs.count(("OJ9191", "53669")) == 1
 
     header = normalized.get("header") or {}
     review = header.get("human_review_needed") or {}
@@ -640,7 +716,149 @@ def test_porta_explicit_pair_prune_retains_ambiguous_rows_and_sets_human_review(
     assert any("Porta explicit-pair review retained" in str(w) for w in warnings)
     assert not any("Porta explicit-pair prune removed" in str(w) for w in warnings)
     assert not any("standalone code token(s) removed" in str(w) for w in warnings)
-    print("SUCCESS: explicit-pair review retains ambiguous rows and sets human_review_needed.")
+    print("SUCCESS: explicit-pair review retains unsupported model-inferred rows and sets human_review_needed.")
+
+
+def test_porta_article_only_reconciliation_adds_standalone_article_rows() -> None:
+    normalized = _normalized(
+        [
+            _item(1, "CQ9191XA", "42889"),
+            _item(2, "OJ9191", "53669"),
+        ]
+    )
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ9191XA 42889\n"
+            "66015\n"
+            "30156+15237\n"
+            "OJ9191-53669\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    added = pipeline._reconcile_porta_article_only_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert added == 3
+    items = normalized.get("items") or []
+    assert len(items) == 5
+    article_only = [
+        (
+            str((item.get("modellnummer") or {}).get("value") or ""),
+            str((item.get("artikelnummer") or {}).get("value") or ""),
+        )
+        for item in items
+        if isinstance(item, dict)
+        and not str((item.get("modellnummer") or {}).get("value") or "").strip()
+    ]
+    assert ("", "66015") in article_only
+    assert ("", "30156") in article_only
+    assert ("", "15237") in article_only
+    warnings = normalized.get("warnings") or []
+    assert any("Porta article-only reconciliation added 3 item(s)" in str(w) for w in warnings)
+    print("SUCCESS: standalone Porta article lines are added as article-only item rows.")
+
+
+def test_porta_model_only_reconciliation_adds_standalone_model_rows() -> None:
+    normalized = _normalized(
+        [
+            _item(1, "CQ0606XA", "42912"),
+            _item(2, "OJ00", "13076"),
+        ]
+    )
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ0606XA 42912\n"
+            "1 Stk OJ00-13076\n"
+            "1 Stk Kommode mit 4 Schubkasten OFSN0699\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    added = pipeline._reconcile_porta_model_only_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert added == 1
+    items = normalized.get("items") or []
+    assert len(items) == 3
+    model_only = [
+        (
+            str((item.get("modellnummer") or {}).get("value") or ""),
+            str((item.get("artikelnummer") or {}).get("value") or ""),
+        )
+        for item in items
+        if isinstance(item, dict)
+        and not str((item.get("artikelnummer") or {}).get("value") or "").strip()
+    ]
+    assert ("OFSN0699", "") in model_only
+    warnings = normalized.get("warnings") or []
+    assert any("Porta model-only reconciliation added 1 item(s)" in str(w) for w in warnings)
+    print("SUCCESS: standalone Porta model lines are added as model-only item rows.")
+
+
+def test_porta_explicit_pair_prune_accepts_article_only_rows() -> None:
+    normalized = _normalized(
+        [
+            _item(1, "CQ9191XA", "42889"),
+            _item(2, "", "66015"),
+            _item(3, "", "30156"),
+            _item(4, "", "15237"),
+            _item(5, "OJ9191", "53669"),
+        ]
+    )
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ9191XA 42889\n"
+            "66015\n"
+            "30156+15237\n"
+            "OJ9191-53669\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    flagged = pipeline._prune_porta_items_without_explicit_pdf_pairs(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert flagged == 0
+    header = normalized.get("header") or {}
+    review = header.get("human_review_needed") or {}
+    assert review.get("value") is not True
+    print("SUCCESS: explicit-pair review accepts standalone article-only rows when they exist in PDF text.")
+
+
+def test_porta_explicit_pair_prune_accepts_model_only_rows() -> None:
+    normalized = _normalized(
+        [
+            _item(1, "CQ0606XA", "42912"),
+            _item(2, "OJ00", "13076"),
+            _item(3, "OFSN0699", ""),
+        ]
+    )
+    page_texts = {
+        "order-1.png": (
+            "1 4609952 / 04 Liefermodell: Sinfonie Plus CQ0606XA 42912\n"
+            "1 Stk OJ00-13076\n"
+            "1 Stk Kommode mit 4 Schubkasten OFSN0699\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    flagged = pipeline._prune_porta_items_without_explicit_pdf_pairs(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert flagged == 0
+    header = normalized.get("header") or {}
+    review = header.get("human_review_needed") or {}
+    assert review.get("value") is not True
+    print("SUCCESS: explicit-pair review accepts standalone model-only rows when they exist in PDF text.")
 
 
 def test_porta_explicit_pair_prune_backfills_liefermodell_article_model_order() -> None:
@@ -700,6 +918,137 @@ def test_porta_explicit_pair_prune_backfill_is_idempotent_for_article_model_orde
     assert pair_after_first == ("OGAW819696", "13505")
     assert pair_after_second == pair_after_first
     print("SUCCESS: ARTICLE MODEL backfill remains stable across repeated prune passes.")
+
+
+def test_porta_explicit_pair_prune_accepts_spaced_prefix_fused_code() -> None:
+    normalized = _normalized([_item(1, "CQ9696XA", "56062", menge=1)])
+    page_texts = {
+        "order-1.png": (
+            "1 Stk CQ 9696XA56062\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    flagged = pipeline._prune_porta_items_without_explicit_pdf_pairs(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert flagged == 0
+    header = normalized.get("header") or {}
+    review = header.get("human_review_needed") or {}
+    assert review.get("value") is not True
+    print("SUCCESS: explicit-pair review accepts spaced-prefix fused Porta code without flagging ambiguity.")
+
+
+def test_porta_model_only_extraction_rejects_descriptor_finish_word() -> None:
+    model = pipeline._extract_porta_model_only_token_from_line(  # type: ignore[attr-defined]
+        "Kristallspiegel/GL+ZL schwarz matt"
+    )
+
+    assert model == ""
+    print("SUCCESS: standalone Porta model-only extraction rejects descriptor finish words like MATT.")
+
+
+def test_porta_typ_adjacent_spaced_model_line_compacts_only_in_typ_context() -> None:
+    compact = pipeline._compact_porta_spaced_model_line(  # type: ignore[attr-defined]
+        "PD SL 61 SP 96"
+    )
+    pair = pipeline._extract_porta_typ_adjacent_spaced_model_pair(  # type: ignore[attr-defined]
+        [
+            "Includo Typ 57382",
+            "PD SL 61 SP 96",
+            "inkl. schubl 2er set",
+        ],
+        0,
+    )
+
+    assert compact == "PDSL61SP96"
+    assert pair == ("PDSL61SP96", "57382")
+    assert not pipeline._extract_porta_pdf_pairs_from_line("PD SL 61 SP 96")  # type: ignore[attr-defined]
+    print("SUCCESS: spaced Porta model compacts only when consumed from Typ-adjacent context.")
+
+
+def test_porta_typ_adjacent_spaced_model_region_extracts_expected_pairs_without_matt() -> None:
+    page_texts = {
+        "order-1.png": (
+            "1 4574199 / 04 Liefermodell: Includo PDSL61SP96 57383\n"
+            "Includo Typ 57382\n"
+            "PD SL 61 SP 96\n"
+            "inkl. schubl 2er set\n"
+            "T einteilung Stopper\n"
+            "Kristallspiegel/GL+ZL schwarz matt\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    occurrences = pipeline._extract_porta_inline_pair_occurrences_from_page_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+    model_only = pipeline._extract_porta_model_only_occurrences_from_page_texts(  # type: ignore[attr-defined]
+        page_texts
+    )
+
+    pairs = {
+        (
+            str(occurrence.get("modellnummer") or ""),
+            str(occurrence.get("artikelnummer") or ""),
+        )
+        for occurrence in occurrences
+    }
+    assert ("PDSL61SP96", "57383") in pairs
+    assert ("PDSL61SP96", "57382") in pairs
+    assert not model_only
+    print("SUCCESS: Typ-adjacent spaced Porta model produces the expected pairs without a false MATT model-only row.")
+
+
+def test_porta_typ_adjacent_spaced_model_reconciliation_adds_missing_pair_without_false_model_only() -> None:
+    normalized = _normalized([_item(1, "PDSL61SP96", "57383")])
+    page_texts = {
+        "order-1.png": (
+            "1 4574199 / 04 Liefermodell: Includo PDSL61SP96 57383\n"
+            "Includo Typ 57382\n"
+            "PD SL 61 SP 96\n"
+            "inkl. schubl 2er set\n"
+            "T einteilung Stopper\n"
+            "Kristallspiegel/GL+ZL schwarz matt\n"
+            "Anlieferung:\n"
+        )
+    }
+
+    added = pipeline._reconcile_porta_inline_pair_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+    model_only_added = pipeline._reconcile_porta_model_only_occurrences(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+    flagged = pipeline._prune_porta_items_without_explicit_pdf_pairs(  # type: ignore[attr-defined]
+        normalized,
+        page_texts,
+    )
+
+    assert added == 1
+    assert model_only_added == 0
+    assert flagged == 0
+    items = normalized.get("items") or []
+    pairs = {
+        (
+            str((item.get("modellnummer") or {}).get("value") or ""),
+            str((item.get("artikelnummer") or {}).get("value") or ""),
+        )
+        for item in items
+        if isinstance(item, dict)
+    }
+    assert ("PDSL61SP96", "57383") in pairs
+    assert ("PDSL61SP96", "57382") in pairs
+    assert ("MATT", "") not in pairs
+    warnings = normalized.get("warnings") or []
+    assert any("Porta inline pair reconciliation added" in str(w) for w in warnings)
+    assert not any("Porta model-only reconciliation added" in str(w) for w in warnings)
+    assert not any("Porta explicit-pair review retained" in str(w) for w in warnings)
+    print("SUCCESS: Porta reconciliation adds the Typ-adjacent spaced pair and does not create a false MATT model-only row.")
 
 
 def test_porta_explicit_pair_prune_skips_bestehend_aus_je_orders() -> None:
@@ -941,7 +1290,9 @@ if __name__ == "__main__":
     test_collect_pairs_strips_numeric_x_prefix_and_keeps_standard_pairs()
     test_collect_pairs_rejects_sonate_4008_and_keeps_valid_pair()
     test_collect_pairs_accepts_liefermodell_article_model_order()
-    test_collect_pairs_accepts_article_letter_in_any_position()
+    test_collect_pairs_accepts_spaced_prefix_fused_code()
+    test_collect_pairs_accepts_labeled_fused_oj_token()
+    test_collect_pairs_accepts_article_prefix_or_suffix_only()
     test_inline_pair_reconciliation_adds_missing_item_non_bestehend()
     test_inline_pair_reconciliation_hyphen_and_space_supported()
     test_inline_pair_reconciliation_idempotent()
@@ -952,11 +1303,22 @@ if __name__ == "__main__":
     test_inline_pair_reconciliation_rejects_sonate_4008_descriptor()
     test_porta_code_shape_validation_clears_invalid_descriptor_codes()
     test_porta_code_shape_validation_keeps_valid_codes()
-    test_porta_code_shape_validation_keeps_article_letter_in_any_position()
+    test_porta_code_shape_validation_keeps_prefix_suffix_articles_and_clears_embedded_letter()
+    test_porta_code_shape_helpers_accept_and_reject_expected_forms()
     test_porta_code_shape_validation_normalizes_ojoo_to_oj00()
-    test_porta_explicit_pair_prune_retains_ambiguous_rows_and_sets_human_review()
+    test_porta_code_shape_validation_splits_fused_oj_model_when_article_missing()
+    test_porta_explicit_pair_prune_retains_model_inferred_rows_and_sets_human_review()
+    test_porta_article_only_reconciliation_adds_standalone_article_rows()
+    test_porta_model_only_reconciliation_adds_standalone_model_rows()
+    test_porta_explicit_pair_prune_accepts_article_only_rows()
+    test_porta_explicit_pair_prune_accepts_model_only_rows()
     test_porta_explicit_pair_prune_backfills_liefermodell_article_model_order()
     test_porta_explicit_pair_prune_backfill_is_idempotent_for_article_model_order()
+    test_porta_explicit_pair_prune_accepts_spaced_prefix_fused_code()
+    test_porta_model_only_extraction_rejects_descriptor_finish_word()
+    test_porta_typ_adjacent_spaced_model_line_compacts_only_in_typ_context()
+    test_porta_typ_adjacent_spaced_model_region_extracts_expected_pairs_without_matt()
+    test_porta_typ_adjacent_spaced_model_reconciliation_adds_missing_pair_without_false_model_only()
     test_porta_explicit_pair_prune_skips_bestehend_aus_je_orders()
     test_porta_ambiguous_row_kept_while_inline_pair_is_added()
     test_porta_ambiguous_ignore_warning_forces_human_review()

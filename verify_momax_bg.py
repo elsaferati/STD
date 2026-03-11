@@ -245,6 +245,37 @@ def test_momax_bg_no_match_does_not_fallback_to_standard_lookup() -> None:
     print("SUCCESS: momax_bg no-match path does not fallback to standard lookup.")
 
 
+def test_momax_bg_delivery_address_forced_to_store_address() -> None:
+    data = {
+        "header": {
+            "store_address": {"value": "Varna, Blvd. Vladislav Varnenchik 277A", "source": "pdf", "confidence": 0.95},
+            "lieferanschrift": {"value": "Wrong Delivery Address", "source": "pdf", "confidence": 0.95},
+            "store_name": {"value": "MOMAX BULGARIA - VARNA", "source": "pdf", "confidence": 0.95},
+            "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
+            "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+        },
+        "items": [],
+    }
+    warnings: list[str] = []
+    normalized = normalize_output(
+        data,
+        message_id="test_momax_bg_delivery_equals_store",
+        received_at="2026-02-13T12:00:00+00:00",
+        dayfirst=True,
+        warnings=warnings,
+        email_body="",
+        sender="bg@example.com",
+        is_momax_bg=True,
+        branch_id="momax_bg",
+    )
+    header = normalized.get("header") or {}
+    assert header.get("lieferanschrift", {}).get("value") == header.get("store_address", {}).get("value")
+    assert header.get("lieferanschrift", {}).get("value") == "Varna, Blvd. Vladislav Varnenchik 277A"
+    assert header.get("lieferanschrift", {}).get("derived_from") == "momax_bg_delivery_equals_store_address"
+    print("SUCCESS: momax_bg always forces lieferanschrift to store_address.")
+
+
 def test_non_bg_regression_uses_single_extraction_path() -> None:
     pdf = _make_pdf_bytes("Some other PDF content")
     message = IngestedEmail(
@@ -969,6 +1000,7 @@ if __name__ == "__main__":
     test_momax_bg_duplicate_address_disambiguation_by_store_name()
     test_momax_bg_ambiguous_store_name_uses_deterministic_tie_break()
     test_momax_bg_no_match_does_not_fallback_to_standard_lookup()
+    test_momax_bg_delivery_address_forced_to_store_address()
     test_momax_bg_single_pdf_detection()
     test_aiko_bg_detection()
     test_aiko_bg_pipeline_special_case_and_kom_recovery()

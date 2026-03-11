@@ -69,7 +69,7 @@ def build_user_instructions_momax_bg(source_priority: list[str]) -> str:
         "  - MOMAX/MOEMAX documents: 'MOMAX BULGARIA - <Store>'\n"
         "  - AIKO documents: 'AIKO BULGARIA - <Store>'\n"
         "- store_address: use the store address line\n"
-        "- lieferanschrift: set equal to store_address unless an explicit different delivery address exists\n"
+        "- lieferanschrift: always set equal to store_address\n"
         "- seller: usually not present; leave empty if missing\n"
         "- adressnummer, iln_anl, iln_fil, tour: usually not present; leave empty if missing\n"
         "- human_review_needed, reply_needed, post_case: default to false unless explicitly indicated\n"
