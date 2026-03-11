@@ -954,6 +954,7 @@ def _build_orders_where_clause(
     post_case: bool | None,
     validation_statuses: set[str] | None,
     client_branches: set[str] | None,
+    delivery_week: str | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
 ) -> tuple[str, list[Any]]:
@@ -1013,6 +1014,11 @@ def _build_orders_where_clause(
         clauses.append(f"{_EXTRACTION_BRANCH_SQL} = ANY(%s)")
         params.append(normalized_branches)
 
+    normalized_delivery_week = str(delivery_week or "").strip()
+    if normalized_delivery_week:
+        clauses.append("o.delivery_week = %s")
+        params.append(normalized_delivery_week)
+
     scope_clauses, scope_params = _scope_where_fragments(
         assigned_user_id=assigned_user_id,
         allowed_client_branches=allowed_client_branches,
@@ -1028,12 +1034,15 @@ def query_order_summaries(
     q: str,
     received_from: datetime | None,
     received_to: datetime | None,
+    counts_received_from: datetime | None,
+    counts_received_to: datetime | None,
     statuses: set[str] | None,
     reply_needed: bool | None,
     human_review_needed: bool | None,
     post_case: bool | None,
     validation_statuses: set[str] | None,
     client_branches: set[str] | None,
+    delivery_week: str | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
     sort_key: str,
@@ -1054,6 +1063,21 @@ def query_order_summaries(
         post_case=post_case,
         validation_statuses=validation_statuses,
         client_branches=client_branches,
+        delivery_week=delivery_week,
+        assigned_user_id=assigned_user_id,
+        allowed_client_branches=allowed_client_branches,
+    )
+    counts_where_sql, counts_where_params = _build_orders_where_clause(
+        q=q,
+        received_from=counts_received_from,
+        received_to=counts_received_to,
+        statuses=None,
+        reply_needed=reply_needed,
+        human_review_needed=human_review_needed,
+        post_case=post_case,
+        validation_statuses=None,
+        client_branches=client_branches,
+        delivery_week=delivery_week,
         assigned_user_id=assigned_user_id,
         allowed_client_branches=allowed_client_branches,
     )
@@ -1073,6 +1097,7 @@ def query_order_summaries(
             "status_post": int(counts_override.get("status_post") or 0),
             "status_failed": int(counts_override.get("status_failed") or 0),
             "status_unknown": int(counts_override.get("status_unknown") or 0),
+            "status_updated_after_reply": int(counts_override.get("status_updated_after_reply") or 0),
         }
     else:
         counts_row = fetch_one(
@@ -1087,11 +1112,12 @@ def query_order_summaries(
                    SUM(CASE WHEN {_STATUS_SQL} = 'human_in_the_loop' THEN 1 ELSE 0 END)::bigint AS status_human_in_the_loop,
                    SUM(CASE WHEN {_STATUS_SQL} = 'post' THEN 1 ELSE 0 END)::bigint AS status_post,
                    SUM(CASE WHEN {_STATUS_SQL} = 'failed' THEN 1 ELSE 0 END)::bigint AS status_failed,
-                   SUM(CASE WHEN {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS status_unknown
+                   SUM(CASE WHEN {_STATUS_SQL} = 'unknown' THEN 1 ELSE 0 END)::bigint AS status_unknown,
+                   SUM(CASE WHEN {_STATUS_SQL} = 'updated_after_reply' THEN 1 ELSE 0 END)::bigint AS status_updated_after_reply
             FROM orders o
-            WHERE {where_sql}
+            WHERE {counts_where_sql}
             """,
-            [today_start, today_end, *where_params],
+            [today_start, today_end, *counts_where_params],
         ) or {}
         counts_payload = {
             "total": int(counts_row.get("total") or 0),
@@ -1105,6 +1131,7 @@ def query_order_summaries(
             "status_post": int(counts_row.get("status_post") or 0),
             "status_failed": int(counts_row.get("status_failed") or 0),
             "status_unknown": int(counts_row.get("status_unknown") or 0),
+            "status_updated_after_reply": int(counts_row.get("status_updated_after_reply") or 0),
         }
 
     total = counts_payload["total"]
@@ -1178,8 +1205,8 @@ def query_order_summaries(
             "waiting_for_reply": counts_payload["waiting_for_reply"],
             "manual_review": counts_payload["manual_review"],
             "unknown": counts_payload["status_unknown"],
-            "unknown": counts_payload["status_unknown"],
             "gemini_review": counts_payload["gemini_review"],
+            "updated_after_reply": counts_payload["status_updated_after_reply"],
             "status": {
                 "ok": counts_payload["status_ok"],
                 "waiting_for_reply": counts_payload["status_waiting_for_reply"],
@@ -1187,6 +1214,7 @@ def query_order_summaries(
                 "post": counts_payload["status_post"],
                 "failed": counts_payload["status_failed"],
                 "unknown": counts_payload["status_unknown"],
+                "updated_after_reply": counts_payload["status_updated_after_reply"],
                 "total": total,
             },
         },

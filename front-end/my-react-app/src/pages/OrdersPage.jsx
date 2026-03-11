@@ -10,11 +10,8 @@ import { downloadBlob } from "../utils/download";
 import { formatDateTime } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
-const STATUS_OPTIONS = [
-  "ok", "human_in_the_loop", "post", "failed",
-  "waiting_for_reply", "unknown", "updated_after_reply",
-];
 const EXPORT_INITIALS_STORAGE_KEY = "orders_export_initials";
+const ORDER_LIST_RESTORE_KEY = "orders_list_restore";
 
 function buildExportFilename(title, initials) {
   const safeTitle = (title || "Orders").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "Orders";
@@ -42,15 +39,17 @@ export function OrdersPage() {
   const [isDraggingTable, setIsDraggingTable] = useState(false);
 
   const tableScrollRef = useRef(null);
+  const orderRowRefs = useRef(new Map());
+  const hasRestoredScrollRef = useRef(false);
   const dragStartXRef = useRef(0);
   const dragStartScrollRef = useRef(0);
   const dragPointerIdRef = useRef(null);
 
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
-
   const fromDate = searchParams.get("from") || "";
   const toDate = searchParams.get("to") || "";
+  const queueParam = searchParams.get("queue") || "";
   const statusParam = searchParams.get("status");
   const validationStatusParam = searchParams.get("validation_status") || "";
   const clientParam = searchParams.get("client") || "";
@@ -81,11 +80,11 @@ export function OrdersPage() {
     if (statusParam === "failed") {
       return "failed";
     }
-    if (fromDate === todayIso && toDate === todayIso) {
+    if (queueParam === "today") {
       return "today";
     }
     return "all";
-  }, [fromDate, statusParam, toDate, todayIso, validationStatusParam]);
+  }, [queueParam, statusParam, validationStatusParam]);
 
   const updateParams = useCallback(
     (updates, options = {}) => {
@@ -127,11 +126,21 @@ export function OrdersPage() {
     return () => clearInterval(intervalId);
   }, [loadOrders]);
 
+  const rememberOrderPosition = useCallback((orderId) => {
+    if (!orderId) return;
+    sessionStorage.setItem(
+      ORDER_LIST_RESTORE_KEY,
+      JSON.stringify({
+        orderId,
+        queryString,
+      }),
+    );
+  }, [queryString]);
+
   const applyTab = (tab) => {
     if (tab === "today") {
       updateParams({
-        from: todayIso,
-        to: todayIso,
+        queue: "today",
         status: null,
         reply_needed: null,
         human_review_needed: null,
@@ -176,7 +185,7 @@ export function OrdersPage() {
       updateParams({ status: "failed", reply_needed: null, human_review_needed: null, post_case: null, validation_status: null });
       return;
     }
-    updateParams({ from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null, validation_status: null });
+    updateParams({ queue: null, from: null, to: null, reply_needed: null, human_review_needed: null, post_case: null, status: null, validation_status: null });
   };
 
   const handleSearchSubmit = (event) => {
@@ -271,19 +280,64 @@ export function OrdersPage() {
       const value = String(order.delivery_week || order.liefertermin || "").trim();
       if (value) unique.add(value);
     });
+    if (deliveryWeekParam) {
+      unique.add(deliveryWeekParam);
+    }
     return Array.from(unique).sort((a, b) => a.localeCompare(b));
-  }, [orders]);
-  const visibleOrders = useMemo(() => {
-    if (!deliveryWeekParam) return orders;
-    return orders.filter((order) => {
-      const value = String(order.delivery_week || order.liefertermin || "").trim();
-      return value === deliveryWeekParam;
-    });
   }, [deliveryWeekParam, orders]);
+  const visibleOrders = useMemo(() => {
+    if (queueParam !== "today" || fromDate || toDate) {
+      return orders;
+    }
+    return orders.filter((order) => {
+      const rawDate = order.effective_received_at || order.received_at || "";
+      if (!rawDate) {
+        return false;
+      }
+      const parsedDate = new Date(rawDate);
+      if (Number.isNaN(parsedDate.getTime())) {
+        return false;
+      }
+      return parsedDate.toISOString().slice(0, 10) === todayIso;
+    });
+  }, [fromDate, orders, queueParam, toDate, todayIso]);
   const hasActiveFilters = useMemo(
-    () => Boolean(searchParams.get("q") || statusParam || validationStatusParam || clientParam || fromDate || toDate || deliveryWeekParam),
-    [clientParam, deliveryWeekParam, fromDate, searchParams, statusParam, toDate, validationStatusParam],
+    () => Boolean(searchParams.get("q") || queueParam || statusParam || validationStatusParam || clientParam || fromDate || toDate || deliveryWeekParam),
+    [clientParam, deliveryWeekParam, fromDate, queueParam, searchParams, statusParam, toDate, validationStatusParam],
   );
+
+  useEffect(() => {
+    if (loading || hasRestoredScrollRef.current) {
+      return;
+    }
+
+    const savedState = sessionStorage.getItem(ORDER_LIST_RESTORE_KEY);
+    if (!savedState) {
+      hasRestoredScrollRef.current = true;
+      return;
+    }
+
+    try {
+      const parsedState = JSON.parse(savedState);
+      if (parsedState?.queryString !== queryString) {
+        sessionStorage.removeItem(ORDER_LIST_RESTORE_KEY);
+        hasRestoredScrollRef.current = true;
+        return;
+      }
+      const targetRow = orderRowRefs.current.get(parsedState?.orderId);
+      if (!targetRow) {
+        return;
+      }
+      hasRestoredScrollRef.current = true;
+      requestAnimationFrame(() => {
+        targetRow.scrollIntoView({ block: "center", behavior: "auto" });
+      });
+      sessionStorage.removeItem(ORDER_LIST_RESTORE_KEY);
+    } catch {
+      sessionStorage.removeItem(ORDER_LIST_RESTORE_KEY);
+      hasRestoredScrollRef.current = true;
+    }
+  }, [loading, queryString, visibleOrders]);
 
   const hasPrev = pagination.page > 1;
   const hasNext = pagination.page < pagination.total_pages;
@@ -316,6 +370,9 @@ export function OrdersPage() {
     setIsDraggingTable(false);
   };
 
+  const displayedFromDate = queueParam === "today" && !fromDate ? todayIso : fromDate;
+  const displayedToDate = queueParam === "today" && !toDate ? todayIso : toDate;
+
   return (
     <AppShell active="orders">
       <main className="flex-1 flex flex-col min-w-0">
@@ -328,20 +385,20 @@ export function OrdersPage() {
           </div>
 
           <div className="border-b border-slate-200">
-            <div className="flex items-center gap-6 overflow-x-auto">
-              <button
-                type="button"
-                onClick={() => applyTab("all")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "all" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t("orders.allOrders")} <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
-              </button>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <button
                 type="button"
                 onClick={() => applyTab("today")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "today" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {t("orders.todaysQueue")} <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
+                {lang === "de" ? "Heute" : "Today"} <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => applyTab("all")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "all" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {lang === "de" ? "Alle" : "All"} <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
               </button>
               <button
                 type="button"
@@ -359,17 +416,17 @@ export function OrdersPage() {
               </button>
               <button
                 type="button"
+                onClick={() => applyTab("updated_after_reply")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "updated_after_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+              >
+                {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => applyTab("manual_review")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "manual_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
                 {t("orders.manualReview")} <span className="bg-red-100 text-red-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.manual_review || 0}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => applyTab("gemini_review")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "gemini_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
-              >
-                {t("orders.geminiReview")} <span className="bg-fuchsia-100 text-fuchsia-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.gemini_review || 0}</span>
               </button>
               <button
                 type="button"
@@ -380,24 +437,24 @@ export function OrdersPage() {
               </button>
               <button
                 type="button"
-                onClick={() => applyTab("failed")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "failed" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                onClick={() => applyTab("gemini_review")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "gemini_review" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {t("status.failed")} <span className="bg-slate-200 text-slate-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.failed || 0}</span>
+                {t("orders.geminiReview")} <span className="bg-fuchsia-100 text-fuchsia-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.gemini_review || 0}</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyTab("unknown")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "unknown" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {t("status.unknown")} <span className="bg-slate-200 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.unknown || 0}</span>
+                {lang === "de" ? "Unbekannt" : "Unknown"} <span className="bg-slate-200 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.unknown || 0}</span>
               </button>
               <button
                 type="button"
-                onClick={() => applyTab("updated_after_reply")}
-                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "updated_after_reply" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
+                onClick={() => applyTab("failed")}
+                className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "failed" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {t("status.updated_after_reply")} <span className="bg-teal-100 text-teal-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts.updated_after_reply || 0}</span>
+                {t("status.failed")} <span className="bg-slate-200 text-slate-700 py-0.5 px-2 rounded-full text-xs ml-1">{counts?.status?.failed || 0}</span>
               </button>
             </div>
           </div>
@@ -431,16 +488,16 @@ export function OrdersPage() {
                   <input
                     type="date"
                     className="bg-transparent text-sm text-slate-700 focus:outline-none"
-                    value={fromDate}
-                    onChange={(event) => updateParams({ from: event.target.value || null })}
+                    value={displayedFromDate}
+                    onChange={(event) => updateParams({ queue: null, from: event.target.value || null })}
                     aria-label={t("common.from")}
                   />
                   <span className="text-slate-300">-</span>
                   <input
                     type="date"
                     className="bg-transparent text-sm text-slate-700 focus:outline-none"
-                    value={toDate}
-                    onChange={(event) => updateParams({ to: event.target.value || null })}
+                    value={displayedToDate}
+                    onChange={(event) => updateParams({ queue: null, to: event.target.value || null })}
                     aria-label={t("common.to")}
                   />
                 </div>
@@ -465,6 +522,7 @@ export function OrdersPage() {
                       setSearchInput("");
                       updateParams({
                         q: null,
+                        queue: null,
                         status: null,
                         validation_status: null,
                         client: null,
@@ -508,76 +566,83 @@ export function OrdersPage() {
               onPointerUp={handleTablePointerUp}
               onPointerLeave={handleTablePointerUp}
               onPointerCancel={handleTablePointerUp}
-              className={`relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-x-auto overflow-y-auto max-h-[70vh] ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
+              className={`relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-x-auto ${isDraggingTable ? "cursor-grabbing select-none" : "cursor-grab"}`}
             >
-              <table className="w-full text-left text-sm whitespace-nowrap">
+              <table className="min-w-full table-fixed text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                   <tr>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40 max-w-40">{t("common.orderId")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-44 max-w-44">{t("common.kommissionNumber")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-64 max-w-64">{t("common.customer")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("fields.mail_to")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-56 max-w-56">{t("common.amount")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.status")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.validation")}</th>
-                    <th className="px-4 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50">{t("common.actions")}</th>
+                    <th className="w-16 px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                    <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
+                    <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
+                    <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
+                    <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-36">{t("common.status")}</th>
+                    <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-32">{t("common.validation")}</th>
+                    <th className="px-3 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50 w-28">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {visibleOrders.map((order, index) => (
-                    <tr key={order.id} className="hover:bg-slate-50 transition-colors group">
+                    <tr
+                      key={order.id}
+                      ref={(node) => {
+                        if (node) {
+                          orderRowRefs.current.set(order.id, node);
+                        } else {
+                          orderRowRefs.current.delete(order.id);
+                        }
+                      }}
+                      className="hover:bg-slate-50 transition-colors group"
+                    >
                       <td className="px-4 py-3 text-slate-500 border-r border-slate-100 sticky left-0 z-10 bg-surface-light">
                         {(pagination.page - 1) * (pagination.page_size || visibleOrders.length || 0) + index + 1}
                       </td>
-                      <td className="px-4 py-3 w-40 max-w-40">
+                      <td className="w-72 px-4 py-3">
                         <button
                           type="button"
-                          onClick={() => navigate(`/orders/${order.id}`)}
+                          onClick={() => {
+                            rememberOrderPosition(order.id);
+                            navigate(`/orders/${order.id}`);
+                          }}
                           className="font-medium text-primary hover:underline block w-full text-left truncate"
                         >
                           {order.ticket_number || order.id}
                         </button>
+                        <div className="text-xs text-slate-500 truncate mt-1">{order.kom_nr || "-"}</div>
                       </td>
-                      <td className="px-4 py-3 w-44 max-w-44 text-slate-700 truncate">{order.kom_nr || "-"}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatDateTime(order.effective_received_at, lang)}</td>
-                      <td className="px-4 py-3 w-64 max-w-64">
+                      <td className="w-72 px-4 py-3 text-slate-600 truncate">{formatDateTime(order.effective_received_at, lang)}</td>
+                      <td className="w-72 px-4 py-3">
                         <div className="font-medium text-slate-900 truncate">{order.kom_name || "-"}</div>
                         <div className="text-xs text-slate-500 truncate">{order.store_name || order.kundennummer || "-"}</div>
                       </td>
-                      <td className="px-4 py-3 text-slate-600 truncate">{order.mail_to || "-"}</td>
-                      <td className="px-4 py-3 font-medium text-slate-900 w-56 max-w-56">
-                        <span className="block truncate">{order.delivery_week || order.liefertermin || "-"}</span>
-                      </td>
-                      <td className="px-4 py-3"><StatusBadge status={order.status} /></td>
-                      <td className="px-4 py-3"><ValidationBadge status={order.validation_status} /></td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
+                      <td className="px-3 py-2.5"><StatusBadge status={order.status} compact /></td>
+                      <td className="px-3 py-2.5"><ValidationBadge status={order.validation_status} compact /></td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-0.5">
                           <button
                             type="button"
                             onClick={() => handleDownloadXml(order.id)}
                             disabled={actionBusy === `download:${order.id}`}
-                            className="p-1.5 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
+                            className="p-1 text-slate-500 hover:text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-60"
                             title={t("common.downloadXml")}
                           >
-                            <span className="material-icons text-lg">download</span>
+                            <span className="material-icons text-[18px]">download</span>
                           </button>
                           <Link
                             to={`/orders/${order.id}`}
-                            className="p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
+                            onClick={() => rememberOrderPosition(order.id)}
+                            className="p-1 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
                             title={t("common.viewDetails")}
                           >
-                            <span className="material-icons text-lg">visibility</span>
+                            <span className="material-icons text-[18px]">visibility</span>
                           </Link>
                           <button
                             type="button"
                             onClick={() => handleDeleteOrder(order)}
                             disabled={actionBusy === `delete:${order.id}`}
-                            className="p-1.5 text-slate-500 hover:text-danger hover:bg-danger/10 rounded transition-colors disabled:opacity-60"
+                            className="p-1 text-slate-500 hover:text-danger hover:bg-danger/10 rounded transition-colors disabled:opacity-60"
                             title={t("common.delete")}
                           >
-                            <span className="material-icons text-lg">delete</span>
+                            <span className="material-icons text-[18px]">delete</span>
                           </button>
                         </div>
                       </td>
@@ -585,7 +650,7 @@ export function OrdersPage() {
                   ))}
                   {!loading && visibleOrders.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-10 text-center text-slate-500" colSpan={10}>
+                      <td className="px-4 py-10 text-center text-slate-500" colSpan={7}>
                         <div className="space-y-1">
                           <p className="text-sm font-medium text-slate-700">{t("orders.noMatchingOrders")}</p>
                           <p className="text-xs text-slate-500">{t("orders.workspaceSubtitle")}</p>
@@ -602,7 +667,7 @@ export function OrdersPage() {
                 {t("orders.showing", {
                   from: visibleOrders.length ? (pagination.page - 1) * (pagination.page_size || visibleOrders.length) + 1 : 0,
                   to: (pagination.page - 1) * (pagination.page_size || 0) + visibleOrders.length,
-                  total: deliveryWeekParam ? visibleOrders.length : pagination.total || 0,
+                  total: queueParam === "today" && !fromDate && !toDate ? (counts.today || visibleOrders.length) : (pagination.total || 0),
                 })}
               </div>
               <div className="flex items-center gap-2">

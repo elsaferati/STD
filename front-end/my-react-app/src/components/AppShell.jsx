@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 import { useI18n } from "../i18n/I18nContext";
@@ -25,10 +26,42 @@ export function AppShell({
 }) {
   const { user, logout } = useAuth();
   const { t } = useI18n();
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef(null);
 
   const isAdmin = user?.role === "admin";
   const username = user?.username ?? user?.email ?? "";
   const showUser = Boolean(username);
+
+  useEffect(() => {
+    if (!isUserMenuOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsUserMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isUserMenuOpen]);
+
+  const handleLogout = async () => {
+    setIsUserMenuOpen(false);
+    await logout();
+  };
 
   return (
     <div className="bg-background-light text-slate-800 font-display min-h-screen">
@@ -82,20 +115,33 @@ export function AppShell({
               <div className="flex items-center gap-3 shrink-0">
                 <LanguageSwitcher compact />
                 {showUser ? (
-                  <div className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-700">
-                    <span className="material-icons text-lg text-slate-500">account_circle</span>
-                    <span className="text-sm font-medium">{username}</span>
+                  <div ref={userMenuRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setIsUserMenuOpen((open) => !open)}
+                      aria-haspopup="menu"
+                      aria-expanded={isUserMenuOpen}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
+                    >
+                      <span className="material-icons text-lg text-slate-500">account_circle</span>
+                      <span className="text-sm font-medium">{username}</span>
+                      <span className={`material-icons text-base text-slate-400 transition-transform ${isUserMenuOpen ? "rotate-180" : ""}`}>
+                        expand_more
+                      </span>
+                    </button>
+                    {isUserMenuOpen ? (
+                      <div className="absolute right-0 top-[calc(100%+0.5rem)] w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                        <button
+                          type="button"
+                          onClick={handleLogout}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
+                        >
+                          <span className="material-icons text-base">logout</span>
+                          <span>{t("common.logout")}</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-                {showUser ? (
-                  <button
-                    type="button"
-                    onClick={logout}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200 text-slate-800 hover:bg-slate-300 transition-colors"
-                  >
-                    <span className="material-icons text-base">logout</span>
-                    <span className="text-sm font-medium">{t("common.logout")}</span>
-                  </button>
                 ) : null}
               </div>
             </div>

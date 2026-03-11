@@ -12,15 +12,15 @@ const STYLES = {
   updated_after_reply: "bg-teal-50 text-teal-700 border-teal-200",
 };
 
-export function StatusBadge({ status }) {
+export function StatusBadge({ status, compact = false }) {
   const { t } = useI18n();
   const raw = (status || "ok").toLowerCase();
   const normalized = (raw === "partial" || raw === "reply") ? "waiting_for_reply" : raw;
   const color = STYLES[normalized] || STYLES.unknown;
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${color}`}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
+    <span className={`inline-flex items-center rounded-full border font-medium ${compact ? "gap-1 px-2 py-0.5 text-[11px]" : "gap-1.5 px-2.5 py-1 text-xs"} ${color}`}>
+      <span className={`${compact ? "h-1.5 w-1.5" : "w-1.5 h-1.5"} rounded-full bg-current`} />
       {statusLabel(normalized, t)}
     </span>
   );

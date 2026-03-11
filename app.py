@@ -642,6 +642,7 @@ def _orders_counts_cache_key(
     post_case: bool | None,
     validation_statuses: set[str] | None,
     client_branches: set[str] | None,
+    delivery_week: str | None,
     assigned_user_id: str | None,
     allowed_client_branches: set[str] | None,
     today_start: datetime,
@@ -656,6 +657,7 @@ def _orders_counts_cache_key(
         post_case,
         tuple(sorted(validation_statuses or set())),
         tuple(sorted(client_branches or set())),
+        str(delivery_week or "").strip(),
         assigned_user_id or "",
         tuple(sorted(allowed_client_branches or set())),
         today_start.date().isoformat(),
@@ -930,6 +932,9 @@ def _tab_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
 
 def _parse_orders_query(allow_default_pagination: bool = True):
     q = (request.args.get("q") or "").strip()
+    queue = (request.args.get("queue") or "").strip().lower()
+    if queue and queue != "today":
+        return None, _api_error(400, "invalid_queue", f"Invalid queue value '{queue}'")
 
     raw_status = (request.args.get("status") or "").strip()
     statuses: set[str] | None = None
@@ -996,6 +1001,8 @@ def _parse_orders_query(allow_default_pagination: bool = True):
             return None, _api_error(400, "invalid_client", f"Invalid client values: {', '.join(invalid)}")
         client_branches = parsed_client_branches
 
+    delivery_week = (request.args.get("delivery_week") or "").strip() or None
+
     sort_key = (request.args.get("sort") or "received_at_desc").strip().lower()
     if sort_key not in ALLOWED_SORTS:
         return None, _api_error(
@@ -1005,7 +1012,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         )
 
     page = 1
-    page_size = 25
+    page_size = 100
     should_paginate = allow_default_pagination
     if not allow_default_pagination and "page" not in request.args and "page_size" not in request.args:
         should_paginate = False
@@ -1018,16 +1025,17 @@ def _parse_orders_query(allow_default_pagination: bool = True):
 
     if "page_size" in request.args:
         try:
-            page_size = int((request.args.get("page_size") or "25").strip())
+            page_size = int((request.args.get("page_size") or "100").strip())
         except ValueError:
             return None, _api_error(400, "invalid_pagination", "Invalid page_size value.")
         if page_size < 1 or page_size > 500:
             return None, _api_error(400, "invalid_pagination", "page_size must be between 1 and 500.")
     elif should_paginate:
-        page_size = 25
+        page_size = 100
 
     query = {
         "q": q,
+        "queue": queue or None,
         "date_from": date_from,
         "date_to": date_to,
         "statuses": statuses,
@@ -1036,6 +1044,7 @@ def _parse_orders_query(allow_default_pagination: bool = True):
         "post_case": post_case,
         "validation_statuses": validation_statuses,
         "client_branches": client_branches,
+        "delivery_week": delivery_week,
         "sort_key": sort_key,
         "page": page,
         "page_size": page_size,
@@ -1066,6 +1075,13 @@ def _query_orders(
     if parsed["date_to"] is not None:
         received_to = datetime.combine(parsed["date_to"] + timedelta(days=1), datetime.min.time(), tzinfo=local_tz)
 
+    counts_received_from = received_from
+    counts_received_to = received_to
+
+    if parsed["queue"] == "today" and parsed["date_from"] is None and parsed["date_to"] is None:
+        received_from = today_start
+        received_to = today_end
+
     scope = access_scope or {"assigned_user_id": None, "allowed_client_branches": None}
     effective_client_branches = _effective_client_branches(
         parsed["client_branches"],
@@ -1076,12 +1092,13 @@ def _query_orders(
         q=parsed["q"],
         received_from=received_from,
         received_to=received_to,
-        statuses=parsed["statuses"],
+        statuses=None,
         reply_needed=parsed["reply_needed"],
         human_review_needed=parsed["human_review_needed"],
         post_case=parsed["post_case"],
-        validation_statuses=parsed["validation_statuses"],
+        validation_statuses=None,
         client_branches=effective_client_branches,
+        delivery_week=parsed["delivery_week"],
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
         today_start=today_start,
@@ -1093,12 +1110,15 @@ def _query_orders(
             q=parsed["q"],
             received_from=received_from,
             received_to=received_to,
+            counts_received_from=counts_received_from,
+            counts_received_to=counts_received_to,
             statuses=parsed["statuses"],
             reply_needed=parsed["reply_needed"],
             human_review_needed=parsed["human_review_needed"],
             post_case=parsed["post_case"],
             validation_statuses=parsed["validation_statuses"],
             client_branches=effective_client_branches,
+            delivery_week=parsed["delivery_week"],
             assigned_user_id=scope.get("assigned_user_id"),
             allowed_client_branches=scope.get("allowed_client_branches"),
             sort_key=parsed["sort_key"],
