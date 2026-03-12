@@ -54,7 +54,7 @@ from auth import (
     session_cookie_name,
     session_cookie_options,
 )
-from db import _drop_thread_connection, execute, fetch_all, fetch_one, init_db
+from db import _drop_thread_connection, execute, fetch_all, fetch_one, init_db, transaction
 
 load_dotenv()
 config = Config.from_env()
@@ -115,12 +115,14 @@ ALLOWED_DATA_EXPORT_TABLES = frozenset(
     {
         "filialen_import_stage",
         "kunden_import_stage",
+        "modelnr_std_import_stage",
         "wochen_import_stage",
     }
 )
 ALLOWED_DATA_IMPORT_TABLES = frozenset({
     "filialen_import_stage",
     "kunden_import_stage",
+    "modelnr_std_import_stage",
 })
 IMPORT_COLUMN_MAP: dict[str, dict[str, str]] = {
     "kunden_import_stage": {
@@ -147,6 +149,10 @@ IMPORT_COLUMN_MAP: dict[str, dict[str, str]] = {
         "Rechnungsregulierer (NAD+IV)": "rechnungsregulierer",
         "Gesellschaft": "gesellschaft",
         "Datenempfänger": "datenempfaenger",
+    },
+    "modelnr_std_import_stage": {
+        "VABTRA": "vabtra",
+        "VAMDNR": "vamdnr",
     },
 }
 DATA_EXPORT_TABLE_ALIASES = {
@@ -1696,6 +1702,11 @@ def _load_data_export_rows(table_name: str) -> tuple[list[str], list[dict[str, A
     if table_name not in ALLOWED_DATA_EXPORT_TABLES:
         raise ValueError(f"Unsupported export table: {table_name}")
     rows = fetch_all(f'SELECT * FROM "{table_name}"')
+    export_map = IMPORT_COLUMN_MAP.get(table_name)
+    if export_map:
+        columns = list(export_map.keys())
+        transformed_rows = [{header: row.get(db_column) for header, db_column in export_map.items()} for row in rows]
+        return columns, transformed_rows
     columns = _data_export_columns(table_name, rows)
     return columns, rows
 
@@ -2481,37 +2492,47 @@ def _import_table_from_xlsx(table_name: str, file_stream: Any) -> int:
 
     # Map positional index -> db column name (skip unrecognized headers)
     index_to_col: dict[int, str] = {}
+    matched_headers: set[str] = set()
     for idx, cell_val in enumerate(header_row):
         if cell_val is None:
             continue
         header = str(cell_val).strip()
         if header in col_map:
             index_to_col[idx] = col_map[header]
+            matched_headers.add(header)
+
+    missing_headers = [header for header in col_map if header not in matched_headers]
+    if missing_headers:
+        missing_str = ", ".join(missing_headers)
+        raise ValueError(f"Missing required columns: {missing_str}")
 
     data_rows: list[dict[str, Any]] = []
     for row in rows_iter:
         record: dict[str, Any] = {}
         for idx, db_col in index_to_col.items():
             cell_val = row[idx] if idx < len(row) else None
-            record[db_col] = str(cell_val) if cell_val is not None else None
+            if cell_val is None:
+                record[db_col] = None
+            elif isinstance(cell_val, float) and cell_val.is_integer():
+                record[db_col] = str(int(cell_val))
+            else:
+                record[db_col] = str(cell_val).strip()
         if any(v is not None for v in record.values()):
             data_rows.append(record)
 
-    if not data_rows:
-        execute(f'DELETE FROM "{table_name}"')
-        return 0
-
-    db_cols = list(data_rows[0].keys())
+    db_cols = list(col_map.values())
     cols_sql = ", ".join(f'"{c}"' for c in db_cols)
     placeholders = ", ".join(["%s"] * len(db_cols))
 
-    execute(f'DELETE FROM "{table_name}"')
-    for record in data_rows:
-        values = [record.get(c) for c in db_cols]
-        execute(
-            f'INSERT INTO "{table_name}" ({cols_sql}) VALUES ({placeholders})',
-            values,
-        )
+    with transaction() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(f'DELETE FROM "{table_name}"')
+            if data_rows:
+                insert_rows = [[record.get(column_name) for column_name in db_cols] for record in data_rows]
+                cursor.executemany(
+                    f'INSERT INTO "{table_name}" ({cols_sql}) VALUES ({placeholders})',
+                    insert_rows,
+                )
     return len(data_rows)
 
 

@@ -17,6 +17,12 @@ const DATASET_ACTIONS = [
     importLabelKey: "kundenImportStageImport",
     badge: "CRM",
   },
+  {
+    tableName: "modelnr_std_import_stage",
+    exportLabelKey: "modelnrStdImportStage",
+    importLabelKey: "modelnrStdImportStageImport",
+    badge: "STD",
+  },
 ];
 
 function buildExportFilename(tableName) {

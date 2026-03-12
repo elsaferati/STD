@@ -312,6 +312,7 @@ export const translations = {
       importColumn: "Import",
       filialenImportStage: "Export ILN LISTE",
       kundenImportStage: "Export KUNDEN EXCEL",
+      modelnrStdImportStage: "Export STD MODEL NUMBERS",
       exporting: "Exporting...",
       exportFailed: "Excel export failed.",
       comingSoon: "Coming soon",
@@ -325,6 +326,7 @@ export const translations = {
       importFailed: "Import failed.",
       filialenImportStageImport: "Import ILN LISTE",
       kundenImportStageImport: "Import KUNDEN EXCEL",
+      modelnrStdImportStageImport: "Import STD MODEL NUMBERS",
     },
     users: {
       title: "Users",
@@ -652,6 +654,7 @@ export const translations = {
       exportsSubtitle: "Excel-Dateien direkt aus den Import-Stage-Tabellen herunterladen.",
       filialenImportStage: "ILN LISTE exportieren",
       kundenImportStage: "KUNDEN EXCEL exportieren",
+      modelnrStdImportStage: "STD MODELLNUMMERN exportieren",
       exporting: "Export laeuft...",
       exportFailed: "Excel-Export fehlgeschlagen.",
       comingSoon: "Demnaechst",
@@ -665,6 +668,7 @@ export const translations = {
       importFailed: "Import fehlgeschlagen.",
       filialenImportStageImport: "Import ILN LISTE",
       kundenImportStageImport: "Import KUNDEN EXCEL",
+      modelnrStdImportStageImport: "STD MODELLNUMMERN importieren",
     },
     users: {
       title: "Benutzer",
