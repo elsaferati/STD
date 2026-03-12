@@ -131,7 +131,8 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
         return None
     row = fetch_one(
         """
-        SELECT id, username, password_hash, role, is_active
+        SELECT id, username, password_hash, role, is_active,
+               is_super_admin, can_control_1, can_control_2, can_final_control
         FROM users
         WHERE lower(username) = lower(%s)
         """,
@@ -147,6 +148,10 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
         "username": row["username"],
         "role": row["role"],
         "client_branches": _user_client_branches(str(row["id"])),
+        "is_super_admin": bool(row.get("is_super_admin")),
+        "can_control_1": bool(row.get("can_control_1")),
+        "can_control_2": bool(row.get("can_control_2")),
+        "can_final_control": bool(row.get("can_final_control")),
     }
 
 
