@@ -1312,6 +1312,22 @@ def apply_program_furncloud_to_items(data: dict[str, Any], warnings: list[str] |
         warnings.append("program.furncloud_id differs from one or more item furncloud_id values.")
 
 
+def _porta_has_multiple_furncloud_ids(data: dict[str, Any]) -> bool:
+    """Return True if the order items contain 2 or more distinct non-empty furncloud IDs."""
+    items = data.get("items")
+    if not isinstance(items, list):
+        return False
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        entry = item.get("furncloud_id")
+        val = _clean_text(entry.get("value") if isinstance(entry, dict) else entry)
+        if val:
+            seen.add(val)
+    return len(seen) >= 2
+
+
 def _apply_wunschtermin_rule(header: dict[str, Any]) -> None:
     wunsch = header.get("wunschtermin", {})
     if _clean_text(wunsch.get("value")):
@@ -1795,6 +1811,10 @@ def normalize_output(
     _propagate_furncloud_id(items, warnings)
     _remove_furncloud_ghost_items(items, warnings)
     apply_program_furncloud_to_items(data, warnings)
+    # Porta: multiple furncloud IDs require human review
+    if (branch_id or "").strip() == "porta" and _porta_has_multiple_furncloud_ids(data):
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _append_unique_warning(warnings, "Multiple furncloud IDs detected: human review required.")
 
     existing_warnings = data.get("warnings", [])
     if not isinstance(existing_warnings, list):
@@ -1919,6 +1939,13 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     )
 
     extraction_branch = str(data.get("extraction_branch") or "").strip()
+    # Porta: multiple furncloud IDs require human review
+    if extraction_branch == "porta" and _porta_has_multiple_furncloud_ids(data):
+        _ensure_field(header, "human_review_needed")["value"] = True
+        _append_unique_warning(
+            data.setdefault("warnings", []),
+            "Multiple furncloud IDs detected: human review required.",
+        )
     segmuller_review_only = _is_segmuller_missing_layout_review_only(
         header,
         extraction_branch,

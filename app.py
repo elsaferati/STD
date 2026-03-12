@@ -2436,9 +2436,8 @@ def api_orders_export_xml_zip():
                 documents = xml_exporter.render_xml_documents(data, "", config, Path("."))
             except Exception:
                 continue
-            folder = xml_exporter._effective_xml_base_name(data) or order_id
             for doc in documents:
-                zf.writestr(f"{folder}/{doc.filename}", doc.content)
+                zf.writestr(doc.filename, doc.content)
 
     date_stamp = datetime.now().astimezone().strftime("%Y-%m-%d")
     filename = f"orders_xml_{date_stamp}.zip"
