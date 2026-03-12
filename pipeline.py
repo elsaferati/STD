@@ -35,7 +35,10 @@ import zb_lookup
 
 SUPPORTED_IMAGE_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}
-_TICKET_SUBJECT_RE = re.compile(r"ticket\s*number\b[^0-9]*(\d+)", re.IGNORECASE)
+_TICKET_SUBJECT_RE = re.compile(
+    r"ticket[\s\-_]*(?:number|num|nr|no)?\b[^0-9]*(\d+)",
+    re.IGNORECASE,
+)
 _BESTEHEND_AUS_JE_RE = re.compile(r"bestehend\s+aus\s+je\s*:", re.IGNORECASE)
 _PORTA_PARENT_ARTIKEL_NR_RE = re.compile(r"\b\d{6,8}\s*/\s*\d{2}\b")
 _PORTA_ARTICLE_TOKEN_PATTERN = (
@@ -713,7 +716,7 @@ def _extract_ticket_number(subject: str) -> str:
     if not match:
         return ""
     digits = str(match.group(1) or "").strip()
-    if len(digits) == 7 and digits.isdigit() and int(digits) >= 1000000:
+    if digits.isdigit() and int(digits) >= 1000000:
         return digits
     return ""
 
