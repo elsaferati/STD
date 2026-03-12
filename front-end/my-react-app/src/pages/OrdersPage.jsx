@@ -9,6 +9,23 @@ import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBr
 import { downloadBlob } from "../utils/download";
 import { formatDateTime } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
+import { useAuth } from "../auth/useAuth";
+
+const PX_STATUS_CONFIG = {
+  pending: { label: "Human in the Loop", className: "bg-yellow-50 text-yellow-700 border-yellow-200" },
+  control_1_done: { label: "Control 1 Done", className: "bg-sky-50 text-sky-700 border-sky-200" },
+  control_2_done: { label: "Control 2 Done", className: "bg-blue-50 text-blue-700 border-blue-200" },
+  done: { label: "Done", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+};
+
+function PxStatusBadge({ status }) {
+  const cfg = PX_STATUS_CONFIG[status] || PX_STATUS_CONFIG.pending;
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cfg.className}`}>
+      {cfg.label}
+    </span>
+  );
+}
 
 const ORDER_LIST_RESTORE_KEY = "orders_list_restore";
 
@@ -26,6 +43,8 @@ export function OrdersPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, lang } = useI18n();
+  const { user } = useAuth();
+  const hasPxPermission = Boolean(user?.can_control_1 || user?.can_control_2 || user?.can_final_control);
 
   const [payload, setPayload] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -566,6 +585,7 @@ export function OrdersPage() {
                     <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
                     <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
                     <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
+                    {hasPxPermission && <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40">PX Status</th>}
                     <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-36">{t("common.status")}</th>
                     <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-32">{t("common.validation")}</th>
                     <th className="px-3 py-3 font-semibold text-slate-500 text-right sticky top-0 z-10 bg-slate-50 w-28">{t("common.actions")}</th>
@@ -605,6 +625,11 @@ export function OrdersPage() {
                         <div className="font-medium text-slate-900 truncate">{order.kom_name || "-"}</div>
                         <div className="text-xs text-slate-500 truncate">{order.store_name || order.kundennummer || "-"}</div>
                       </td>
+                      {hasPxPermission && (
+                        <td className="px-3 py-2.5">
+                          <PxStatusBadge status={order.px_status || "pending"} />
+                        </td>
+                      )}
                       <td className="px-3 py-2.5"><StatusBadge status={order.status} compact /></td>
                       <td className="px-3 py-2.5"><ValidationBadge status={order.validation_status} compact /></td>
                       <td className="px-3 py-2.5 text-right">

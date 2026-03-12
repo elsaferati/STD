@@ -414,6 +414,10 @@ def _serialize_user_record(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row.get("updated_at"),
         "last_login_at": row.get("last_login_at"),
         "client_branches": _fetch_user_client_branches(user_id),
+        "is_super_admin": bool(row.get("is_super_admin")),
+        "can_control_1": bool(row.get("can_control_1")),
+        "can_control_2": bool(row.get("can_control_2")),
+        "can_final_control": bool(row.get("can_final_control")),
     }
     if role == "admin":
         payload["client_branches"] = []
@@ -1271,6 +1275,10 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     response["last_event_at"] = order.get("last_event_at")
     response["editable_header_fields"] = EDITABLE_HEADER_FIELDS
     response["editable_item_fields"] = EDITABLE_ITEM_FIELDS
+    try:
+        response["px_controls"] = order_store.get_px_controls(order["safe_id"])
+    except Exception:  # noqa: BLE001
+        response["px_controls"] = None
     return response
 
 
@@ -1908,6 +1916,10 @@ def api_auth_me():
                 "username": user["username"],
                 "role": user["role"],
                 "client_branches": user.get("client_branches", []),
+                "is_super_admin": bool(user.get("is_super_admin")),
+                "can_control_1": bool(user.get("can_control_1")),
+                "can_control_2": bool(user.get("can_control_2")),
+                "can_final_control": bool(user.get("can_final_control")),
             }
         }
     )
@@ -1980,7 +1992,8 @@ def api_users():
     if request.method == "GET":
         rows = fetch_all(
             """
-            SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
+            SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at,
+                   is_super_admin, can_control_1, can_control_2, can_final_control
             FROM users
             ORDER BY created_at DESC
             """
@@ -1999,6 +2012,13 @@ def api_users():
     client_branches, branch_error = _parse_client_branches_input(raw_client_branches)
     if branch_error is not None:
         return branch_error
+
+    current_user_create = getattr(g, "user", {}) or {}
+    caller_is_super_admin = bool(current_user_create.get("is_super_admin")) or current_user_create.get("role") == "admin"
+    new_is_super_admin = bool(payload.get("is_super_admin")) if caller_is_super_admin else False
+    new_can_control_1 = bool(payload.get("can_control_1")) if caller_is_super_admin else False
+    new_can_control_2 = bool(payload.get("can_control_2")) if caller_is_super_admin else False
+    new_can_final_control = bool(payload.get("can_final_control")) if caller_is_super_admin else False
 
     if not username or not password:
         return _api_error(400, "bad_request", "Username and password are required")
@@ -2026,8 +2046,10 @@ def api_users():
     new_id = str(uuid.uuid4())
     execute(
         """
-        INSERT INTO users (id, username, password_hash, email, role, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO users (id, username, password_hash, email, role, is_active,
+                           is_super_admin, can_control_1, can_control_2, can_final_control,
+                           created_at, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             new_id,
@@ -2036,6 +2058,10 @@ def api_users():
             email,
             role,
             is_active,
+            new_is_super_admin,
+            new_can_control_1,
+            new_can_control_2,
+            new_can_final_control,
             now,
             now,
         ),
@@ -2055,6 +2081,10 @@ def api_users():
                     "is_active": is_active,
                     "created_at": now.isoformat(),
                     "client_branches": [] if role == "admin" else sorted(client_branches or set()),
+                    "is_super_admin": new_is_super_admin,
+                    "can_control_1": new_can_control_1,
+                    "can_control_2": new_can_control_2,
+                    "can_final_control": new_can_final_control,
                 }
             }
         ),
@@ -2079,6 +2109,13 @@ def api_user_update(user_id: str):
     client_branches, branch_error = _parse_client_branches_input(raw_client_branches)
     if has_client_branches and branch_error is not None:
         return branch_error
+
+    current_user_upd = getattr(g, "user", {}) or {}
+    caller_is_super_admin_upd = bool(current_user_upd.get("is_super_admin")) or current_user_upd.get("role") == "admin"
+    upd_is_super_admin = payload.get("is_super_admin")
+    upd_can_control_1 = payload.get("can_control_1")
+    upd_can_control_2 = payload.get("can_control_2")
+    upd_can_final_control = payload.get("can_final_control")
 
     existing = fetch_one("SELECT id, username, role FROM users WHERE id = %s", (user_id,))
     if not existing:
@@ -2140,6 +2177,18 @@ def api_user_update(user_id: str):
     if password:
         fields.append("password_hash = %s")
         values.append(hash_password(password))
+    if caller_is_super_admin_upd and upd_is_super_admin is not None:
+        fields.append("is_super_admin = %s")
+        values.append(bool(upd_is_super_admin))
+    if caller_is_super_admin_upd and upd_can_control_1 is not None:
+        fields.append("can_control_1 = %s")
+        values.append(bool(upd_can_control_1))
+    if caller_is_super_admin_upd and upd_can_control_2 is not None:
+        fields.append("can_control_2 = %s")
+        values.append(bool(upd_can_control_2))
+    if caller_is_super_admin_upd and upd_can_final_control is not None:
+        fields.append("can_final_control = %s")
+        values.append(bool(upd_can_final_control))
 
     now = datetime.now().astimezone()
     scopes_need_update = effective_client_branches != existing_client_branches
@@ -2157,7 +2206,8 @@ def api_user_update(user_id: str):
     _replace_user_client_scopes(user_id, effective_client_branches, now=now)
     updated_row = fetch_one(
         """
-        SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at
+        SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at,
+               is_super_admin, can_control_1, can_control_2, can_final_control
         FROM users
         WHERE id = %s
         """,
@@ -2418,14 +2468,27 @@ def api_clients_counts():
 
 @app.route("/api/orders")
 def api_orders():
-    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    current_user_orders = getattr(g, "user", {}) or {}
+    scope = _order_access_scope(current_user_orders)
     result, error = _query_orders(allow_default_pagination=True, access_scope=scope)
     if error is not None:
         return error
 
+    orders_serialized = result["orders_serialized"]
+    has_px = any([
+        current_user_orders.get("can_control_1"),
+        current_user_orders.get("can_control_2"),
+        current_user_orders.get("can_final_control"),
+    ])
+    if has_px:
+        order_ids = [o.get("id", "") for o in orders_serialized if o.get("id")]
+        px_map = order_store.get_px_status_map(order_ids)
+        for o in orders_serialized:
+            o["px_status"] = px_map.get(str(o.get("id", "")), "pending")
+
     return jsonify(
         {
-            "orders": result["orders_serialized"],
+            "orders": orders_serialized,
             "pagination": result["pagination"],
             "counts": result["counts"],
         }
@@ -2961,6 +3024,83 @@ def api_resolve_order_validation(order_id: str):
     if updated_error is not None:
         return updated_error
     return jsonify(_order_api_payload(updated_order))
+
+
+@app.route("/api/orders/<order_id>/px-status", methods=["GET"])
+def api_px_status(order_id: str):
+    user = getattr(g, "user", {}) or {}
+    has_px = any([user.get("can_control_1"), user.get("can_control_2"), user.get("can_final_control")])
+    if not has_px and user.get("role") != "admin":
+        return _api_error(403, "forbidden", "PX permission required")
+    px = order_store.get_px_controls(order_id)
+    if not px:
+        return _api_error(404, "not_found", "PX controls not found for this order")
+    return jsonify({"px_controls": px})
+
+
+@app.route("/api/orders/<order_id>/px-confirm", methods=["POST"])
+def api_px_confirm(order_id: str):
+    from reply_email import send_px_xml_email as _send_px_xml_email
+
+    user = getattr(g, "user", {}) or {}
+    body = request.get_json(silent=True) or {}
+    level = str(body.get("level") or "").strip()
+
+    if level not in {"control_1", "control_2", "final_control"}:
+        return _api_error(400, "bad_request", "level must be control_1, control_2, or final_control")
+
+    perm_map = {
+        "control_1": "can_control_1",
+        "control_2": "can_control_2",
+        "final_control": "can_final_control",
+    }
+    if not user.get(perm_map[level]) and user.get("role") != "admin":
+        return _api_error(403, "forbidden", f"No {level} permission")
+
+    px = order_store.get_px_controls(order_id)
+    if not px:
+        return _api_error(404, "not_found", "Order PX controls not found")
+
+    current_status = px["px_status"]
+    user_id = str(user.get("id") or "")
+
+    # Enforce sequence
+    if level == "control_2" and current_status == "pending":
+        return _api_error(400, "sequence_error", "Control 1 must be completed first")
+    if level == "final_control" and current_status in ("pending", "control_1_done"):
+        return _api_error(400, "sequence_error", "Control 2 must be completed first")
+
+    # Prevent same user confirming two controls
+    existing_confirmers = [
+        px.get("control_1_user_id"),
+        px.get("control_2_user_id"),
+        px.get("final_control_user_id"),
+    ]
+    if user_id and user_id in [str(u) for u in existing_confirmers if u]:
+        return _api_error(400, "duplicate_control", "You have already confirmed a control for this order")
+
+    # Prevent confirming an already-done step
+    if level == "control_1" and current_status != "pending":
+        return _api_error(400, "already_confirmed", "Control 1 is already confirmed")
+    if level == "control_2" and current_status != "control_1_done":
+        return _api_error(400, "already_confirmed", "Control 2 is already confirmed or not yet available")
+    if level == "final_control" and current_status != "control_2_done":
+        return _api_error(400, "already_confirmed", "Final control is already confirmed or not yet available")
+
+    try:
+        order_store.confirm_px_control(order_id, level, user_id)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to confirm PX control: {exc}")
+
+    if level == "final_control":
+        try:
+            _send_px_xml_email(order_id, config, OUTPUT_DIR)
+        except Exception as exc:  # noqa: BLE001
+            # Log the error but don't fail the confirmation
+            app.logger.error("PX XML email failed for order %s: %s", order_id, exc)
+
+    updated_px = order_store.get_px_controls(order_id)
+    return jsonify({"px_controls": updated_px})
 
 
 @app.route("/api/files/<filename>")

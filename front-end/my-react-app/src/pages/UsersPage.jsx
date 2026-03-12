@@ -114,6 +114,10 @@ export function UsersPage() {
     role: "user",
     client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
+    is_super_admin: false,
+    can_control_1: false,
+    can_control_2: false,
+    can_final_control: false,
   });
   const [saving, setSaving] = useState(false);
   const [editUser, setEditUser] = useState(null);
@@ -124,6 +128,10 @@ export function UsersPage() {
     client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
     password: "",
+    is_super_admin: false,
+    can_control_1: false,
+    can_control_2: false,
+    can_final_control: false,
   });
   const [editSaving, setEditSaving] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -242,6 +250,10 @@ export function UsersPage() {
       client_branches: assignedBranches.length ? assignedBranches : [],
       is_active: Boolean(entry.is_active),
       password: "",
+      is_super_admin: Boolean(entry.is_super_admin),
+      can_control_1: Boolean(entry.can_control_1),
+      can_control_2: Boolean(entry.can_control_2),
+      can_final_control: Boolean(entry.can_final_control),
     });
   };
 
@@ -254,6 +266,10 @@ export function UsersPage() {
       client_branches: [...DEFAULT_USER_CLIENTS],
       is_active: true,
       password: "",
+      is_super_admin: false,
+      can_control_1: false,
+      can_control_2: false,
+      can_final_control: false,
     });
   };
 
@@ -275,6 +291,10 @@ export function UsersPage() {
           role: form.role,
           client_branches: form.role === "admin" ? [] : form.client_branches,
           is_active: form.is_active,
+          is_super_admin: form.is_super_admin,
+          can_control_1: form.can_control_1,
+          can_control_2: form.can_control_2,
+          can_final_control: form.can_final_control,
         },
       });
       setForm({
@@ -284,6 +304,10 @@ export function UsersPage() {
         role: "user",
         client_branches: [...DEFAULT_USER_CLIENTS],
         is_active: true,
+        is_super_admin: false,
+        can_control_1: false,
+        can_control_2: false,
+        can_final_control: false,
       });
       await loadUsers();
     } catch (requestError) {
@@ -319,6 +343,10 @@ export function UsersPage() {
           client_branches: editForm.role === "admin" ? [] : editForm.client_branches,
           is_active: editForm.is_active,
           password: editForm.password || undefined,
+          is_super_admin: editForm.is_super_admin,
+          can_control_1: editForm.can_control_1,
+          can_control_2: editForm.can_control_2,
+          can_final_control: editForm.can_final_control,
         },
       });
       closeEdit();
@@ -443,6 +471,24 @@ export function UsersPage() {
                 />
                 {t("users.active")}
               </label>
+              <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" name="is_super_admin" checked={form.is_super_admin} onChange={handleChange} className="h-4 w-4 accent-primary" />
+                  Super Admin
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" name="can_control_1" checked={form.can_control_1} onChange={handleChange} className="h-4 w-4 accent-primary" />
+                  Control 1
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" name="can_control_2" checked={form.can_control_2} onChange={handleChange} className="h-4 w-4 accent-primary" />
+                  Control 2
+                </label>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" name="can_final_control" checked={form.can_final_control} onChange={handleChange} className="h-4 w-4 accent-primary" />
+                  Final Control
+                </label>
+              </div>
               <div className="md:col-span-2 flex items-center gap-3">
                 <button
                   type="submit"
@@ -495,6 +541,7 @@ export function UsersPage() {
                     <th className="px-4 py-3 text-left">{t("users.role")}</th>
                     <th className="px-4 py-3 text-left">{t("users.client")}</th>
                     <th className="px-4 py-3 text-left">{t("users.active")}</th>
+                    <th className="px-4 py-3 text-left">PX Controls</th>
                     <th className="px-4 py-3 text-left">{t("users.lastLogin")}</th>
                     <th className="px-4 py-3 text-right">{t("users.actions")}</th>
                   </tr>
@@ -549,6 +596,15 @@ export function UsersPage() {
                           >
                             {entry.is_active ? t("users.activeYes") : t("users.activeNo")}
                           </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">
+                          <div className="flex flex-wrap gap-1">
+                            {entry.is_super_admin && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700">Super Admin</span>}
+                            {entry.can_control_1 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 text-sky-700">C1</span>}
+                            {entry.can_control_2 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">C2</span>}
+                            {entry.can_final_control && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">Final</span>}
+                            {!entry.is_super_admin && !entry.can_control_1 && !entry.can_control_2 && !entry.can_final_control && <span className="text-slate-400">-</span>}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{entry.last_login_at ? new Date(entry.last_login_at).toLocaleString() : "-"}</td>
                         <td className="px-4 py-3 text-right">
@@ -668,6 +724,24 @@ export function UsersPage() {
                     placeholder={t("users.resetPasswordHint")}
                   />
                 </label>
+                <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" name="is_super_admin" checked={editForm.is_super_admin} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
+                    Super Admin
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" name="can_control_1" checked={editForm.can_control_1} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
+                    Control 1
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" name="can_control_2" checked={editForm.can_control_2} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
+                    Control 2
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" name="can_final_control" checked={editForm.can_final_control} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
+                    Final Control
+                  </label>
+                </div>
                 <div className="md:col-span-2 flex items-center justify-end gap-3">
                   <button
                     type="button"

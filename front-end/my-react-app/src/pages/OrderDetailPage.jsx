@@ -5,12 +5,29 @@ import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
 import { ValidationBadge } from "../components/ValidationBadge";
 import { useI18n } from "../i18n/I18nContext";
+import { useAuth } from "../auth/useAuth";
 import { downloadBlob } from "../utils/download";
 import {
   entryValue,
   fieldLabel,
   formatDateTime,
 } from "../utils/format";
+
+const PX_STATUS_CONFIG = {
+  pending: { label: "Human in the Loop", className: "bg-yellow-50 text-yellow-700 border-yellow-200" },
+  control_1_done: { label: "Control 1 Done", className: "bg-sky-50 text-sky-700 border-sky-200" },
+  control_2_done: { label: "Control 2 Done", className: "bg-blue-50 text-blue-700 border-blue-200" },
+  done: { label: "Done", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+};
+
+function PxStatusBadge({ status }) {
+  const cfg = PX_STATUS_CONFIG[status] || PX_STATUS_CONFIG.pending;
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold border ${cfg.className}`}>
+      {cfg.label}
+    </span>
+  );
+}
 
 function buildHeaderDraft(order) {
   const header = order?.header || {};
@@ -62,12 +79,15 @@ export function OrderDetailPage() {
   const { orderId } = useParams();
   const navigate = useNavigate();
   const { t, lang } = useI18n();
+  const { user } = useAuth();
+  const hasPxPermission = Boolean(user?.can_control_1 || user?.can_control_2 || user?.can_final_control);
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyAction, setBusyAction] = useState("");
+  const [pxError, setPxError] = useState("");
   const [searchInput, setSearchInput] = useState("");
 
   const [isEditing, setIsEditing] = useState(false);
@@ -396,6 +416,24 @@ export function OrderDetailPage() {
       return;
     }
     navigate(`/orders?q=${encodeURIComponent(query)}`);
+  };
+
+  const handlePxConfirm = async (level) => {
+    if (!orderId) return;
+    setBusyAction(`px:${level}`);
+    setPxError("");
+    try {
+      const result = await fetchJson(`/api/orders/${encodeURIComponent(orderId)}/px-confirm`, {
+        method: "POST",
+        body: { level },
+      });
+      setOrder((prev) => prev ? { ...prev, px_controls: result.px_controls } : prev);
+      setNotice("PX control confirmed.");
+    } catch (requestError) {
+      setPxError(requestError.message || "Failed to confirm PX control.");
+    } finally {
+      setBusyAction("");
+    }
   };
 
   if (loading) {
@@ -794,6 +832,87 @@ export function OrderDetailPage() {
             </div>
           </aside>
         </div>
+
+        {hasPxPermission && order.px_controls ? (() => {
+          const px = order.px_controls;
+          const status = px.px_status || "pending";
+          const userId = user?.id ? String(user.id) : "";
+          const confirmedByMe = [px.control_1_user_id, px.control_2_user_id, px.final_control_user_id]
+            .filter(Boolean)
+            .map(String)
+            .includes(userId);
+
+          const canConfirmControl1 = user?.can_control_1 && status === "pending";
+          const canConfirmControl2 = user?.can_control_2 && status === "control_1_done";
+          const canConfirmFinal = user?.can_final_control && status === "control_2_done";
+          const nextLevel = canConfirmControl1 ? "control_1" : canConfirmControl2 ? "control_2" : canConfirmFinal ? "final_control" : null;
+          const nextLevelBlocked = confirmedByMe && nextLevel;
+
+          let waitingReason = null;
+          if (!nextLevel && status !== "done") {
+            if (status === "pending" && !user?.can_control_1) waitingReason = "Waiting for Control 1";
+            else if (status === "control_1_done" && !user?.can_control_2) waitingReason = "Waiting for Control 2";
+            else if (status === "control_2_done" && !user?.can_final_control) waitingReason = "Waiting for Final Control";
+          }
+
+          return (
+            <div className="px-6 pb-6">
+              <div className="bg-surface-light border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-base font-semibold text-slate-900">PX Controls</h3>
+                  <PxStatusBadge status={status} />
+                </div>
+
+                <div className="flex items-center gap-3 text-sm">
+                  {["control_1", "control_2", "final_control"].map((lvl, idx) => {
+                    const doneMap = { control_1: ["control_1_done", "control_2_done", "done"], control_2: ["control_2_done", "done"], final_control: ["done"] };
+                    const isDone = doneMap[lvl].includes(status);
+                    const userField = `${lvl}_user_id`;
+                    const atField = `${lvl}_at`;
+                    return (
+                      <div key={lvl} className={`flex-1 rounded-lg border p-3 ${isDone ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+                        <p className={`text-xs font-semibold uppercase tracking-wide mb-1 ${isDone ? "text-emerald-700" : "text-slate-500"}`}>
+                          {["Control 1", "Control 2", "Final Control"][idx]}
+                        </p>
+                        {isDone ? (
+                          <p className="text-xs text-emerald-700">{px[atField] ? new Date(px[atField]).toLocaleString() : "Done"}</p>
+                        ) : (
+                          <p className="text-xs text-slate-400">Pending</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {pxError && <p className="text-sm text-red-600">{pxError}</p>}
+
+                {status !== "done" && (
+                  <div>
+                    {nextLevel && !confirmedByMe && (
+                      <button
+                        type="button"
+                        disabled={busyAction === `px:${nextLevel}`}
+                        onClick={() => handlePxConfirm(nextLevel)}
+                        className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold disabled:opacity-60"
+                      >
+                        {busyAction === `px:${nextLevel}` ? "Confirming…" : `Confirm ${nextLevel === "control_1" ? "Control 1" : nextLevel === "control_2" ? "Control 2" : "Final Control"}`}
+                      </button>
+                    )}
+                    {nextLevelBlocked && (
+                      <p className="text-sm text-amber-600">You have already confirmed a step for this order.</p>
+                    )}
+                    {waitingReason && (
+                      <p className="text-sm text-slate-500">{waitingReason}</p>
+                    )}
+                  </div>
+                )}
+                {status === "done" && px.xml_sent_at && (
+                  <p className="text-sm text-emerald-600">XML sent on {new Date(px.xml_sent_at).toLocaleString()}</p>
+                )}
+              </div>
+            </div>
+          );
+        })() : null}
         </div>
 
       {isEditing ? (

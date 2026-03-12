@@ -515,6 +515,10 @@ def _upsert_revision(
                 """,
                 (order_id, external_message_id, dedupe_key, now, now),
             )
+            cursor.execute(
+                "INSERT INTO order_px_controls (order_id) VALUES (%s) ON CONFLICT (order_id) DO NOTHING",
+                (order_id,),
+            )
 
         validation_projection = (
             _normalize_validation_result_payload(validation_result)
@@ -2189,3 +2193,84 @@ def resolve_task(
         "resolution_note": note_text,
         "resolved_at": now.isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# PX triple-control helpers
+# ---------------------------------------------------------------------------
+
+def get_px_controls(order_id: str) -> dict[str, Any] | None:
+    """Return the current PX controls record for an order, or None if not found."""
+    row = fetch_one(
+        """
+        SELECT order_id, px_status,
+               control_1_user_id, control_1_at,
+               control_2_user_id, control_2_at,
+               final_control_user_id, final_control_at,
+               xml_sent_at
+        FROM order_px_controls
+        WHERE order_id = %s
+        """,
+        (order_id,),
+    )
+    if not row:
+        return None
+    return {
+        "order_id": str(row["order_id"]),
+        "px_status": str(row["px_status"] or "pending"),
+        "control_1_user_id": str(row["control_1_user_id"]) if row.get("control_1_user_id") else None,
+        "control_1_at": _to_iso(row["control_1_at"]) if row.get("control_1_at") else None,
+        "control_2_user_id": str(row["control_2_user_id"]) if row.get("control_2_user_id") else None,
+        "control_2_at": _to_iso(row["control_2_at"]) if row.get("control_2_at") else None,
+        "final_control_user_id": str(row["final_control_user_id"]) if row.get("final_control_user_id") else None,
+        "final_control_at": _to_iso(row["final_control_at"]) if row.get("final_control_at") else None,
+        "xml_sent_at": _to_iso(row["xml_sent_at"]) if row.get("xml_sent_at") else None,
+    }
+
+
+def get_px_status_map(order_ids: list[str]) -> dict[str, str]:
+    """Return a mapping of order_id -> px_status for a batch of orders."""
+    if not order_ids:
+        return {}
+    rows = fetch_all(
+        """
+        SELECT order_id::text, px_status
+        FROM order_px_controls
+        WHERE order_id = ANY(%s::uuid[])
+        """,
+        (order_ids,),
+    )
+    return {str(row["order_id"]): str(row["px_status"] or "pending") for row in rows}
+
+
+def confirm_px_control(order_id: str, level: str, user_id: str) -> None:
+    """Confirm one of the three PX control steps for an order."""
+    _STATUS_MAP = {
+        "control_1": "control_1_done",
+        "control_2": "control_2_done",
+        "final_control": "done",
+    }
+    new_status = _STATUS_MAP[level]
+    now = _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE order_px_controls
+                SET {level}_user_id = %s,
+                    {level}_at = %s,
+                    px_status = %s,
+                    updated_at = %s
+                WHERE order_id = %s
+                """,
+                (user_id, now, new_status, now, order_id),
+            )
+        conn.commit()
+
+
+def mark_px_xml_sent(order_id: str) -> None:
+    """Record that the PX XML email was sent."""
+    execute(
+        "UPDATE order_px_controls SET xml_sent_at = %s, updated_at = %s WHERE order_id = %s",
+        (_now(), _now(), order_id),
+    )

@@ -285,6 +285,37 @@ def compose_reply_needed_email(
         )
 
 
+def send_px_xml_email(order_id: str, config: Config, output_dir: "Path") -> None:
+    """Send both XML files to 333primex.eu@gmail.com after triple PX control confirmation."""
+    import order_store as _order_store
+    import xml_exporter as _xml_exporter
+
+    payload_map = _order_store.get_order_payload_map([order_id])
+    entry = payload_map.get(order_id)
+    if not entry or entry.get("parse_error"):
+        raise ValueError(f"Cannot send PX XML for order {order_id}: no valid payload")
+
+    data = entry["data"]
+    documents = _xml_exporter.render_xml_documents(data, "", config, Path(str(output_dir)))
+
+    recipient = "333primex.eu@gmail.com"
+    msg = EmailMessage()
+    msg["To"] = recipient
+    msg["Subject"] = f"PX Order XML - {order_id}"
+    msg.set_content("PX quality control completed. XML files are attached.\n")
+
+    for doc in documents:
+        msg.add_attachment(
+            doc.content.encode("utf-8"),
+            maintype="application",
+            subtype="xml",
+            filename=doc.filename,
+        )
+
+    send_email_via_smtp(config, msg)
+    _order_store.mark_px_xml_sent(order_id)
+
+
 def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
     if not config.smtp_host:
         raise ValueError("SMTP_HOST is missing")

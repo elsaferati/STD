@@ -88,7 +88,11 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
                u.id AS id,
                u.username,
                u.role,
-               u.is_active
+               u.is_active,
+               u.is_super_admin,
+               u.can_control_1,
+               u.can_control_2,
+               u.can_final_control
         FROM sessions s
         JOIN users u ON u.id = s.user_id
         WHERE s.id = %s
@@ -115,6 +119,10 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
         "role": row.get("role"),
         "client_branches": _user_client_branches(str(row.get("id") or "")),
         "session_id": row.get("session_id"),
+        "is_super_admin": bool(row.get("is_super_admin")),
+        "can_control_1": bool(row.get("can_control_1")),
+        "can_control_2": bool(row.get("can_control_2")),
+        "can_final_control": bool(row.get("can_final_control")),
     }
 
 
