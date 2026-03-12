@@ -2090,3 +2090,71 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
 
     data["warnings"] = warnings
 
+
+def check_modelnr_against_db(data: dict[str, Any]) -> None:
+    """Check each item's modellnummer against modelnr_std_import_stage.
+    If not found there, falls back to checking modelnr_anonym_mapping.
+    """
+    try:
+        import db as _db
+    except Exception:
+        return
+
+    warnings = data.setdefault("warnings", [])
+    items = data.get("items", [])
+    if not isinstance(items, list):
+        return
+
+    for i, item in enumerate(items):
+        line = i + 1
+        modell_entry = item.get("modellnummer")
+        if isinstance(modell_entry, dict):
+            modelnr = (modell_entry.get("value") or "").strip()
+        else:
+            modelnr = (modell_entry or "").strip()
+
+        if not modelnr:
+            _append_unique_warning(
+                warnings,
+                f"Model number missing (line {line}): cannot verify against model number list.",
+            )
+            continue
+
+        # Step 1: check directly in modelnr_std_import_stage
+        try:
+            stage_row = _db.fetch_one(
+                "SELECT vamdnr FROM modelnr_std_import_stage WHERE vamdnr = %s LIMIT 1",
+                (modelnr,),
+            )
+        except Exception as exc:
+            _append_unique_warning(warnings, f"Model number check failed (DB error): {exc}")
+            return
+
+        if stage_row:
+            _append_unique_warning(
+                warnings,
+                f"Model number {modelnr} (line {line}): found in model number list.",
+            )
+            continue
+
+        # Step 2: fallback — check in anonym mapping table
+        try:
+            mapping_row = _db.fetch_one(
+                "SELECT anonym FROM modelnr_anonym_mapping WHERE anonym = %s LIMIT 1",
+                (modelnr,),
+            )
+        except Exception as exc:
+            _append_unique_warning(warnings, f"Model number check failed (DB error): {exc}")
+            return
+
+        if mapping_row:
+            _append_unique_warning(
+                warnings,
+                f"Model number {modelnr} (line {line}): found via anonym mapping.",
+            )
+        else:
+            _append_unique_warning(
+                warnings,
+                f"Model number {modelnr} (line {line}): NOT found in model number list.",
+            )
+

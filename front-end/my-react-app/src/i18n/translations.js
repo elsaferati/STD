@@ -316,6 +316,7 @@ export const translations = {
       filialenImportStage: "Export ILN LISTE",
       kundenImportStage: "Export KUNDEN EXCEL",
       modelnrStdImportStage: "Export STD MODEL NUMBERS",
+      modelnrAnonymMapping: "Export MODEL NR SYNONYMS",
       exporting: "Exporting...",
       exportFailed: "Excel export failed.",
       comingSoon: "Coming soon",
@@ -330,6 +331,7 @@ export const translations = {
       filialenImportStageImport: "Import ILN LISTE",
       kundenImportStageImport: "Import KUNDEN EXCEL",
       modelnrStdImportStageImport: "Import STD MODEL NUMBERS",
+      modelnrAnonymMappingImport: "Import MODEL NR SYNONYMS",
     },
     users: {
       title: "Users",
@@ -668,6 +670,7 @@ export const translations = {
       filialenImportStage: "ILN LISTE exportieren",
       kundenImportStage: "KUNDEN EXCEL exportieren",
       modelnrStdImportStage: "STD MODELLNUMMERN exportieren",
+      modelnrAnonymMapping: "MODELLNR SYNONYME exportieren",
       exporting: "Export laeuft...",
       exportFailed: "Excel-Export fehlgeschlagen.",
       comingSoon: "Demnaechst",
@@ -682,6 +685,7 @@ export const translations = {
       filialenImportStageImport: "Import ILN LISTE",
       kundenImportStageImport: "Import KUNDEN EXCEL",
       modelnrStdImportStageImport: "STD MODELLNUMMERN importieren",
+      modelnrAnonymMappingImport: "MODELLNR SYNONYME importieren",
     },
     users: {
       title: "Benutzer",

@@ -126,6 +126,7 @@ ALLOWED_DATA_EXPORT_TABLES = frozenset(
     {
         "filialen_import_stage",
         "kunden_import_stage",
+        "modelnr_anonym_mapping",
         "modelnr_std_import_stage",
         "wochen_import_stage",
     }
@@ -133,6 +134,7 @@ ALLOWED_DATA_EXPORT_TABLES = frozenset(
 ALLOWED_DATA_IMPORT_TABLES = frozenset({
     "filialen_import_stage",
     "kunden_import_stage",
+    "modelnr_anonym_mapping",
     "modelnr_std_import_stage",
 })
 IMPORT_COLUMN_MAP: dict[str, dict[str, str]] = {
@@ -164,6 +166,10 @@ IMPORT_COLUMN_MAP: dict[str, dict[str, str]] = {
     "modelnr_std_import_stage": {
         "VABTRA": "vabtra",
         "VAMDNR": "vamdnr",
+    },
+    "modelnr_anonym_mapping": {
+        "intern": "intern",
+        "anonym": "anonym",
     },
 }
 DATA_EXPORT_TABLE_ALIASES = {

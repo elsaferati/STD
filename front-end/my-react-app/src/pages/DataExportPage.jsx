@@ -23,6 +23,12 @@ const DATASET_ACTIONS = [
     importLabelKey: "modelnrStdImportStageImport",
     badge: "STD",
   },
+  {
+    tableName: "modelnr_anonym_mapping",
+    exportLabelKey: "modelnrAnonymMapping",
+    importLabelKey: "modelnrAnonymMappingImport",
+    badge: "MAP",
+  },
 ];
 
 function buildExportFilename(tableName) {

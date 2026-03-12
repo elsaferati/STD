@@ -18,6 +18,7 @@ import extraction_router
 from item_code_verification import apply_item_code_verification
 from normalize import (
     apply_momax_bg_strict_item_code_corrections,
+    check_modelnr_against_db,
     normalize_output,
     refresh_missing_warnings,
 )
@@ -3707,6 +3708,7 @@ def process_message(
                     w.append(f"Tour number '{tour_val}' not found in Lieferlogik; please verify in Primex Kunden Excel.")
 
     refresh_missing_warnings(normalized)
+    check_modelnr_against_db(normalized)
 
     # Auto-send reply-needed email (swap/substitution cases)
     _reply_email_sent = False
