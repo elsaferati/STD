@@ -10,19 +10,16 @@ import { downloadBlob } from "../utils/download";
 import { formatDateTime } from "../utils/format";
 import { useI18n } from "../i18n/I18nContext";
 
-const EXPORT_INITIALS_STORAGE_KEY = "orders_export_initials";
 const ORDER_LIST_RESTORE_KEY = "orders_list_restore";
 
-function buildExportFilename(title, initials) {
+function buildExportFilename(title) {
   const safeTitle = (title || "Orders").replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "Orders";
   const now = new Date();
   const day = String(now.getDate()).padStart(2, "0");
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const year = String(now.getFullYear()).slice(-2);
   const dateStamp = `${day}_${month}_${year}`;
-  const parts = [safeTitle, dateStamp];
-  if (initials) parts.push(initials);
-  return `${parts.join("_")}.xlsx`;
+  return `${[safeTitle, dateStamp].join("_")}.xlsx`;
 }
 
 export function OrdersPage() {
@@ -45,7 +42,11 @@ export function OrdersPage() {
   const dragStartScrollRef = useRef(0);
   const dragPointerIdRef = useRef(null);
 
-  const queryString = useMemo(() => searchParams.toString(), [searchParams]);
+  const queryString = useMemo(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("delivery_week");
+    return next.toString();
+  }, [searchParams]);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const fromDate = searchParams.get("from") || "";
   const toDate = searchParams.get("to") || "";
@@ -53,8 +54,6 @@ export function OrdersPage() {
   const statusParam = searchParams.get("status");
   const validationStatusParam = searchParams.get("validation_status") || "";
   const clientParam = searchParams.get("client") || "";
-  const deliveryWeekParam = searchParams.get("delivery_week") || "";
-
   const activeTab = useMemo(() => {
     if (validationStatusParam === "flagged,stale" || validationStatusParam === "stale,flagged") {
       return "gemini_review";
@@ -196,24 +195,14 @@ export function OrdersPage() {
 
   const handleExportExcel = async () => {
     const exportTitle = t("orders.exportTitle");
-    const storedInitials = localStorage.getItem(EXPORT_INITIALS_STORAGE_KEY) || "";
-    const initialsInput = window.prompt(t("orders.initialsPrompt"), storedInitials);
-    if (initialsInput === null) {
-      return;
-    }
-    const initials = initialsInput.trim();
-    if (initials) {
-      localStorage.setItem(EXPORT_INITIALS_STORAGE_KEY, initials);
-    }
     setActionBusy("excel");
     setActionError("");
     try {
       const exportParams = new URLSearchParams(searchParams);
-      if (initials) exportParams.set("initials", initials);
       if (exportTitle) exportParams.set("title", exportTitle);
       const exportQuery = exportParams.toString();
       const blob = await fetchBlob(`/api/orders.xlsx${exportQuery ? `?${exportQuery}` : ""}`);
-      downloadBlob(blob, buildExportFilename(exportTitle, initials));
+      downloadBlob(blob, buildExportFilename(exportTitle));
     } catch (requestError) {
       setActionError(requestError.message || t("orders.excelExportFailed"));
     } finally {
@@ -291,17 +280,6 @@ export function OrdersPage() {
     }
     return options;
   }, [orders]);
-  const deliveryWeekOptions = useMemo(() => {
-    const unique = new Set();
-    orders.forEach((order) => {
-      const value = String(order.delivery_week || order.liefertermin || "").trim();
-      if (value) unique.add(value);
-    });
-    if (deliveryWeekParam) {
-      unique.add(deliveryWeekParam);
-    }
-    return Array.from(unique).sort((a, b) => a.localeCompare(b));
-  }, [deliveryWeekParam, orders]);
   const visibleOrders = useMemo(() => {
     if (queueParam !== "today" || fromDate || toDate) {
       return orders;
@@ -319,8 +297,8 @@ export function OrdersPage() {
     });
   }, [fromDate, orders, queueParam, toDate, todayIso]);
   const hasActiveFilters = useMemo(
-    () => Boolean(searchParams.get("q") || queueParam || statusParam || validationStatusParam || clientParam || fromDate || toDate || deliveryWeekParam),
-    [clientParam, deliveryWeekParam, fromDate, queueParam, searchParams, statusParam, toDate, validationStatusParam],
+    () => Boolean(searchParams.get("q") || queueParam || statusParam || validationStatusParam || clientParam || fromDate || toDate),
+    [clientParam, fromDate, queueParam, searchParams, statusParam, toDate, validationStatusParam],
   );
 
   useEffect(() => {
@@ -500,38 +478,29 @@ export function OrdersPage() {
                     </option>
                   ))}
                 </select>
-                <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 h-9">
-                  <span className="text-xs uppercase tracking-wide text-slate-500">{t("orders.extractionDate")}</span>
+                <div className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5">
+                  <span className="material-icons text-[16px] text-slate-400">calendar_month</span>
+                  <span className="hidden text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:inline">
+                    {t("orders.extractionDate")}
+                  </span>
                   <input
                     type="date"
-                    className="bg-transparent text-sm text-slate-700 focus:outline-none"
+                    className="w-[8.5rem] bg-transparent text-sm text-slate-700 focus:outline-none"
                     value={displayedFromDate}
                     onChange={(event) => updateParams({ queue: null, from: event.target.value || null })}
                     aria-label={t("common.from")}
+                    title={t("common.from")}
                   />
-                  <span className="text-slate-300">-</span>
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{t("common.to")}</span>
                   <input
                     type="date"
-                    className="bg-transparent text-sm text-slate-700 focus:outline-none"
+                    className="w-[8.5rem] bg-transparent text-sm text-slate-700 focus:outline-none"
                     value={displayedToDate}
                     onChange={(event) => updateParams({ queue: null, to: event.target.value || null })}
                     aria-label={t("common.to")}
+                    title={t("common.to")}
                   />
                 </div>
-                {deliveryWeekOptions.length ? (
-                  <select
-                    className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:ring-2 focus:ring-primary"
-                    value={deliveryWeekParam}
-                    onChange={(event) => updateParams({ delivery_week: event.target.value || null })}
-                  >
-                    <option value="">{t("orders.deliveryWeek")}</option>
-                    {deliveryWeekOptions.map((week) => (
-                      <option key={week} value={week}>
-                        {week}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
                 {hasActiveFilters ? (
                   <button
                     type="button"
@@ -545,7 +514,6 @@ export function OrdersPage() {
                         client: null,
                         from: null,
                         to: null,
-                        delivery_week: null,
                       });
                     }}
                     className="h-9 px-3 rounded-md border border-slate-200 bg-white text-slate-600 text-sm hover:bg-slate-50"
@@ -573,9 +541,6 @@ export function OrdersPage() {
                 >
                   <span className="material-icons text-base">folder_zip</span>
                   {actionBusy === "xmlzip" ? t("orders.exporting") : t("orders.exportXmlZip")}
-                </button>
-                <button type="button" disabled className="bg-primary/40 text-white px-3.5 py-2 rounded-md text-sm font-medium cursor-not-allowed">
-                  {t("orders.manualOrder")}
                 </button>
               </div>
             </div>

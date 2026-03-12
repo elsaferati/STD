@@ -1330,7 +1330,22 @@ def query_overview_snapshot(
             """,
             [chart_start.date(), chart_end.date(), local_timezone, local_timezone, *scope_params],
         )
-        client_hour_rows: list[dict[str, Any]] = []
+        client_hour_rows = fetch_all(
+            f"""
+            SELECT DATE_TRUNC('day', {_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s)::date AS bucket_day,
+                   EXTRACT(HOUR FROM {_EFFECTIVE_RECEIVED_SQL} AT TIME ZONE %s)::int AS bucket_hour,
+                   {_EXTRACTION_BRANCH_SQL} AS branch_id,
+                   COUNT(*)::bigint AS total
+            FROM orders o
+            WHERE o.deleted_at IS NULL
+              AND {_EFFECTIVE_RECEIVED_SQL} >= %s
+              AND {_EFFECTIVE_RECEIVED_SQL} < %s
+              {join_scope_sql}
+            GROUP BY bucket_day, bucket_hour, {_EXTRACTION_BRANCH_SQL}
+            ORDER BY bucket_day, bucket_hour, {_EXTRACTION_BRANCH_SQL}
+            """,
+            [local_timezone, local_timezone, chart_start, range_end, *scope_params],
+        )
     else:
         bucket_rows = fetch_all(
             f"""
@@ -1387,35 +1402,44 @@ def query_overview_snapshot(
 
     client_hour_days: list[dict[str, Any]] = []
     if bucket_granularity == "day":
-        current_day = chart_start.date()
-        last_day = chart_end.date()
-        known_client_ids = sorted(ALLOWED_EXTRACTION_BRANCHES)
-        while current_day <= last_day:
-            hours: list[dict[str, Any]] = []
-            day_total = 0
-            for hour in range(24):
-                client_counts = client_hour_map.get((current_day, hour), {})
-                total = sum(client_counts.values())
-                day_total += total
-                hours.append(
-                    {
-                        "hour": hour,
-                        "total": total,
-                        "clients": [
-                            {"id": client_id, "count": int(client_counts.get(client_id) or 0)}
-                            for client_id in known_client_ids
-                            if int(client_counts.get(client_id) or 0) > 0
-                        ],
-                    }
-                )
-            client_hour_days.append(
+        client_chart_start = chart_start
+        client_chart_end = chart_end
+    else:
+        client_chart_start = datetime.combine(range_start.date(), datetime.min.time(), tzinfo=range_start.tzinfo)
+        client_chart_end = datetime.combine(
+            max(range_start, range_end - timedelta(microseconds=1)).date(),
+            datetime.min.time(),
+            tzinfo=range_start.tzinfo,
+        )
+    current_day = client_chart_start.date()
+    last_day = client_chart_end.date()
+    known_client_ids = sorted(ALLOWED_EXTRACTION_BRANCHES)
+    while current_day <= last_day:
+        hours: list[dict[str, Any]] = []
+        day_total = 0
+        for hour in range(24):
+            client_counts = client_hour_map.get((current_day, hour), {})
+            total = sum(client_counts.values())
+            day_total += total
+            hours.append(
                 {
-                    "date": current_day.isoformat(),
-                    "total": day_total,
-                    "hours": hours,
+                    "hour": hour,
+                    "total": total,
+                    "clients": [
+                        {"id": client_id, "count": int(client_counts.get(client_id) or 0)}
+                        for client_id in known_client_ids
+                        if int(client_counts.get(client_id) or 0) > 0
+                    ],
                 }
             )
-            current_day += timedelta(days=1)
+        client_hour_days.append(
+            {
+                "date": current_day.isoformat(),
+                "total": day_total,
+                "hours": hours,
+            }
+        )
+        current_day += timedelta(days=1)
 
     return {
         "summary": {

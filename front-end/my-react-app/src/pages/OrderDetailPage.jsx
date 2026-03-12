@@ -7,10 +7,8 @@ import { ValidationBadge } from "../components/ValidationBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
 import {
-  entryConfidence,
   entryValue,
   fieldLabel,
-  formatConfidence,
   formatDateTime,
 } from "../utils/format";
 
@@ -76,7 +74,6 @@ export function OrderDetailPage() {
   const [startingEdit, setStartingEdit] = useState(false);
   const [editBaselineItemCount, setEditBaselineItemCount] = useState(0);
   const [deletedPersistedIndexes, setDeletedPersistedIndexes] = useState([]);
-  const [highlightLowConfidence, setHighlightLowConfidence] = useState(false);
   const [headerDraft, setHeaderDraft] = useState({});
   const [itemDraft, setItemDraft] = useState([]);
 
@@ -478,9 +475,9 @@ export function OrderDetailPage() {
       )}
     >
       <main className="flex-1 flex flex-col min-w-0">
-        <div className={`px-6 py-6 space-y-6 ${isEditing ? "pb-44 md:pb-40" : ""}`}>
+        <div className={`px-4 py-4 space-y-3 ${isEditing ? "pb-40 md:pb-36" : ""}`}>
           <header className="bg-surface-light border-b border-slate-200 rounded-xl">
-            <div className="px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="px-4 py-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="flex flex-col gap-1">
             <nav className="flex items-center text-xs text-slate-500 gap-2">
               <Link className="hover:text-primary transition-colors" to="/">{t("common.dashboard")}</Link>
@@ -490,7 +487,7 @@ export function OrderDetailPage() {
               <span className="text-primary font-medium">#{displayOrderRef}</span>
             </nav>
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: displayOrderRef })}</h1>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">{t("orderDetail.orderNumber", { id: displayOrderRef })}</h1>
               <StatusBadge status={order.status} />
               <ValidationBadge status={order.validation_status} />
               <span className="text-xs text-slate-500">{t("orderDetail.received", { date: formatDateTime(order.received_at, lang) })}</span>
@@ -501,62 +498,45 @@ export function OrderDetailPage() {
             </div>
           </header>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 flex flex-col gap-6">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-8 flex flex-col gap-4">
             {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded-lg p-3">{error}</div> : null}
             {notice ? <div className="text-sm text-success bg-success/10 border border-success/20 rounded-lg p-3">{notice}</div> : null}
 
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
-                <h2 className="font-bold text-lg text-slate-800">{t("orderDetail.headerInfo")}</h2>
-                <button
-                  type="button"
-                  onClick={() => setHighlightLowConfidence((value) => !value)}
-                  className={`text-xs px-3 py-1 rounded border ${highlightLowConfidence ? "bg-primary/10 border-primary/30 text-primary" : "bg-white border-slate-200 text-slate-600"}`}
-                >
-                  {t("common.highlightLowConfidence")}
-                </button>
-              </div>
-
               <div className="bg-slate-50 border-b border-slate-200">
                 <table className="w-full text-sm text-left table-fixed">
                   <colgroup>
-                    <col className="w-16" />
-                    <col className="w-64" />
-                    <col className="w-[42%]" />
-                    <col className="w-28" />
+                    <col className="w-14" />
+                    <col className="w-56" />
+                    <col className="w-[52%]" />
                   </colgroup>
                   <thead className="text-xs text-slate-500 uppercase">
                     <tr>
-                      <th className="px-6 py-3 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
-                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.field")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider bg-slate-50">{t("common.value")}</th>
-                      <th className="px-6 py-3 font-medium tracking-wider text-right bg-slate-50">{t("common.confidence")}</th>
+                      <th className="px-4 py-2 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                      <th className="px-4 py-2 font-medium tracking-wider bg-slate-50">{t("common.field")}</th>
+                      <th className="px-4 py-2 font-medium tracking-wider bg-slate-50">{t("common.value")}</th>
                     </tr>
                   </thead>
                 </table>
               </div>
-              <div className="relative overflow-auto max-h-[620px]">
+              <div className="relative">
                 <table className="w-full text-sm text-left table-fixed">
                   <colgroup>
-                    <col className="w-16" />
-                    <col className="w-64" />
-                    <col className="w-[42%]" />
-                    <col className="w-28" />
+                    <col className="w-14" />
+                    <col className="w-56" />
+                    <col className="w-[52%]" />
                   </colgroup>
                   <tbody className="divide-y divide-slate-200">
                     {headerRows.map(([field, entry], index) => {
-                      const confidence = entryConfidence(entry);
-                      const lowConfidence = confidence !== null && confidence < 0.9;
                       const editable = editableHeaderFields.has(field) && isEditing;
-                      const isHighlighted = highlightLowConfidence && lowConfidence;
                       return (
-                        <tr key={field} className={isHighlighted ? "bg-warning/10" : ""}>
-                          <td className={`px-6 py-4 text-slate-500 sticky left-0 z-10 border-r border-slate-200 ${isHighlighted ? "bg-warning/10" : "bg-white"}`}>
+                        <tr key={field}>
+                          <td className="px-4 py-2.5 text-slate-500 sticky left-0 z-10 border-r border-slate-200 bg-white">
                             {index + 1}
                           </td>
-                          <td className="px-6 py-4 font-medium text-slate-900">{fieldLabel(field, t)}</td>
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-2.5 font-medium text-slate-900">{fieldLabel(field, t)}</td>
+                          <td className="px-4 py-2.5">
                             {editable ? (
                               <input
                                 value={headerDraft[field] || ""}
@@ -567,11 +547,6 @@ export function OrderDetailPage() {
                               <span className="text-slate-700">{entryValue(entry) || "-"}</span>
                             )}
                           </td>
-                          <td className="px-6 py-4 text-right">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${lowConfidence ? "bg-warning/20 text-warning" : "bg-primary/10 text-primary-dark"}`}>
-                              {formatConfidence(confidence)}
-                            </span>
-                          </td>
                         </tr>
                       );
                     })}
@@ -581,8 +556,8 @@ export function OrderDetailPage() {
             </div>
 
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
-                <h2 className="font-bold text-lg text-slate-800">{t("orderDetail.lineItems")}</h2>
+              <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
+                <h2 className="font-bold text-base text-slate-800">{t("orderDetail.lineItems")}</h2>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-500">
                     {(isEditing ? itemDraft.length : (order.items || []).length)} {t("common.items")}
@@ -603,22 +578,22 @@ export function OrderDetailPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs text-slate-500 uppercase bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                     <tr>
-                      <th className="px-6 py-3 sticky top-0 left-0 z-20 bg-slate-50">#</th>
-                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.artikelnummer")}</th>
-                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.modellnummer")}</th>
-                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.menge")}</th>
-                      <th className="px-6 py-3 sticky top-0 bg-slate-50">{t("fields.furncloud_id")}</th>
-                      {isEditing ? <th className="px-6 py-3 sticky top-0 bg-slate-50 text-right">{t("common.actions")}</th> : null}
+                      <th className="px-4 py-2 sticky top-0 left-0 z-20 bg-slate-50">#</th>
+                      <th className="px-4 py-2 sticky top-0 bg-slate-50">{t("fields.artikelnummer")}</th>
+                      <th className="px-4 py-2 sticky top-0 bg-slate-50">{t("fields.modellnummer")}</th>
+                      <th className="px-4 py-2 sticky top-0 bg-slate-50">{t("fields.menge")}</th>
+                      <th className="px-4 py-2 sticky top-0 bg-slate-50">{t("fields.furncloud_id")}</th>
+                      {isEditing ? <th className="px-4 py-2 sticky top-0 bg-slate-50 text-right">{t("common.actions")}</th> : null}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {(isEditing ? itemDraft : (order.items || [])).map((item, index) => (
                       <tr key={item?.__draftId || `${order.order_id}-${index}`}>
-                        <td className="px-6 py-4 text-slate-500 sticky left-0 z-10 bg-white border-r border-slate-200">
+                        <td className="px-4 py-2.5 text-slate-500 sticky left-0 z-10 bg-white border-r border-slate-200">
                           {isEditing ? index + 1 : (item?.line_no ?? index + 1)}
                         </td>
                         {["artikelnummer", "modellnummer", "menge", "furncloud_id"].map((field) => (
-                          <td key={field} className="px-6 py-4">
+                          <td key={field} className="px-4 py-2.5">
                             {isEditing && editableItemFields.has(field) ? (
                               <input
                                 value={itemDraft[index]?.[field] || ""}
@@ -638,7 +613,7 @@ export function OrderDetailPage() {
                           </td>
                         ))}
                         {isEditing ? (
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-4 py-2.5 text-right">
                             {item?.__isNew ? (
                               <button
                                 type="button"
@@ -670,8 +645,8 @@ export function OrderDetailPage() {
             </div>
           </div>
 
-          <aside className="lg:col-span-4 flex flex-col gap-6">
-            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-4">
+          <aside className="lg:col-span-4 flex flex-col gap-4">
+            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-3">
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">{t("common.actions")}</h2>
               <div className="grid grid-cols-1 gap-2">
                 <button
@@ -713,7 +688,7 @@ export function OrderDetailPage() {
                 ) : null}
               </div>
             </div>
-            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-4 space-y-4">
+            <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm p-3 space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">{t("common.validation")}</h2>
@@ -755,8 +730,8 @@ export function OrderDetailPage() {
               ) : null}
             </div>
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden sticky top-6">
-              <div className="p-5 border-b border-slate-200 flex items-center justify-between">
-                <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+              <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+                <h2 className="font-bold text-base text-slate-800 flex items-center gap-2">
                   <span className="material-icons text-primary">analytics</span>
                   {t("orderDetail.operationalSignals")}
                 </h2>
@@ -765,7 +740,36 @@ export function OrderDetailPage() {
                 </span>
               </div>
 
-              <div className="p-5 space-y-3 max-h-[420px] overflow-y-auto">
+              <div className="p-3.5 bg-slate-50 border-b border-slate-200">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">{t("common.generatedXml")}</h3>
+                  <span className="text-[11px] font-medium text-slate-400">
+                    {(order.xml_files || []).length} file{(order.xml_files || []).length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="grid gap-2">
+                  {(order.xml_files || []).map((file) => (
+                    <button
+                      key={file.filename}
+                      type="button"
+                      onClick={() => downloadFile(file.filename)}
+                      disabled={busyAction === `download:${file.filename}`}
+                      className="w-full flex items-center justify-between rounded-lg border border-primary/20 bg-white px-3 py-2.5 text-sm font-medium text-slate-800 shadow-sm shadow-primary/5 transition-colors hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="material-icons text-[18px] text-primary">description</span>
+                        {file.name}
+                      </span>
+                      <span className="material-icons text-primary text-lg">download</span>
+                    </button>
+                  ))}
+                  {!(order.xml_files || []).length ? (
+                    <p className="text-xs text-slate-500">{t("orderDetail.noXmlFiles")}</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
                 {(order.errors || []).map((message, index) => (
                   <div key={`error-${index}`} className={`rounded-lg border p-3 ${levelClass("error")}`}>
                     <p className="font-semibold text-xs uppercase tracking-wide mb-1">{t("common.error")}</p>
@@ -786,27 +790,6 @@ export function OrderDetailPage() {
                     <p className="text-sm">{t("orderDetail.noIssues")}</p>
                   </div>
                 ) : null}
-              </div>
-
-              <div className="p-5 bg-slate-50 border-t border-slate-200">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">{t("common.generatedXml")}</h3>
-                <div className="space-y-2">
-                  {(order.xml_files || []).map((file) => (
-                    <button
-                      key={file.filename}
-                      type="button"
-                      onClick={() => downloadFile(file.filename)}
-                      disabled={busyAction === `download:${file.filename}`}
-                      className="w-full flex items-center justify-between p-2 rounded hover:bg-slate-100 transition-colors text-sm text-slate-700 disabled:opacity-60"
-                    >
-                      <span>{file.name}</span>
-                      <span className="material-icons text-slate-400 text-lg">download</span>
-                    </button>
-                  ))}
-                  {!(order.xml_files || []).length ? (
-                    <p className="text-xs text-slate-500">{t("orderDetail.noXmlFiles")}</p>
-                  ) : null}
-                </div>
               </div>
             </div>
           </aside>

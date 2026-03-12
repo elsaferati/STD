@@ -5,6 +5,7 @@ import csv
 from datetime import date, datetime, timedelta
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -103,6 +104,16 @@ EDITABLE_HEADER_FIELDS = [
     "iln",
 ]
 EDITABLE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"]
+HIDDEN_HEADER_EXPORT_FIELDS = {
+    "seller",
+    "iln",
+    "human_review_needed",
+    "iln_anl",
+    "iln_fil",
+    "post_case",
+    "reply_needed",
+    "adressnummer",
+}
 
 VALID_STATUSES = {
     "ok", "human_in_the_loop", "post", "failed", "unknown",
@@ -1266,6 +1277,16 @@ def _export_entry_value(entry: Any) -> Any:
     return str(value)
 
 
+def _export_entry_confidence(entry: Any) -> float | None:
+    if not isinstance(entry, dict):
+        return None
+    try:
+        confidence = float(entry.get("confidence"))
+    except (TypeError, ValueError):
+        return None
+    return confidence if math.isfinite(confidence) else None
+
+
 def _ensure_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
@@ -1344,43 +1365,6 @@ def _as_orders_xlsx_bytes(
 ) -> bytes:
     payload_map = _preload_order_export_payloads(orders)
     parsed_orders = [_load_order_export_data(order, payload_map=payload_map) for order in orders]
-
-    fixed_header_columns = [
-        "order_id",
-        "file_name",
-        "message_id",
-        "received_at",
-        "status",
-        "validation_status",
-        "validation_summary",
-        "validation_checked_at",
-        "validation_provider",
-        "validation_model",
-        "validation_stale_reason",
-        "validation_issues",
-        "item_count",
-        "warnings_count",
-        "errors_count",
-        "reply_needed",
-        "human_review_needed",
-        "post_case",
-        "warnings",
-        "errors",
-        "parse_error",
-    ]
-    excluded_header_keys = {"reply_needed", "human_review_needed", "post_case"}
-    seen_header_keys: set[str] = set()
-    for parsed_order in parsed_orders:
-        seen_header_keys.update(parsed_order["header"].keys())
-
-    header_value_columns = [
-        field for field in EDITABLE_HEADER_FIELDS if field not in excluded_header_keys
-    ] + sorted(
-        key
-        for key in seen_header_keys
-        if key not in excluded_header_keys and key not in EDITABLE_HEADER_FIELDS
-    )
-    header_columns = fixed_header_columns + header_value_columns
 
     def _format_sheet(
         target_sheet,
@@ -1517,76 +1501,39 @@ def _as_orders_xlsx_bytes(
     workbook = Workbook()
     orders_sheet = workbook.active
     orders_sheet.title = "Orders"
-    items_sheet = workbook.create_sheet("Items")
 
-    include_punoi_column = False
-    orders_columns = ["Nr"] + header_columns + (["PUNOI"] if include_punoi_column else [])
+    header_fields = [
+        ("ticket_number", "Ticket Number"),
+        ("kundennummer", "Kundennummer"),
+        ("tour", "Tour"),
+        ("kom_nr", "Kom Nr"),
+        ("liefertermin", "Liefertermin"),
+        ("wunschtermin", "Wunschtermin"),
+        ("bestelldatum", "Bestelldatum"),
+        ("lieferanschrift", "Lieferanschrift"),
+        ("store_name", "Store Name"),
+        ("store_address", "Store Address"),
+        ("delivery_week", "Delivery Week"),
+        ("mail_to", "Mail To"),
+    ]
+    orders_columns = ["Nr"] + [label for _, label in header_fields] + ["Items"]
     orders_rows: list[list[Any]] = []
-    items_columns = [
-        "Nr",
-        "order_id",
-        "ticket_number",
-        "kom_nr",
-        "kom_name",
-        "line_no",
-    ] + list(EDITABLE_ITEM_FIELDS) + (["PUNOI"] if include_punoi_column else [])
-    items_rows: list[list[Any]] = []
 
     for parsed_order in parsed_orders:
         header = parsed_order["header"]
-        header_row = {
-            "order_id": parsed_order["order_id"],
-            "file_name": parsed_order["file_name"],
-            "message_id": parsed_order["message_id"],
-            "received_at": parsed_order["received_at"],
-            "status": parsed_order["status"],
-            "validation_status": parsed_order["validation_status"],
-            "validation_summary": parsed_order["validation_summary"],
-            "validation_checked_at": parsed_order["validation_checked_at"],
-            "validation_provider": parsed_order["validation_provider"],
-            "validation_model": parsed_order["validation_model"],
-            "validation_stale_reason": parsed_order["validation_stale_reason"],
-            "validation_issues": json.dumps(parsed_order["validation_issues"], ensure_ascii=False),
-            "item_count": parsed_order["item_count"],
-            "warnings_count": parsed_order["warnings_count"],
-            "errors_count": parsed_order["errors_count"],
-            "reply_needed": parsed_order["reply_needed"],
-            "human_review_needed": parsed_order["human_review_needed"],
-            "post_case": parsed_order["post_case"],
-            "warnings": " | ".join(parsed_order["warnings"]),
-            "errors": " | ".join(parsed_order["errors"]),
-            "parse_error": parsed_order["parse_error"],
-        }
-        for field in header_value_columns:
-            header_row[field] = _export_entry_value(header.get(field, ""))
+        items = [item for item in parsed_order.get("items", []) if isinstance(item, dict)]
+        item_lines: list[str] = []
+        for index, item in enumerate(items, start=1):
+            quantity = _export_entry_value(item.get("menge", "")) or "-"
+            article_number = _export_entry_value(item.get("artikelnummer", "")) or "-"
+            model_number = _export_entry_value(item.get("modellnummer", "")) or "-"
+            item_lines.append(f"{index}. {quantity} - {article_number} {model_number}".strip())
+
         orders_rows.append(
             [None]
-            + [header_row.get(column, "") for column in header_columns]
-            + ([initials] if include_punoi_column else [])
+            + [(_export_entry_value(header.get(field_key, "")) or "-") for field_key, _ in header_fields]
+            + ["\n".join(item_lines) if item_lines else "-"]
         )
-
-        ticket_number = _export_entry_value(header.get("ticket_number", ""))
-        kom_nr = _export_entry_value(header.get("kom_nr", ""))
-        kom_name = _export_entry_value(header.get("kom_name", ""))
-        for index, item in enumerate(parsed_order["items"], start=1):
-            if not isinstance(item, dict):
-                continue
-            line_no = item.get("line_no")
-            if line_no in (None, ""):
-                line_no = index
-            item_row = [
-                None,
-                parsed_order["order_id"],
-                ticket_number,
-                kom_nr,
-                kom_name,
-                line_no,
-            ]
-            for field in EDITABLE_ITEM_FIELDS:
-                item_row.append(_export_entry_value(item.get(field, "")))
-            if include_punoi_column:
-                item_row.append(initials)
-            items_rows.append(item_row)
 
     title_text = (title or "Orders").strip() or "Orders"
     _format_sheet(
@@ -1594,9 +1541,123 @@ def _as_orders_xlsx_bytes(
         sheet_title=title_text,
         table_columns=orders_columns,
         data_rows=orders_rows,
-        status_column_name="status",
     )
-    _format_sheet(items_sheet, sheet_title="Items", table_columns=items_columns, data_rows=items_rows)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    return output.getvalue()
+
+
+def _header_export_label(field: str) -> str:
+    return str(field or "").replace("_", " ").title()
+
+
+def _visible_order_header_rows(order: dict[str, Any]) -> list[tuple[str, Any]]:
+    header = order.get("header")
+    if not isinstance(header, dict):
+        return []
+
+    rows: list[tuple[str, Any]] = []
+    seen: set[str] = set()
+
+    for field in EDITABLE_HEADER_FIELDS:
+        field_key = str(field or "")
+        if field_key.lower() in HIDDEN_HEADER_EXPORT_FIELDS:
+            continue
+        if field_key in header:
+            rows.append((field_key, header[field_key]))
+            seen.add(field_key)
+
+    for field_key in sorted(str(key) for key in header.keys() if str(key) not in seen):
+        if field_key.lower() in HIDDEN_HEADER_EXPORT_FIELDS:
+            continue
+        rows.append((field_key, header[field_key]))
+
+    return rows
+
+
+def _as_order_header_xlsx_bytes(order: dict[str, Any]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Order Export"
+
+    header = order.get("header") if isinstance(order.get("header"), dict) else {}
+    items = order.get("items") if isinstance(order.get("items"), list) else []
+
+    header_fields = [
+        ("ticket_number", "Ticket Number"),
+        ("kundennummer", "Kundennummer"),
+        ("tour", "Tour"),
+        ("kom_nr", "Kom Nr"),
+        ("liefertermin", "Liefertermin"),
+        ("wunschtermin", "Wunschtermin"),
+        ("bestelldatum", "Bestelldatum"),
+        ("lieferanschrift", "Lieferanschrift"),
+        ("store_name", "Store Name"),
+        ("store_address", "Store Address"),
+        ("delivery_week", "Delivery Week"),
+        ("mail_to", "Mail To"),
+    ]
+    item_fields = [
+        ("artikelnummer", "Article Number"),
+        ("modellnummer", "Model Number"),
+        ("menge", "Quantity"),
+        ("furncloud_id", "Furncloud ID"),
+    ]
+    columns = [label for _, label in header_fields] + [label for _, label in item_fields]
+    header_fill = PatternFill(fill_type="solid", fgColor="D9D9D9")
+    header_alignment = Alignment(horizontal="left", vertical="bottom", wrap_text=True)
+    body_alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    thin = Side(style="thin", color="000000")
+    thin_border = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+    title = f"HEADER INFORMATION - {order.get('safe_id') or order.get('id') or ''}".strip(" -")
+    last_col_letter = get_column_letter(len(columns))
+    sheet.merge_cells(f"A1:{last_col_letter}1")
+    title_cell = sheet["A1"]
+    title_cell.value = title
+    title_cell.font = Font(size=16, bold=True)
+    title_cell.alignment = Alignment(horizontal="center", vertical="bottom")
+
+    exported_at = datetime.now().astimezone().strftime("%d.%m.%Y %H:%M")
+    sheet.cell(row=2, column=len(columns), value=exported_at).alignment = Alignment(horizontal="right", vertical="bottom")
+
+    header_row_index = 4
+    for col_index, column_name in enumerate(columns, start=1):
+        cell = sheet.cell(row=header_row_index, column=col_index, value=column_name.upper())
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    data_rows = [item for item in items if isinstance(item, dict)] or [{}]
+    for index, item in enumerate(data_rows, start=1):
+        row_values = [
+            _export_entry_value(header.get(field_key, "")) or "-"
+            for field_key, _ in header_fields
+        ] + [
+            _export_entry_value(item.get(field_key, "")) or "-"
+            for field_key, _ in item_fields
+        ]
+        row_number = header_row_index + index
+        for col_index, value in enumerate(row_values, start=1):
+            cell = sheet.cell(row=row_number, column=col_index, value=value)
+            cell.alignment = body_alignment
+            cell.border = thin_border
+
+    sheet.freeze_panes = "A5"
+    last_row = max(header_row_index + len(data_rows), header_row_index)
+    sheet.auto_filter.ref = f"A{header_row_index}:{last_col_letter}{last_row}"
+    for col_index, (_, label) in enumerate(header_fields, start=1):
+        width = 18
+        if label in {"Lieferanschrift", "Store Name", "Store Address", "Mail To"}:
+            width = 32
+        sheet.column_dimensions[get_column_letter(col_index)].width = width
+    item_start_col = len(header_fields) + 1
+    for offset, (_, label) in enumerate(item_fields, start=0):
+        width = 18 if label != "Furncloud ID" else 20
+        sheet.column_dimensions[get_column_letter(item_start_col + offset)].width = width
 
     output = io.BytesIO()
     workbook.save(output)
@@ -2776,6 +2837,33 @@ def api_order_detail(order_id: str):
     payload = _order_api_payload(updated_order)
     payload["xml_regenerated"] = xml_regenerated
     return jsonify(payload)
+
+
+@app.route("/api/orders/<order_id>/header.xlsx")
+def api_export_order_header_xlsx(order_id: str):
+    scope = _order_access_scope(getattr(g, "user", {}) or {})
+    order, load_error = _load_order(
+        order_id,
+        assigned_user_id=scope.get("assigned_user_id"),
+        allowed_client_branches=scope.get("allowed_client_branches"),
+    )
+    if load_error is not None:
+        return load_error
+
+    try:
+        xlsx_bytes = _as_order_header_xlsx_bytes(order)
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "xlsx_export_failed", f"Failed to build header XLSX export: {exc}")
+
+    base_name = str(order.get("safe_id") or order.get("id") or "order").strip() or "order"
+    safe_base_name = re.sub(r"[^A-Za-z0-9_-]+", "_", base_name).strip("_") or "order"
+    filename = f"{safe_base_name}_header_information.xlsx"
+    response = Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
 
 
 @app.route("/api/orders/<order_id>/export-xml", methods=["POST"])

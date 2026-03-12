@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { fetchJson, withQuery } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { OrderClientTimelineChart } from "../components/OrderClientTimelineChart";
+import { StatusBreakdownChart } from "../components/StatusBreakdownChart";
 
 import { useI18n } from "../i18n/I18nContext";
 import { formatDate, formatPercent } from "../utils/format";
@@ -207,8 +208,7 @@ export function OverviewPage() {
   const [overview, setOverview] = useState(null);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [selectedDayIndex, setSelectedDayIndex] = useState(null);
-  const [selectedClientDayIndex, setSelectedClientDayIndex] = useState(null);
+  const [selectedDay, setSelectedDay] = useState(null);
   const [rangePreset, setRangePreset] = useState("today");
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthToken());
   const [isMonthMenuOpen, setIsMonthMenuOpen] = useState(false);
@@ -240,8 +240,7 @@ export function OverviewPage() {
   }, [loadOverview]);
 
   useEffect(() => {
-    setSelectedDayIndex(null);
-    setSelectedClientDayIndex(null);
+    setSelectedDay(null);
   }, [overview?.range?.preset, overview?.range?.month, overview?.range?.start, overview?.range?.end]);
 
   useEffect(() => {
@@ -272,45 +271,41 @@ export function OverviewPage() {
 
   const summary = normalizeOverviewSummary(overview);
   const statusByDay = overview?.status_by_day || [];
-  const dayTotals = statusByDay.map((bucket) => getBucketTotals(bucket));
-  const maxDayTotal = Math.max(...dayTotals.map((bucket) => bucket.total), 0);
-  const hasActivity = dayTotals.some((bucket) => bucket.total > 0);
-  const latestActiveIndex = (() => {
-    for (let index = dayTotals.length - 1; index >= 0; index -= 1) {
-      if (dayTotals[index]?.total > 0) {
-        return index;
+  const statusChartData = statusByDay.map((bucket) => {
+    const totals = getBucketTotals(bucket);
+    return {
+      date: bucket.date,
+      ok: totals.ok,
+      waitingForReply: totals.waitingForReply,
+      updatedAfterReply: totals.updatedAfterReply,
+      humanInTheLoop: totals.humanInTheLoop,
+      post: totals.post,
+      unknownClient: totals.unknown,
+      failed: totals.failed,
+      total: totals.total,
+      sourceBucket: bucket,
+    };
+  });
+  const hasActivity = statusChartData.some((bucket) => bucket.total > 0);
+  const latestActiveDay = (() => {
+    for (let index = statusChartData.length - 1; index >= 0; index -= 1) {
+      if (statusChartData[index]?.total > 0) {
+        return statusChartData[index];
       }
     }
     return null;
   })();
-  const safeSelectedIndex =
-    selectedDayIndex !== null && selectedDayIndex < statusByDay.length
-      ? selectedDayIndex
+  const safeSelectedDay =
+    selectedDay && statusChartData.some((bucket) => bucket.date === selectedDay.date)
+      ? selectedDay
       : null;
-  const effectiveSelectedIndex = safeSelectedIndex ?? latestActiveIndex;
-  const selectedBucket =
-    effectiveSelectedIndex !== null ? statusByDay[effectiveSelectedIndex] : null;
-  const selectedTotals =
-    effectiveSelectedIndex !== null ? dayTotals[effectiveSelectedIndex] : null;
+  const effectiveSelectedDay = safeSelectedDay ?? latestActiveDay;
+  const selectedBucket = effectiveSelectedDay?.sourceBucket || null;
+  const selectedTotals = effectiveSelectedDay || null;
   const bucketGranularity = overview?.range?.bucket_granularity || "day";
   const clientHourData = overview?.orders_by_client_hour || { clients: [], days: [] };
   const clientHourDays = clientHourData.days || [];
-  const latestClientDayIndex = (() => {
-    for (let index = clientHourDays.length - 1; index >= 0; index -= 1) {
-      if ((clientHourDays[index]?.total || 0) > 0) {
-        return index;
-      }
-    }
-    return clientHourDays.length ? 0 : null;
-  })();
-  const safeClientDayIndex =
-    selectedClientDayIndex !== null && selectedClientDayIndex < clientHourDays.length
-      ? selectedClientDayIndex
-      : null;
-  const effectiveClientDayIndex = safeClientDayIndex ?? latestClientDayIndex;
-  const selectedClientDay =
-    effectiveClientDayIndex !== null ? clientHourDays[effectiveClientDayIndex] : null;
-  const isMonthDayView = bucketGranularity === "day" && (rangePreset === "month" || rangePreset === "custom_month");
+  const selectedClientDay = null;
   const selectedLabel = selectedBucket
     ? formatBucketLabel(selectedBucket, locale, bucketGranularity)
     : "";
@@ -324,18 +319,19 @@ export function OverviewPage() {
       : null,
     locale,
   );
-  const fitAllDaysInView = bucketGranularity === "day" && statusByDay.length >= 20;
-  const chartMinWidth = Math.max(statusByDay.length * 84, 420);
-  const showAllBucketLabels = bucketGranularity === "month" || fitAllDaysInView || isMonthDayView;
-  const labelStride = fitAllDaysInView
-    ? 1
-    : Math.max(1, Math.ceil(statusByDay.length / 10));
   const timelineView =
     rangePreset === "week"
       ? "weekly"
       : rangePreset === "month" || rangePreset === "custom_month"
         ? "monthly"
-        : "daily";
+        : rangePreset === "3m"
+          ? "quarter"
+          : rangePreset === "6m"
+            ? "half_year"
+            : rangePreset === "year"
+              ? "year"
+              : "daily";
+  const isLongRangeTimeline = ["quarter", "half_year", "year"].includes(timelineView);
   const monthOptions = buildMonthOptions(locale);
   const yearOptions = buildYearOptions();
 
@@ -538,110 +534,28 @@ export function OverviewPage() {
               </h2>
               <p className="text-[13px] text-slate-500 mt-1">{chartRangeLabel || rangeLabel || t("overview.chartSubtitle")}</p>
             </div>
-            <div className="flex flex-wrap gap-3 text-[12px] font-medium">
+            <div className="flex flex-wrap gap-2">
               {STATUS_CONFIG.map((status) => (
-                <div key={status.key} className="flex items-center gap-2">
-                  <span className={`w-3 h-3 rounded-full ${status.dotClass}`} />
-                  <span className="text-slate-600">{t(status.labelKey)}</span>
-                </div>
+                <span
+                  key={status.key}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700"
+                >
+                  <span className={`h-2.5 w-2.5 rounded-full ${status.dotClass}`} />
+                  <span>{t(status.labelKey)}</span>
+                </span>
               ))}
             </div>
           </div>
 
           {hasActivity ? (
-            <div className={fitAllDaysInView ? "overflow-hidden" : "overflow-x-auto pb-1"}>
-              <div className="space-y-4" style={fitAllDaysInView ? undefined : { minWidth: `${chartMinWidth}px` }}>
-                <div className={`h-[250px] flex items-end ${fitAllDaysInView ? "justify-between gap-2 px-1" : "justify-center gap-4 px-4"}`}>
-                  {statusByDay.map((bucket, index) => {
-                    const totals = dayTotals[index];
-                    const scale = maxDayTotal > 0 ? maxDayTotal : 1;
-                    const tooltip = [
-                      `${t("common.total")}: ${totals.total}`,
-                      `${t("status.ok")}: ${totals.ok}`,
-                      `${t("status.waiting_for_reply")}: ${totals.waitingForReply}`,
-                      `${t("status.human_in_the_loop")}: ${totals.humanInTheLoop}`,
-                      `${t("status.post")}: ${totals.post}`,
-                      `${t("status.unknown")}: ${totals.unknown}`,
-                      `${t("status.failed")}: ${totals.failed}`,
-                      `${t("status.updated_after_reply")}: ${totals.updatedAfterReply}`,
-                    ].join("\n");
-                    const showLabel =
-                      showAllBucketLabels ||
-                      index === 0 ||
-                      index === statusByDay.length - 1 ||
-                      index % labelStride === 0;
-
-                    return (
-                      <button
-                        key={bucket.date}
-                        type="button"
-                        title={tooltip}
-                        onClick={() => setSelectedDayIndex((current) => (current === index ? null : index))}
-                        className={`${fitAllDaysInView ? "flex-1 min-w-0 max-w-[28px]" : "w-[72px] shrink-0"} h-full flex flex-col items-center gap-2 focus:outline-none`}
-                      >
-                        <div
-                          className={`w-full rounded-2xl overflow-hidden border transition-all ${
-                            effectiveSelectedIndex === index
-                              ? "border-primary shadow-sm"
-                              : "border-slate-200"
-                          }`}
-                        >
-                          <div className="h-[190px] flex flex-col justify-end bg-slate-50">
-                            {STATUS_CONFIG.slice().reverse().map((status) => {
-                              const amount = toNumber(bucket?.[status.key]);
-                              const height = `${(amount / scale) * 100}%`;
-                              return (
-                                <div
-                                  key={status.key}
-                                  className={`w-full ${status.dotClass}`}
-                                  style={{ height }}
-                                />
-                              );
-                            })}
-                          </div>
-                        </div>
-                        <div className="text-center">
-                          {!fitAllDaysInView ? (
-                            <div className="text-[11px] font-semibold text-slate-700">{totals.total}</div>
-                          ) : null}
-                          <span className={`text-[11px] ${showLabel ? "text-slate-500" : "text-transparent"}`}>
-                            {bucket.label}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {selectedTotals ? (
-                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-wrap items-center gap-3 text-[13px]">
-                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                      <span>{t("common.selectedDay")}:</span>
-                      <span>{selectedLabel}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-700 font-semibold">
-                      <span>{t("common.total")}:</span>
-                      <span>{selectedTotals.total}</span>
-                    </div>
-                    {STATUS_CONFIG.map((status) => {
-                      const totalsKey =
-                        status.key === "waiting_for_reply"
-                          ? "waitingForReply"
-                          : status.key === "human_in_the_loop"
-                            ? "humanInTheLoop"
-                            : status.key === "updated_after_reply"
-                              ? "updatedAfterReply"
-                              : status.key;
-                      return (
-                        <div key={status.key} className="flex items-center gap-2 text-slate-600">
-                          <span className={`w-2.5 h-2.5 rounded-full ${status.dotClass}`} />
-                          <span>{t(status.labelKey)} {selectedTotals[totalsKey]}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+            <div className="space-y-4">
+              <StatusBreakdownChart
+                data={statusChartData}
+                locale={locale}
+                t={t}
+                selectedDay={effectiveSelectedDay}
+                onSelectDay={(day) => setSelectedDay((current) => (current?.date === day.date ? null : day))}
+              />
             </div>
           ) : (
             <div className="min-h-[220px] flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-2xl">
@@ -650,53 +564,29 @@ export function OverviewPage() {
           )}
         </section>
 
-        {bucketGranularity === "day" ? (
+        {clientHourDays.length ? (
           <section className="bg-surface-light rounded-2xl border border-slate-200 shadow-sm p-4 space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">{t("overview.orderClientTimeline", null, "Order Client Timeline")}</h2>
-                <p className="text-[13px] text-slate-500 mt-1">{t("overview.orderClientTimelineSubtitle", null, "Pick a day to inspect hourly order totals and the client split.")}</p>
+                <p className="text-[13px] text-slate-500 mt-1">
+                  {isLongRangeTimeline
+                    ? t("overview.orderClientTimelineLongRangeSubtitle", null, "Client activity is aggregated automatically for the selected range.")
+                    : t("overview.orderClientTimelineSubtitle", null, "Pick a day to inspect hourly order totals and the client split.")}
+                </p>
               </div>
-              {selectedClientDay ? (
+              {selectedClientDay && !isLongRangeTimeline ? (
                 <div className="text-[12px] font-medium text-slate-600">
                   {selectedClientDay.label} · {t("overview.hourlyOrders", { count: selectedClientDay.total ?? 0 }, `${selectedClientDay.total ?? 0} orders`)}
                 </div>
               ) : null}
             </div>
 
-            {clientHourDays.length ? (
-              <>
-                <OrderClientTimelineChart
-                  timeline={clientHourData}
-                  view={timelineView}
-                  locale={locale}
-                />
-                <div className="hidden flex-wrap gap-2">
-                  {clientHourDays.map((day, index) => {
-                    const isActive = effectiveClientDayIndex === index;
-                    return (
-                      <button
-                        key={day.date}
-                        type="button"
-                        onClick={() => setSelectedClientDayIndex(index)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-colors ${
-                          isActive
-                            ? "border-primary bg-primary/10 text-primary"
-                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="text-[12px] font-semibold">{day.label}</div>
-                        <div className="text-[11px] opacity-80">{day.total} {t("common.total")}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="min-h-[120px] flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-2xl">
-                {t("overview.noHourlyClientActivity", null, "No hourly client activity for the selected day.")}
-              </div>
-            )}
+            <OrderClientTimelineChart
+              timeline={clientHourData}
+              view={timelineView}
+              locale={locale}
+            />
           </section>
         ) : null}
       </main>

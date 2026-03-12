@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
@@ -52,20 +54,53 @@ const SIX_HOUR_BLOCKS = [
   { key: "evening", start: 18, end: 24, label: "Evening" },
 ];
 
+function toDate(value) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function toShortDayLabel(value, locale) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = toDate(value);
+  if (!date) {
     return String(value || "");
   }
   return date.toLocaleDateString(locale || undefined, { weekday: "short", day: "2-digit" });
 }
 
 function toShortDateLabel(value, locale) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = toDate(value);
+  if (!date) {
     return String(value || "");
   }
   return date.toLocaleDateString(locale || undefined, { month: "short", day: "2-digit" });
+}
+
+function toMonthLabel(value, locale) {
+  const date = toDate(value);
+  if (!date) {
+    return String(value || "");
+  }
+  return date.toLocaleDateString(locale || undefined, { month: "short", year: "numeric" });
+}
+
+function formatValue(value) {
+  const numeric = Number(value || 0);
+  return Number.isInteger(numeric) ? numeric : numeric.toFixed(1);
+}
+
+function getWeekStart(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  return date;
+}
+
+function getMonthStart(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(1);
+  return date;
 }
 
 function buildColorMap(clients) {
@@ -174,6 +209,63 @@ function buildMonthlySeries(daySeries, clients, locale) {
   );
 }
 
+function buildDailyTotals(days, clients) {
+  return days.map((day) => {
+    const point = {
+      date: day.date,
+      label: day.label,
+      total: Number(day.total || 0),
+    };
+    clients.forEach((client) => {
+      point[client.id] = (day.hours || []).reduce((sum, hourEntry) => {
+        const clientEntry = (hourEntry.clients || []).find((entry) => entry.id === client.id);
+        return sum + Number(clientEntry?.count || 0);
+      }, 0);
+    });
+    return point;
+  });
+}
+
+function buildMovingAverageSeries(series, clients, windowSize = 7) {
+  return series.map((point, index) => {
+    const startIndex = Math.max(0, index - windowSize + 1);
+    const window = series.slice(startIndex, index + 1);
+    const nextPoint = { ...point };
+    clients.forEach((client) => {
+      const average = window.reduce((sum, entry) => sum + Number(entry[client.id] || 0), 0) / window.length;
+      nextPoint[client.id] = Number(average.toFixed(2));
+    });
+    nextPoint.total = clients.reduce((sum, client) => sum + Number(nextPoint[client.id] || 0), 0);
+    return nextPoint;
+  });
+}
+
+function buildAggregatedSeries(series, clients, getBucketDate, labelFormatter) {
+  const buckets = new Map();
+  series.forEach((point) => {
+    const bucketDate = getBucketDate(toDate(point.date));
+    const key = bucketDate.toISOString();
+    if (!buckets.has(key)) {
+      const initialPoint = {
+        date: key,
+        label: labelFormatter(bucketDate),
+        total: 0,
+      };
+      clients.forEach((client) => {
+        initialPoint[client.id] = 0;
+      });
+      buckets.set(key, initialPoint);
+    }
+    const bucket = buckets.get(key);
+    clients.forEach((client) => {
+      const value = Number(point[client.id] || 0);
+      bucket[client.id] += value;
+      bucket.total += value;
+    });
+  });
+  return Array.from(buckets.values()).sort((left, right) => new Date(left.date) - new Date(right.date));
+}
+
 function ClientTooltip({ active, payload, label, clientMap }) {
   if (!active || !payload?.length) {
     return null;
@@ -191,7 +283,7 @@ function ClientTooltip({ active, payload, label, clientMap }) {
                 <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
                 <span>{clientMap.get(entry.dataKey) || entry.dataKey}</span>
               </span>
-              <span className="font-semibold text-slate-900">{entry.value}</span>
+              <span className="font-semibold text-slate-900">{formatValue(entry.value)}</span>
             </div>
           ))}
       </div>
@@ -265,9 +357,11 @@ export function OrderClientTimelineChart({
   const clientMap = useMemo(() => new Map(clients.map((client) => [client.id, client.label])), [clients]);
   const [hiddenClientIds, setHiddenClientIds] = useState([]);
   const [selectedDailyDate, setSelectedDailyDate] = useState(() => (days.length ? days[days.length - 1].date : null));
+  const [smoothQuarterSeries, setSmoothQuarterSeries] = useState(false);
 
   const visibleClients = clients.filter((client) => !hiddenClientIds.includes(client.id));
   const daySeries = useMemo(() => buildClientSeries(days, clients), [days, clients]);
+  const dailyTotals = useMemo(() => buildDailyTotals(days, clients), [days, clients]);
 
   const selectedDailySeries =
     daySeries.find((day) => day.date === selectedDailyDate)
@@ -276,6 +370,29 @@ export function OrderClientTimelineChart({
 
   const weeklySeries = useMemo(() => buildWeeklySeries(daySeries.slice(-7), clients, locale), [clients, daySeries, locale]);
   const monthlySeries = useMemo(() => buildMonthlySeries(daySeries, clients, locale), [clients, daySeries, locale]);
+  const quarterSeriesRaw = useMemo(() => dailyTotals.slice(-92), [dailyTotals]);
+  const quarterSeries = useMemo(
+    () => (smoothQuarterSeries ? buildMovingAverageSeries(quarterSeriesRaw, clients, 7) : quarterSeriesRaw),
+    [clients, quarterSeriesRaw, smoothQuarterSeries],
+  );
+  const halfYearSeries = useMemo(
+    () => buildAggregatedSeries(
+      dailyTotals.slice(-184),
+      clients,
+      getWeekStart,
+      (date) => `Week of ${toShortDateLabel(date, locale)}`,
+    ),
+    [clients, dailyTotals, locale],
+  );
+  const yearSeries = useMemo(
+    () => buildAggregatedSeries(
+      dailyTotals,
+      clients,
+      getMonthStart,
+      (date) => toMonthLabel(date, locale),
+    ),
+    [clients, dailyTotals, locale],
+  );
 
   const toggleClient = (clientId) => {
     setHiddenClientIds((current) => (
@@ -313,6 +430,23 @@ export function OrderClientTimelineChart({
           );
         })}
       </div>
+
+      {view === "quarter" ? (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setSmoothQuarterSeries((current) => !current)}
+            className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              smoothQuarterSeries
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <span>Smooth</span>
+            <span className="text-[11px] opacity-80">7-day MA</span>
+          </button>
+        </div>
+      ) : null}
 
       {view === "daily" ? (
         <div className="space-y-4">
@@ -434,6 +568,103 @@ export function OrderClientTimelineChart({
                 />
               ))}
             </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
+
+      {view === "quarter" ? (
+        <div className="h-[380px] rounded-2xl border border-slate-200 bg-white p-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={quarterSeries} margin={{ top: 16, right: 12, left: 8, bottom: 8 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) => toShortDateLabel(value, locale)}
+                minTickGap={24}
+              />
+              <YAxis allowDecimals={smoothQuarterSeries} domain={["auto", "auto"]} />
+              <Tooltip
+                content={<ClientTooltip clientMap={clientMap} />}
+                labelFormatter={(value) => toShortDateLabel(value, locale)}
+              />
+              <Legend />
+              {visibleClients.map((client) => (
+                <Line
+                  key={client.id}
+                  type="monotone"
+                  dataKey={client.id}
+                  name={client.label}
+                  stroke={colorMap[client.id]}
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
+
+      {view === "half_year" ? (
+        <div className="h-[380px] rounded-2xl border border-slate-200 bg-white p-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={halfYearSeries} stackOffset="none" margin={{ top: 16, right: 12, left: 8, bottom: 8 }}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) => toShortDateLabel(value, locale)}
+                minTickGap={28}
+              />
+              <YAxis allowDecimals={false} domain={["auto", "auto"]} />
+              <Tooltip
+                content={<ClientTooltip clientMap={clientMap} />}
+                labelFormatter={(value) => `Week of ${toShortDateLabel(value, locale)}`}
+              />
+              <Legend />
+              {visibleClients.map((client) => (
+                <Area
+                  key={client.id}
+                  type="monotone"
+                  dataKey={client.id}
+                  name={client.label}
+                  stackId="clients"
+                  stroke={colorMap[client.id]}
+                  fill={colorMap[client.id]}
+                  fillOpacity={0.78}
+                  strokeWidth={1.8}
+                />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null}
+
+      {view === "year" ? (
+        <div className="h-[380px] rounded-2xl border border-slate-200 bg-white p-4">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={yearSeries} margin={{ top: 16, right: 12, left: 8, bottom: 8 }} barGap={6}>
+              <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(value) => toMonthLabel(value, locale)}
+                minTickGap={20}
+              />
+              <YAxis allowDecimals={false} domain={["auto", "auto"]} />
+              <Tooltip
+                content={<ClientTooltip clientMap={clientMap} />}
+                labelFormatter={(value) => toMonthLabel(value, locale)}
+              />
+              <Legend />
+              {visibleClients.map((client) => (
+                <Bar
+                  key={client.id}
+                  dataKey={client.id}
+                  name={client.label}
+                  fill={colorMap[client.id]}
+                  radius={[4, 4, 0, 0]}
+                />
+              ))}
+            </BarChart>
           </ResponsiveContainer>
         </div>
       ) : null}
