@@ -7,7 +7,7 @@ import { ValidationBadge } from "../components/ValidationBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { useAuth } from "../auth/useAuth";
 import { downloadBlob } from "../utils/download";
-import { localizeOperationalMessages, visibleOperationalMessages } from "../utils/operationalSignals";
+import { localizeOperationalMessages, visibleOperationalMessages, isUserFacingWarning } from "../utils/operationalSignals";
 import {
   entryValue,
   fieldLabel,
@@ -509,7 +509,12 @@ export function OrderDetailPage() {
   const validationIssues = Array.isArray(order.validation_issues) ? order.validation_issues : [];
   const canResolveValidation = validationStatus === "flagged" || validationStatus === "stale";
   const visibleErrors = localizeOperationalMessages(visibleOperationalMessages(order?.errors), t);
-  const visibleWarnings = localizeOperationalMessages(visibleOperationalMessages(order?.warnings), t);
+  const isSuperAdmin = user?.role === "superadmin";
+  const rawWarnings = visibleOperationalMessages(order?.warnings);
+  const filteredWarnings = isSuperAdmin
+    ? rawWarnings
+    : rawWarnings.filter(isUserFacingWarning);
+  const visibleWarnings = localizeOperationalMessages(filteredWarnings, t);
 
   return (
     <AppShell

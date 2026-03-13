@@ -64,6 +64,30 @@ export function visibleOperationalMessages(messages) {
     .filter((message) => message.length > 0);
 }
 
+export function isUserFacingWarning(message) {
+  const text = normalizeWhitespace(message);
+  if (!text) return false;
+
+  if (text === "No items extracted.") return true;
+  if (text === "furncloud_id is missing for one or more items.") return true;
+  if (/^ticket number is missing$/i.test(text)) return true;
+  if (text === "Multiple furncloud IDs detected: human review required.") return true;
+  if (/^Missing item fields:/i.test(text)) return true;
+  if (/^Missing header fields:/i.test(text)) return true;
+  if (/^Reply needed:/i.test(text)) return true;
+  if (/^Human review needed:/i.test(text)) return true;
+  if (/^Porta explicit-pair review retained/i.test(text)) return true;
+  if (/^Porta ambiguous-code human-review trigger/i.test(text)) return true;
+  if (/^The PDF code '/i.test(text)) return true;
+  if (/^The PDF contains ambiguous item codes\./i.test(text)) return true;
+  if (/^Artikel-Nr\..*porta-interne/i.test(text)) return true;
+  if (/^Keine eindeutige artikelnummer\/modellnummer im PDF erkennbar\.$/i.test(text)) return true;
+  if (/forced human_review_needed=true/i.test(text)) return true;
+  if (/^Segmuller furnplan contains no Staud vendor section/i.test(text)) return true;
+
+  return false;
+}
+
 export function translateOperationalSignal(message, t) {
   const text = normalizeWhitespace(message);
   if (!text) {
