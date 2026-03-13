@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchJson, withQuery } from "../api/http";
+import { useAuth } from "../auth/useAuth";
 import { AppShell } from "../components/AppShell";
 import { OrderClientTimelineChart } from "../components/OrderClientTimelineChart";
 import { StatusBreakdownChart } from "../components/StatusBreakdownChart";
@@ -205,7 +206,10 @@ function normalizeOverviewSummary(payload) {
 export function OverviewPage() {
   const navigate = useNavigate();
   const { t, locale } = useI18n();
+  const { user } = useAuth();
+  const isSuperadmin = Boolean(user?.is_super_admin);
   const [overview, setOverview] = useState(null);
+  const [xmlActivity, setXmlActivity] = useState(null);
   const [error, setError] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [selectedDay, setSelectedDay] = useState(null);
@@ -238,6 +242,26 @@ export function OverviewPage() {
     const intervalId = setInterval(loadOverview, 15000);
     return () => clearInterval(intervalId);
   }, [loadOverview]);
+
+  const loadXmlActivity = useCallback(async () => {
+    if (!isSuperadmin) return;
+    try {
+      const payload = await fetchJson(
+        withQuery("/api/superadmin/xml-activity", {
+          range: rangePreset,
+          month: rangePreset === "custom_month" ? selectedMonth : null,
+          year: rangePreset === "year" ? selectedYear : null,
+        }),
+      );
+      setXmlActivity(payload);
+    } catch { /* silent — section simply won't render */ }
+  }, [isSuperadmin, rangePreset, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    loadXmlActivity();
+    const id = setInterval(loadXmlActivity, 15000);
+    return () => clearInterval(id);
+  }, [loadXmlActivity]);
 
   useEffect(() => {
     setSelectedDay(null);
@@ -587,6 +611,73 @@ export function OverviewPage() {
               view={timelineView}
               locale={locale}
             />
+          </section>
+        ) : null}
+
+        {isSuperadmin && xmlActivity ? (
+          <section className="bg-surface-light rounded-2xl border border-slate-200 shadow-sm p-4 space-y-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="material-icons text-violet-600">shield</span>
+                <h2 className="text-lg font-bold text-slate-900">XML Activity</h2>
+                <span className="text-[11px] uppercase tracking-widest text-violet-600 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">Superadmin</span>
+              </div>
+              <p className="text-[13px] text-slate-500 mt-1">{rangeLabel}</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <MetricCard
+                title="XMLs Generated"
+                value={xmlActivity.summary.generated_files}
+                detail={`from ${xmlActivity.summary.generated_orders} orders (OrderInfo + ArticleInfo)`}
+                icon="description"
+                accentClass="border-l-4 border-l-violet-500"
+                iconClass="text-violet-600 bg-violet-50"
+              />
+              <MetricCard
+                title="XMLs Regenerated"
+                value={xmlActivity.summary.regenerated_files}
+                detail={`from ${xmlActivity.summary.regenerated_events} regeneration events`}
+                icon="refresh"
+                accentClass="border-l-4 border-l-amber-500"
+                iconClass="text-amber-600 bg-amber-50"
+              />
+            </div>
+
+            {xmlActivity.by_day.some((d) => d.generated_orders > 0 || d.regenerated_events > 0) ? (
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-500 text-[12px] uppercase tracking-wide">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Date</th>
+                      <th className="px-4 py-2 text-right">Generated (files)</th>
+                      <th className="px-4 py-2 text-right">→ OrderInfo XML</th>
+                      <th className="px-4 py-2 text-right">→ ArticleInfo XML</th>
+                      <th className="px-4 py-2 text-right">Regenerated (files)</th>
+                      <th className="px-4 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {xmlActivity.by_day
+                      .filter((d) => d.generated_orders > 0 || d.regenerated_events > 0)
+                      .map((d) => (
+                        <tr key={d.date} className="border-t border-slate-100 hover:bg-slate-50">
+                          <td className="px-4 py-2 font-medium text-slate-700">{d.label}</td>
+                          <td className="px-4 py-2 text-right">{d.generated_files}</td>
+                          <td className="px-4 py-2 text-right text-slate-500">{d.generated_orders}</td>
+                          <td className="px-4 py-2 text-right text-slate-500">{d.generated_orders}</td>
+                          <td className="px-4 py-2 text-right">{d.regenerated_files}</td>
+                          <td className="px-4 py-2 text-right font-semibold">{d.generated_files + d.regenerated_files}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="min-h-[80px] flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-2xl">
+                No XML activity in this period
+              </div>
+            )}
           </section>
         ) : null}
       </main>

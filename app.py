@@ -2503,6 +2503,82 @@ def api_overview():
     )
 
 
+@app.route("/api/superadmin/xml-activity")
+def api_superadmin_xml_activity():
+    user = getattr(g, "user", {}) or {}
+    if not is_superadmin(user):
+        return _api_error(403, "forbidden", "Superadmin access required")
+
+    now = datetime.now().astimezone()
+    overview_range, error_response = _parse_overview_range(now)
+    if error_response is not None:
+        return error_response
+
+    try:
+        activity = order_store.query_xml_activity(
+            range_start=overview_range["start"],
+            range_end=overview_range["end"],
+            chart_start=overview_range["chart_start"],
+            chart_end=overview_range["chart_end"],
+            bucket_granularity=overview_range["bucket_granularity"],
+            local_timezone=_postgres_timezone_name(now.tzinfo),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to load XML activity: {exc}")
+
+    by_day = []
+    for row in activity.get("by_day", []):
+        bucket_start = row.get("bucket_start")
+        if isinstance(bucket_start, datetime):
+            bucket_point = bucket_start.astimezone()
+        elif isinstance(bucket_start, date):
+            bucket_point = datetime.combine(bucket_start, datetime.min.time(), tzinfo=overview_range["start"].tzinfo)
+        else:
+            bucket_point = overview_range["start"]
+        if overview_range["bucket_granularity"] == "month":
+            label = bucket_point.strftime("%b %Y")
+            iso_value = bucket_point.date().isoformat()
+        else:
+            label = bucket_point.strftime("%b %d")
+            iso_value = bucket_point.date().isoformat()
+        gen_orders = int(row.get("generated_orders") or 0)
+        regen_events = int(row.get("regenerated_events") or 0)
+        by_day.append(
+            {
+                "date": iso_value,
+                "label": label,
+                "generated_orders": gen_orders,
+                "regenerated_events": regen_events,
+                "generated_files": gen_orders * 2,
+                "regenerated_files": regen_events * 2,
+            }
+        )
+
+    summary = activity.get("summary", {})
+    return jsonify(
+        {
+            "generated_at": now.isoformat(),
+            "range": {
+                "preset": overview_range["preset"],
+                "month": overview_range.get("month"),
+                "year": overview_range.get("year"),
+                "start": overview_range["start"].isoformat(),
+                "end": overview_range["end"].isoformat(),
+                "chart_start": overview_range["chart_range_start"].isoformat(),
+                "chart_end": overview_range["chart_range_end"].isoformat(),
+                "bucket_granularity": overview_range["bucket_granularity"],
+            },
+            "summary": {
+                "generated_orders": int(summary.get("generated_orders") or 0),
+                "regenerated_events": int(summary.get("regenerated_events") or 0),
+                "generated_files": int(summary.get("generated_files") or 0),
+                "regenerated_files": int(summary.get("regenerated_files") or 0),
+            },
+            "by_day": by_day,
+        }
+    )
+
+
 @app.route("/api/clients/counts")
 def api_clients_counts():
     scope = _order_access_scope(getattr(g, "user", {}) or {})

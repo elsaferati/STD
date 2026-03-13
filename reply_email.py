@@ -312,8 +312,8 @@ def send_px_xml_email(order_id: str, config: Config, output_dir: "Path") -> None
             filename=doc.filename,
         )
 
-    send_email_via_smtp(config, msg)
     _order_store.mark_px_xml_sent(order_id)
+    send_email_via_smtp(config, msg)
 
 
 def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:

@@ -8,7 +8,7 @@ import re
 from typing import Any
 import uuid
 
-from db import fetch_all, fetch_one, get_connection
+from db import execute, fetch_all, fetch_one, get_connection
 from extraction_branches import BRANCHES
 from gemini_validation import (
     VALIDATION_PROVIDER_GEMINI,
@@ -2069,6 +2069,103 @@ def query_overview_snapshot(
             ],
             "days": client_hour_days,
         },
+    }
+
+
+def query_xml_activity(
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    chart_start: datetime,
+    chart_end: datetime,
+    bucket_granularity: str = "day",
+    local_timezone: str = "UTC",
+) -> dict[str, Any]:
+    summary = fetch_one(
+        """
+        SELECT
+          COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+          (SELECT COUNT(*) FROM order_events
+           WHERE event_type = 'xml_regenerated'
+             AND created_at >= %s AND created_at < %s)::bigint AS regenerated_events
+        FROM order_px_controls px
+        WHERE px.xml_sent_at >= %s AND px.xml_sent_at < %s
+        """,
+        [range_start, range_end, range_start, range_end],
+    ) or {}
+
+    if bucket_granularity == "month":
+        bucket_rows = fetch_all(
+            """
+            WITH month_buckets AS (
+                SELECT generate_series(%s::date, %s::date, interval '1 month')::date AS bucket_start
+            )
+            SELECT
+              b.bucket_start,
+              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+            FROM month_buckets b
+            LEFT JOIN order_px_controls px
+              ON (px.xml_sent_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (px.xml_sent_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            LEFT JOIN order_events e
+              ON e.event_type = 'xml_regenerated'
+             AND (e.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (e.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [
+                chart_start.date(),
+                chart_end.date(),
+                local_timezone,
+                local_timezone,
+                local_timezone,
+                local_timezone,
+            ],
+        )
+    else:
+        bucket_rows = fetch_all(
+            """
+            WITH day_buckets AS (
+                SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 day') AS bucket_start
+            )
+            SELECT
+              b.bucket_start,
+              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+            FROM day_buckets b
+            LEFT JOIN order_px_controls px
+              ON px.xml_sent_at >= b.bucket_start
+             AND px.xml_sent_at < b.bucket_start + interval '1 day'
+            LEFT JOIN order_events e
+              ON e.event_type = 'xml_regenerated'
+             AND e.created_at >= b.bucket_start
+             AND e.created_at < b.bucket_start + interval '1 day'
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [chart_start, chart_end],
+        )
+
+    generated_orders = int(summary.get("generated_orders") or 0)
+    regenerated_events = int(summary.get("regenerated_events") or 0)
+
+    return {
+        "summary": {
+            "generated_orders": generated_orders,
+            "regenerated_events": regenerated_events,
+            "generated_files": generated_orders * 2,
+            "regenerated_files": regenerated_events * 2,
+        },
+        "by_day": [
+            {
+                "bucket_start": row.get("bucket_start"),
+                "generated_orders": int(row.get("generated_orders") or 0),
+                "regenerated_events": int(row.get("regenerated_events") or 0),
+            }
+            for row in bucket_rows
+        ],
     }
 
 
