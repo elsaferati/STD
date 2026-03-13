@@ -405,14 +405,14 @@ export function OrdersPage() {
                 onClick={() => applyTab("today")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "today" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {lang === "de" ? "Heute" : "Today"} <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
+                {t("orders.filterToday")} <span className="bg-primary/10 text-primary-dark py-0.5 px-2 rounded-full text-xs ml-1">{counts.today || 0}</span>
               </button>
               <button
                 type="button"
                 onClick={() => applyTab("all")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "all" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {lang === "de" ? "Alle" : "All"} <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
+                {t("orders.filterAll")} <span className="bg-slate-100 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.all || 0}</span>
               </button>
               <button
                 type="button"
@@ -461,7 +461,7 @@ export function OrdersPage() {
                 onClick={() => applyTab("unknown")}
                 className={`pb-3 border-b-2 text-sm whitespace-nowrap transition-all ${activeTab === "unknown" ? "border-primary text-primary font-bold" : "border-transparent text-slate-500 hover:text-slate-700"}`}
               >
-                {lang === "de" ? "Unbekannt" : "Unknown"} <span className="bg-slate-200 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.unknown || 0}</span>
+                {t("orders.unknownFilter")} <span className="bg-slate-200 text-slate-600 py-0.5 px-2 rounded-full text-xs ml-1">{counts.unknown || 0}</span>
               </button>
               <button
                 type="button"
@@ -499,7 +499,7 @@ export function OrdersPage() {
                 </select>
                 <div className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5">
                   <span className="material-icons text-[16px] text-slate-400">calendar_month</span>
-                  <span className="hidden text-[11px] font-medium uppercase tracking-wide text-slate-500 xl:inline">
+                  <span className="hidden text-[11px] font-medium tracking-wide text-slate-500 xl:inline">
                     {t("orders.extractionDate")}
                   </span>
                   <input
@@ -510,7 +510,7 @@ export function OrdersPage() {
                     aria-label={t("common.from")}
                     title={t("common.from")}
                   />
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-400">{t("common.to")}</span>
+                  <span className="text-xs font-medium tracking-wide text-slate-400">{t("common.to")}</span>
                   <input
                     type="date"
                     className="w-[8.5rem] bg-transparent text-sm text-slate-700 focus:outline-none"
@@ -581,10 +581,10 @@ export function OrdersPage() {
               <table className="min-w-full table-fixed text-left text-sm whitespace-nowrap">
                 <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                   <tr>
-                    <th className="w-16 px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                    <th className="w-16 px-4 py-3 font-semibold text-slate-500 sticky top-0 left-0 z-10 bg-slate-50 border-r border-slate-200">{t("orders.tableNumber")}</th>
                     <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.ticketKom")}</th>
                     <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.dateTime")}</th>
-                    <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("common.customer")}</th>
+                    <th className="w-72 px-4 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50">{t("orders.tableCustomer")}</th>
                     {hasPxPermission && <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-40">PX Status</th>}
                     <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-36">{t("common.status")}</th>
                     <th className="px-3 py-3 font-semibold text-slate-500 sticky top-0 z-10 bg-slate-50 w-32">{t("common.validation")}</th>

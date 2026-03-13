@@ -64,6 +64,17 @@ function levelClass(level) {
   return "bg-blue-50 border-blue-200 text-blue-700";
 }
 
+function xmlFileLabel(fileName, t) {
+  const normalized = String(fileName || "").toLowerCase();
+  if (normalized.includes("order info")) {
+    return t("orderDetail.xmlFileOrderInfo");
+  }
+  if (normalized.includes("article info")) {
+    return t("orderDetail.xmlFileArticleInfo");
+  }
+  return fileName;
+}
+
 const HIDDEN_HEADER_FIELDS = new Set([
   "seller",
   "iln",
@@ -551,7 +562,7 @@ export function OrderDetailPage() {
                   </colgroup>
                   <thead className="text-xs text-slate-500 uppercase">
                     <tr>
-                      <th className="px-4 py-2 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">Nr</th>
+                      <th className="px-4 py-2 font-medium tracking-wider sticky left-0 z-10 bg-slate-50 border-r border-slate-200">{t("orderDetail.tableNumber")}</th>
                       <th className="px-4 py-2 font-medium tracking-wider bg-slate-50">{t("common.field")}</th>
                       <th className="px-4 py-2 font-medium tracking-wider bg-slate-50">{t("common.value")}</th>
                     </tr>
@@ -796,7 +807,7 @@ export function OrderDetailPage() {
                     >
                       <span className="flex items-center gap-2">
                         <span className="material-icons text-[18px] text-primary">description</span>
-                        {file.name}
+                        {xmlFileLabel(file.name, t)}
                       </span>
                       <span className="material-icons text-primary text-lg">download</span>
                     </button>

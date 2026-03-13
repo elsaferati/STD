@@ -104,6 +104,12 @@ export function AppShell({
               </div>
             ) : null}
           </div>
+          <div className="relative z-10 mt-auto px-4 py-4 border-t border-slate-300/80">
+            <div className="flex flex-col items-center gap-2 text-xs text-slate-500">
+              <img src="/primex-logo.png" alt="PrimEx" className="h-6 w-auto opacity-90" />
+              <span>Powered by PrimEx</span>
+            </div>
+          </div>
         </aside>
 
         <div className="flex-1 flex flex-col h-screen overflow-y-auto lg:px-6">

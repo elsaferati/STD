@@ -38,7 +38,8 @@ const CLIENT_GROUPS = [
   },
   {
     id: "unknown",
-    label: "Unknown",
+    labelKey: "status.unknown",
+    fallbackLabel: "Unknown Client",
     sourceIds: ["unknown"],
   },
   {
@@ -48,10 +49,10 @@ const CLIENT_GROUPS = [
   },
 ];
 const SIX_HOUR_BLOCKS = [
-  { key: "night", start: 0, end: 6, label: "Night" },
-  { key: "morning", start: 6, end: 12, label: "Morning" },
-  { key: "afternoon", start: 12, end: 18, label: "Afternoon" },
-  { key: "evening", start: 18, end: 24, label: "Evening" },
+  { key: "night", start: 0, end: 6, labelKey: "overview.timelineBlockNight", fallbackLabel: "Night" },
+  { key: "morning", start: 6, end: 12, labelKey: "overview.timelineBlockMorning", fallbackLabel: "Morning" },
+  { key: "afternoon", start: 12, end: 18, labelKey: "overview.timelineBlockAfternoon", fallbackLabel: "Afternoon" },
+  { key: "evening", start: 18, end: 24, labelKey: "overview.timelineBlockEvening", fallbackLabel: "Evening" },
 ];
 
 function toDate(value) {
@@ -110,12 +111,17 @@ function buildColorMap(clients) {
   }, {});
 }
 
-function normalizeTimeline(timeline) {
+function normalizeTimeline(timeline, t) {
   const rawClients = timeline?.clients || [];
   const rawDays = timeline?.days || [];
   const availableIds = new Set(rawClients.map((client) => String(client?.id || "").trim()).filter(Boolean));
 
-  const clients = CLIENT_GROUPS.filter((group) => group.sourceIds.some((sourceId) => availableIds.has(sourceId)));
+  const clients = CLIENT_GROUPS
+    .filter((group) => group.sourceIds.some((sourceId) => availableIds.has(sourceId)))
+    .map((group) => ({
+      ...group,
+      label: group.labelKey ? t(group.labelKey, null, group.fallbackLabel) : group.label,
+    }));
   const clientSourceMap = new Map(clients.map((client) => [client.id, client.sourceIds]));
 
   const days = rawDays.map((day) => {
@@ -191,13 +197,14 @@ function buildWeeklySeries(daySeries, clients, locale) {
   }));
 }
 
-function buildMonthlySeries(daySeries, clients, locale) {
+function buildMonthlySeries(daySeries, clients, locale, t) {
   return daySeries.flatMap((day) =>
     SIX_HOUR_BLOCKS.map((block) => {
+      const blockLabel = t(block.labelKey, null, block.fallbackLabel);
       const point = {
         key: `${day.date}-${block.key}`,
-        xLabel: `${toShortDateLabel(day.date, locale)} ${block.label}`,
-        block: block.label,
+        xLabel: `${toShortDateLabel(day.date, locale)} ${blockLabel}`,
+        block: blockLabel,
       };
       clients.forEach((client) => {
         point[client.id] = day.hours
@@ -349,8 +356,9 @@ export function OrderClientTimelineChart({
   timeline,
   view = "daily",
   locale,
+  t,
 }) {
-  const normalizedTimeline = useMemo(() => normalizeTimeline(timeline), [timeline]);
+  const normalizedTimeline = useMemo(() => normalizeTimeline(timeline, t), [t, timeline]);
   const clients = normalizedTimeline.clients;
   const days = normalizedTimeline.days;
   const colorMap = useMemo(() => buildColorMap(clients), [clients]);
@@ -369,7 +377,7 @@ export function OrderClientTimelineChart({
     || null;
 
   const weeklySeries = useMemo(() => buildWeeklySeries(daySeries.slice(-7), clients, locale), [clients, daySeries, locale]);
-  const monthlySeries = useMemo(() => buildMonthlySeries(daySeries, clients, locale), [clients, daySeries, locale]);
+  const monthlySeries = useMemo(() => buildMonthlySeries(daySeries, clients, locale, t), [clients, daySeries, locale, t]);
   const quarterSeriesRaw = useMemo(() => dailyTotals.slice(-92), [dailyTotals]);
   const quarterSeries = useMemo(
     () => (smoothQuarterSeries ? buildMovingAverageSeries(quarterSeriesRaw, clients, 7) : quarterSeriesRaw),
@@ -380,9 +388,9 @@ export function OrderClientTimelineChart({
       dailyTotals.slice(-184),
       clients,
       getWeekStart,
-      (date) => `Week of ${toShortDateLabel(date, locale)}`,
+      (date) => t("overview.timelineWeekOf", { date: toShortDateLabel(date, locale) }),
     ),
-    [clients, dailyTotals, locale],
+    [clients, dailyTotals, locale, t],
   );
   const yearSeries = useMemo(
     () => buildAggregatedSeries(
@@ -404,10 +412,10 @@ export function OrderClientTimelineChart({
 
   if (!clients.length || !days.length) {
     return (
-      <div className="min-h-[180px] flex items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400">
-        No timeline data available.
-      </div>
-    );
+        <div className="min-h-[180px] flex items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-slate-400">
+        {t("overview.timelineNoData")}
+        </div>
+      );
   }
 
   return (
@@ -442,8 +450,8 @@ export function OrderClientTimelineChart({
                 : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
-            <span>Smooth</span>
-            <span className="text-[11px] opacity-80">7-day MA</span>
+            <span>{t("overview.timelineSmooth")}</span>
+            <span className="text-[11px] opacity-80">{t("overview.timelineMovingAverage")}</span>
           </button>
         </div>
       ) : null}
@@ -464,7 +472,9 @@ export function OrderClientTimelineChart({
                   }`}
                 >
                   <div className="font-semibold">{day.label}</div>
-                  <div className="mt-1 opacity-80">{day.total} orders</div>
+                  <div className="mt-1 opacity-80">
+                    {t("overview.timelineOrders", { count: day.total })}
+                  </div>
                 </button>
               ))}
             </div>
@@ -618,7 +628,9 @@ export function OrderClientTimelineChart({
               <YAxis allowDecimals={false} domain={["auto", "auto"]} />
               <Tooltip
                 content={<ClientTooltip clientMap={clientMap} />}
-                labelFormatter={(value) => `Week of ${toShortDateLabel(value, locale)}`}
+                labelFormatter={(value) =>
+                  t("overview.timelineWeekOf", { date: toShortDateLabel(value, locale) })
+                }
               />
               <Legend />
               {visibleClients.map((client) => (

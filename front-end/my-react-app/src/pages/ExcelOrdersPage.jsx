@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AppShell } from "../components/AppShell";
 import { useI18n } from "../i18n/I18nContext";
 import { downloadBlob } from "../utils/download";
@@ -9,15 +9,16 @@ export function ExcelOrdersPage() {
   const [error, setError] = useState("");
   const [file, setFile] = useState(null);
   const [searchInput, setSearchInput] = useState("");
+  const inputRef = useRef(null);
   const columnRows = [
-    ["Kommission", "Commission / order reference number"],
-    ["Artikelnummer", "Article number"],
-    ["Modellnummer", "Model number"],
-    ["Menge", "Quantity"],
-    ["Furncloud_ID", "Furncloud product ID"],
-    ["Kunde", "Customer name"],
-    ["Filiale", "Store / branch"],
-    ["Lieferwoche", "Delivery week"],
+    ["Kommission", t("excelOrders.columnDescriptionKommission")],
+    ["Artikelnummer", t("excelOrders.columnDescriptionArtikelnummer")],
+    ["Modellnummer", t("excelOrders.columnDescriptionModellnummer")],
+    ["Menge", t("excelOrders.columnDescriptionMenge")],
+    ["Furncloud_ID", t("excelOrders.columnDescriptionFurncloudId")],
+    ["Kunde", t("excelOrders.columnDescriptionKunde")],
+    ["Filiale", t("excelOrders.columnDescriptionFiliale")],
+    ["Lieferwoche", t("excelOrders.columnDescriptionLieferwoche")],
   ];
 
   const handleSubmit = async (e) => {
@@ -80,7 +81,7 @@ export function ExcelOrdersPage() {
         <div className="w-full px-6 py-6 space-y-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">{t("excelOrders.title")}</h1>
-            <p className="text-sm text-slate-500">{t("excelOrders.subtitle")}</p>
+            {t("excelOrders.subtitle") ? <p className="text-sm text-slate-500">{t("excelOrders.subtitle")}</p> : null}
           </div>
 
           {error ? (
@@ -97,28 +98,13 @@ export function ExcelOrdersPage() {
                 <div className="space-y-3">
                   <span className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
                     <span className="material-icons text-sm">table_view</span>
-                    XML Batch Export
+                    {t("excelOrders.uploadBadge")}
                   </span>
                   <div className="space-y-2">
-                    <h2 className="text-2xl font-semibold text-slate-900">Upload your order workbook</h2>
+                    <h2 className="text-2xl font-semibold text-slate-900">{t("excelOrders.uploadTitle")}</h2>
                     <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                      Import one Excel file and generate a ZIP package containing XML order files in one step.
+                      {t("excelOrders.uploadSubtitle")}
                     </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Accepted</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">.xlsx, .xlsb, .xls</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Output</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">ZIP with XML files</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Process</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">Single upload workflow</p>
                   </div>
                 </div>
 
@@ -126,14 +112,27 @@ export function ExcelOrdersPage() {
                   <label className="block text-sm font-medium text-slate-700" htmlFor="excel-file">
                     {t("excelOrders.selectFile")}
                   </label>
-                  <input
-                    id="excel-file"
-                    type="file"
-                    accept=".xlsx,.xlsb,.xls"
-                    required
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                    className="block w-full text-sm text-slate-600 file:mr-4 file:py-3 file:px-4 file:rounded-xl file:border file:border-sky-200 file:text-sm file:font-medium file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100"
-                  />
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                    <input
+                      ref={inputRef}
+                      id="excel-file"
+                      type="file"
+                      accept=".xlsx,.xlsb,.xls"
+                      required
+                      onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => inputRef.current?.click()}
+                      className="inline-flex items-center justify-center rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100"
+                    >
+                      {t("excelOrders.chooseFile")}
+                    </button>
+                    <span className="text-sm text-slate-600">
+                      {file?.name || t("excelOrders.noFileSelected")}
+                    </span>
+                  </div>
 
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="text-sm text-slate-500">
@@ -143,7 +142,7 @@ export function ExcelOrdersPage() {
                           {file.name}
                         </span>
                       ) : (
-                        <span>No file selected yet.</span>
+                        <span>{t("excelOrders.noFileSelectedYet")}</span>
                       )}
                     </div>
 
@@ -163,15 +162,15 @@ export function ExcelOrdersPage() {
             <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="border-b border-slate-200 bg-slate-50/80 px-6 py-5">
                 <h2 className="text-lg font-semibold text-slate-900">{t("excelOrders.columnsTitle")}</h2>
-                <p className="mt-1 text-sm text-slate-500">Use these exact columns in your Excel file.</p>
+                <p className="mt-1 text-sm text-slate-500">{t("excelOrders.columnsSubtitle")}</p>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm text-slate-700">
                   <thead className="bg-slate-50 text-slate-500">
                     <tr>
-                      <th className="px-6 py-3 text-left font-semibold">Column</th>
-                      <th className="px-6 py-3 text-left font-semibold">Description</th>
+                      <th className="px-6 py-3 text-left font-semibold">{t("excelOrders.columnHeader")}</th>
+                      <th className="px-6 py-3 text-left font-semibold">{t("excelOrders.descriptionHeader")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

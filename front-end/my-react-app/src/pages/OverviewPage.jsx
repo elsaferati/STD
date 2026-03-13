@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { fetchJson, withQuery } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { OrderClientTimelineChart } from "../components/OrderClientTimelineChart";
@@ -203,11 +202,9 @@ function normalizeOverviewSummary(payload) {
 }
 
 export function OverviewPage() {
-  const navigate = useNavigate();
   const { t, locale } = useI18n();
   const [overview, setOverview] = useState(null);
   const [error, setError] = useState("");
-  const [searchInput, setSearchInput] = useState("");
   const [selectedDay, setSelectedDay] = useState(null);
   const [rangePreset, setRangePreset] = useState("today");
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonthToken());
@@ -335,33 +332,8 @@ export function OverviewPage() {
   const monthOptions = buildMonthOptions(locale);
   const yearOptions = buildYearOptions();
 
-  const handleSearchSubmit = (event) => {
-    event.preventDefault();
-    const query = searchInput.trim();
-    if (!query) {
-      navigate("/orders");
-      return;
-    }
-    navigate(`/orders?q=${encodeURIComponent(query)}`);
-  };
-
   return (
-    <AppShell
-      active="overview"
-      headerLeft={(
-        <form onSubmit={handleSearchSubmit} className="relative hidden md:block w-full max-w-md">
-          <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
-            <span className="material-icons text-lg">search</span>
-          </span>
-          <input
-            className="w-full pl-10 pr-4 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
-            placeholder={t("overview.searchPlaceholder")}
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-          />
-        </form>
-      )}
-    >
+    <AppShell active="overview">
       <main className="flex-1 max-w-[1600px] mx-auto w-full p-6 space-y-6">
         <section className="bg-surface-light rounded-2xl border border-slate-200 shadow-sm p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -530,7 +502,7 @@ export function OverviewPage() {
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-lg font-bold text-slate-900">
-                {bucketGranularity === "month" ? t("overview.monthlyStatusBreakdown", null, "Monthly Status Breakdown") : t("overview.dailyStatusBreakdown")}
+                {bucketGranularity === "month" ? t("overview.monthlyStatusBreakdown") : t("overview.dailyStatusBreakdown")}
               </h2>
               <p className="text-[13px] text-slate-500 mt-1">{chartRangeLabel || rangeLabel || t("overview.chartSubtitle")}</p>
             </div>
@@ -568,11 +540,11 @@ export function OverviewPage() {
           <section className="bg-surface-light rounded-2xl border border-slate-200 shadow-sm p-4 space-y-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">{t("overview.orderClientTimeline", null, "Order Client Timeline")}</h2>
+                <h2 className="text-lg font-bold text-slate-900">{t("overview.orderClientTimeline")}</h2>
                 <p className="text-[13px] text-slate-500 mt-1">
                   {isLongRangeTimeline
-                    ? t("overview.orderClientTimelineLongRangeSubtitle", null, "Client activity is aggregated automatically for the selected range.")
-                    : t("overview.orderClientTimelineSubtitle", null, "Pick a day to inspect hourly order totals and the client split.")}
+                    ? t("overview.orderClientTimelineLongRangeSubtitle")
+                    : t("overview.orderClientTimelineSubtitle")}
                 </p>
               </div>
               {selectedClientDay && !isLongRangeTimeline ? (
@@ -586,6 +558,7 @@ export function OverviewPage() {
               timeline={clientHourData}
               view={timelineView}
               locale={locale}
+              t={t}
             />
           </section>
         ) : null}
