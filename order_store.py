@@ -2086,12 +2086,15 @@ def query_xml_activity(
         SELECT
           COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
           (SELECT COUNT(*) FROM order_events
+           WHERE event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
+             AND created_at >= %s AND created_at < %s)::bigint AS regenerated_events,
+          (SELECT COUNT(*) FROM order_events
            WHERE event_type = 'xml_regenerated'
-             AND created_at >= %s AND created_at < %s)::bigint AS regenerated_events
+             AND created_at >= %s AND created_at < %s)::bigint AS both_events
         FROM order_px_controls px
         WHERE px.xml_sent_at >= %s AND px.xml_sent_at < %s
         """,
-        [range_start, range_end, range_start, range_end],
+        [range_start, range_end, range_start, range_end, range_start, range_end],
     ) or {}
 
     if bucket_granularity == "month":
@@ -2102,16 +2105,21 @@ def query_xml_activity(
             )
             SELECT
               b.bucket_start,
-              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
-              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+              COUNT(DISTINCT px.order_id)::bigint      AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint             AS regenerated_events,
+              COUNT(DISTINCT e_both.id)::bigint        AS both_events
             FROM month_buckets b
             LEFT JOIN order_px_controls px
               ON (px.xml_sent_at AT TIME ZONE %s) >= b.bucket_start::timestamp
              AND (px.xml_sent_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
             LEFT JOIN order_events e
-              ON e.event_type = 'xml_regenerated'
+              ON e.event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
              AND (e.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
              AND (e.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            LEFT JOIN order_events e_both
+              ON e_both.event_type = 'xml_regenerated'
+             AND (e_both.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (e_both.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
             GROUP BY b.bucket_start
             ORDER BY b.bucket_start
             """,
@@ -2132,16 +2140,21 @@ def query_xml_activity(
             )
             SELECT
               b.bucket_start,
-              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
-              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+              COUNT(DISTINCT px.order_id)::bigint      AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint             AS regenerated_events,
+              COUNT(DISTINCT e_both.id)::bigint        AS both_events
             FROM day_buckets b
             LEFT JOIN order_px_controls px
               ON px.xml_sent_at >= b.bucket_start
              AND px.xml_sent_at < b.bucket_start + interval '1 day'
             LEFT JOIN order_events e
-              ON e.event_type = 'xml_regenerated'
+              ON e.event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
              AND e.created_at >= b.bucket_start
              AND e.created_at < b.bucket_start + interval '1 day'
+            LEFT JOIN order_events e_both
+              ON e_both.event_type = 'xml_regenerated'
+             AND e_both.created_at >= b.bucket_start
+             AND e_both.created_at < b.bucket_start + interval '1 day'
             GROUP BY b.bucket_start
             ORDER BY b.bucket_start
             """,
@@ -2150,19 +2163,22 @@ def query_xml_activity(
 
     generated_orders = int(summary.get("generated_orders") or 0)
     regenerated_events = int(summary.get("regenerated_events") or 0)
+    both_events = int(summary.get("both_events") or 0)
+    regenerated_files = both_events * 2 + (regenerated_events - both_events)
 
     return {
         "summary": {
             "generated_orders": generated_orders,
             "regenerated_events": regenerated_events,
             "generated_files": generated_orders * 2,
-            "regenerated_files": regenerated_events * 2,
+            "regenerated_files": regenerated_files,
         },
         "by_day": [
             {
                 "bucket_start": row.get("bucket_start"),
                 "generated_orders": int(row.get("generated_orders") or 0),
                 "regenerated_events": int(row.get("regenerated_events") or 0),
+                "both_events": int(row.get("both_events") or 0),
             }
             for row in bucket_rows
         ],

@@ -2559,6 +2559,7 @@ def api_superadmin_xml_activity():
             iso_value = bucket_point.date().isoformat()
         gen_orders = int(row.get("generated_orders") or 0)
         regen_events = int(row.get("regenerated_events") or 0)
+        both_events = int(row.get("both_events") or 0)
         by_day.append(
             {
                 "date": iso_value,
@@ -2566,7 +2567,7 @@ def api_superadmin_xml_activity():
                 "generated_orders": gen_orders,
                 "regenerated_events": regen_events,
                 "generated_files": gen_orders * 2,
-                "regenerated_files": regen_events * 2,
+                "regenerated_files": both_events * 2 + (regen_events - both_events),
             }
         )
 
@@ -2996,10 +2997,22 @@ def api_order_detail(order_id: str):
     except RuntimeError as exc:
         return _api_error(500, "db_error", str(exc))
 
+    items_changed = bool(item_updates or deleted_item_indexes or new_items)
+    header_changed = bool(header_updates)
+
     xml_regenerated = False
     xml_paths: list[str] = []
+    regen_event_type = "xml_regenerated"
     try:
-        xml_paths = [str(path) for path in xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)]
+        if items_changed and header_changed:
+            xml_paths = [str(path) for path in xml_exporter.export_xmls(order["data"], order["safe_id"], config, OUTPUT_DIR)]
+            regen_event_type = "xml_regenerated"
+        elif items_changed:
+            xml_paths = [str(xml_exporter.generate_article_info_xml(order["data"], order["safe_id"], OUTPUT_DIR))]
+            regen_event_type = "article_xml_regenerated"
+        else:  # header only (or neither)
+            xml_paths = [str(xml_exporter.generate_order_info_xml(order["data"], order["safe_id"], config, OUTPUT_DIR))]
+            regen_event_type = "order_xml_regenerated"
         xml_regenerated = True
     except Exception as exc:  # noqa: BLE001
         xml_regenerated = False
@@ -3024,12 +3037,20 @@ def api_order_detail(order_id: str):
             order_store.record_order_event(
                 order_id=order["safe_id"],
                 revision_id=revision_id,
-                event_type="xml_regenerated",
+                event_type=regen_event_type,
                 actor_user_id=current_user_id or None,
                 event_data={"files": xml_paths},
             )
         except Exception as exc:  # noqa: BLE001
             return _api_error(500, "db_error", f"Failed to record XML regeneration metadata: {exc}")
+
+        px_controls = order_store.get_px_controls(order["safe_id"])
+        if px_controls and px_controls.get("xml_sent_at"):
+            try:
+                from reply_email import send_px_xml_email as _send_px_xml_email
+                _send_px_xml_email(order["safe_id"], config, OUTPUT_DIR)
+            except Exception as exc:  # noqa: BLE001
+                app.logger.error("PX XML re-send failed for order %s: %s", order["safe_id"], exc)
 
     _invalidate_order_index_cache()
     updated_order, updated_error = _load_order(
