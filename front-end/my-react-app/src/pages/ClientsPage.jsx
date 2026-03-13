@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchJson } from "../api/http";
 import {
   ALL_CLIENT_FILTER,
@@ -37,7 +37,14 @@ function buildInitialClientCounts({ visibleKnownBranchIds = [], includeUnknownBr
 export function ClientsPage() {
   const { t, lang } = useI18n();
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const restoredScrollRef = useRef(false);
+  const scrollStorageKey = useMemo(
+    () => `clients-scroll:${location.pathname}${location.search}${location.hash}`,
+    [location.hash, location.pathname, location.search],
+  );
 
   const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
   const assignedClientBranchIds = useMemo(() => {
@@ -239,6 +246,27 @@ export function ClientsPage() {
     };
   }, [loadOrders]);
 
+  useEffect(() => {
+    restoredScrollRef.current = false;
+  }, [location.key]);
+
+  useEffect(() => {
+    const storedScrollTop = sessionStorage.getItem(scrollStorageKey);
+    const restoreScrollTop = Number(location.state?.restoreScrollTop ?? storedScrollTop);
+    if (loading || restoredScrollRef.current || !Number.isFinite(restoreScrollTop)) {
+      return;
+    }
+    const scrollContainer = document.getElementById("app-shell-scroll-container");
+    if (!scrollContainer) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      scrollContainer.scrollTo({ top: restoreScrollTop, behavior: "auto" });
+      sessionStorage.removeItem(scrollStorageKey);
+      restoredScrollRef.current = true;
+    });
+  }, [loading, location.state, scrollStorageKey]);
+
   const branchLabels = useMemo(() => {
     const labels = {
       [UNKNOWN_CLIENT_BRANCH_ID]: t("clients.branch.unknown"),
@@ -284,6 +312,37 @@ export function ClientsPage() {
     const query = searchInput.trim();
     updateParams({ q: query || null });
   };
+
+  const openOrderDetail = useCallback(
+    (event, orderId) => {
+      if (
+        event.defaultPrevented
+        || event.button !== 0
+        || event.metaKey
+        || event.altKey
+        || event.ctrlKey
+        || event.shiftKey
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const scrollContainer = document.getElementById("app-shell-scroll-container");
+      const restoreScrollTop = scrollContainer?.scrollTop ?? window.scrollY;
+      sessionStorage.setItem(scrollStorageKey, String(restoreScrollTop));
+      navigate(`/orders/${orderId}`, {
+        state: {
+          from: {
+            pathname: location.pathname,
+            search: location.search,
+            hash: location.hash,
+            restoreScrollTop,
+          },
+          source: "clients",
+        },
+      });
+    },
+    [location.hash, location.pathname, location.search, navigate, scrollStorageKey],
+  );
 
   return (
     <AppShell
@@ -339,7 +398,7 @@ export function ClientsPage() {
             </div>
           </section>
 
-          <div className="relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-x-auto overflow-y-auto max-h-[70vh]">
+          <div className="relative bg-surface-light rounded-lg shadow-sm border border-slate-200 overflow-x-auto">
             <table className="w-full table-fixed text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                 <tr>
@@ -373,6 +432,7 @@ export function ClientsPage() {
                         <td className="px-4 py-3 w-[180px] overflow-hidden">
                           <Link
                             to={`/orders/${order.id}`}
+                            onClick={(event) => openOrderDetail(event, order.id)}
                             className="block max-w-full truncate font-medium text-primary hover:underline"
                             title={order.ticket_number || order.id}
                           >
@@ -404,6 +464,7 @@ export function ClientsPage() {
                         <td className="px-4 py-3 text-right">
                           <Link
                             to={`/orders/${order.id}`}
+                            onClick={(event) => openOrderDetail(event, order.id)}
                             className="inline-flex items-center gap-1 p-1.5 text-primary bg-primary/10 rounded transition-colors hover:bg-primary hover:text-white"
                             title={t("common.viewDetails")}
                           >
