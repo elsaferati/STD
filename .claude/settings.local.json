@@ -3,7 +3,9 @@
     "allow": [
       "Bash(ls:*)",
       "Bash(python -c \"import prompts; print\\(''OK -'', len\\(prompts.build_user_instructions\\([''email'',''pdf'']\\)\\),''chars''\\)\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(grep -n \"try_ai_customer_match\" /c/Users/Admin/Documents/GitHub/STD/*.py)",
+      "Bash(grep -rn 'header\\\\[\"tour\"\\\\]' /c/Users/Admin/Documents/GitHub/STD/*.py | grep -v \"venv\\\\|node_modules\" | head -30)"
     ]
   }
 }

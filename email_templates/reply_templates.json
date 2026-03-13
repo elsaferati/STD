@@ -7,51 +7,51 @@
   },
   "templates": {
     "missing_lieferanschrift": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Lieferanschrift fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollstandig bearbeiten konnen, benotigen wir noch die Lieferanschrift:\n- Strasse, Hausnummer\n- PLZ, Ort, Land\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Lieferanschrift fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollständig bearbeiten können, benötigen wir noch die Lieferanschrift:\n- Strasse, Hausnummer\n- PLZ, Ort, Land\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team",
       "required_fields": [
         "lieferanschrift"
       ]
     },
     "missing_bestellendes_haus": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Anschrift bestellendes Haus fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nFur die vollstandige Bearbeitung benotigen wir noch die Anschrift des bestellenden Hauses:\n- Firmen-/Hausname\n- Strasse, Hausnummer\n- PLZ, Ort, Land\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Anschrift bestellendes Haus fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nFür die vollständige Bearbeitung benötigen wir noch die Anschrift des bestellenden Hauses:\n- Firmen-/Hausname\n- Strasse, Hausnummer\n- PLZ, Ort, Land\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team",
       "required_fields": [
         "store_address"
       ]
     },
     "missing_modellnummer": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Modellnummer fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung korrekt erfassen konnen, benotigen wir noch die Modellnummer fur folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Modellnummer fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung korrekt erfassen können, benötigen wir noch die Modellnummer für folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team",
       "required_fields": [
         "modellnummer"
       ]
     },
     "missing_artikelnummer": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Artikelnummer fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nFur die vollstandige Bearbeitung benotigen wir noch die Artikelnummer fur folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Artikelnummer fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nFür die vollständige Bearbeitung benötigen wir noch die Artikelnummer für folgende Position(en):\n{{betroffene_positionen}}\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team",
       "required_fields": [
         "artikelnummer"
       ]
     },
     "missing_menge": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Menge fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung bearbeiten konnen, benotigen wir noch die Menge:\n- Menge je Position\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team",
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Menge fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung bearbeiten können, benötigen wir noch die Menge:\n- Menge je Position\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team",
       "required_fields": [
         "menge"
       ]
     },
     "missing_multiple_pflichtfelder": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Angaben fehlen",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollstandig bearbeiten konnen, fehlen uns noch folgende Pflichtangaben:\n{{fehlende_pflichtfelder_liste}}\n(z. B. Lieferanschrift, Anschrift bestellendes Haus, Modellnummer, Artikelnummer, Menge)\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team"
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Angaben fehlen",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollständig bearbeiten können, fehlen uns noch folgende Pflichtangaben:\n{{fehlende_pflichtfelder_liste}}\n(z. B. Lieferanschrift, Anschrift bestellendes Haus, Modellnummer, Artikelnummer, Menge)\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team"
     },
     "missing_furnplan": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Furnplan fehlt",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollstandig bearbeiten konnen, benotigen wir noch den Furnplan:\n- Furnplan als Datei (PDF) oder Link\n- ggf. Zuordnung zu Positionen\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team"
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Furnplan fehlt",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollständig bearbeiten können, benötigen wir noch den Furnplan:\n- Furnplan als Datei (PDF) oder Link\n- ggf. Zuordnung zu Positionen\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team"
     },
     "unterlage_unleserlich": {
-      "subject": "Ruckfrage zu Ihrer Bestellung {{kommisionsnummer}} - Unterlage unleserlich",
-      "body": "Guten Tag,\n\nvielen Dank fur Ihre Bestellung {{kommisionsnummer}}.\nLeider ist die ubermittelte Unterlage teilweise unleserlich, daher konnen wir die Angaben nicht sicher erfassen.\nBitte senden Sie uns:\n- die Bestellung erneut in besserer Qualitat (PDF bevorzugt)\noder\n- alternativ die Inhalte als Text (Positionen, Artikel-/Modellnummer, Menge, Lieferanschrift)\n\nVielen Dank fur Ihre Unterstutzung.\nFreundliche Grusse\nIhr Staud Team"
+      "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Unterlage unleserlich",
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nLeider ist die übermittelte Unterlage teilweise unleserlich, daher können wir die Angaben nicht sicher erfassen.\nBitte senden Sie uns:\n- die Bestellung erneut in besserer Qualität (PDF bevorzugt)\noder\n- alternativ die Inhalte als Text (Positionen, Artikel-/Modellnummer, Menge, Lieferanschrift)\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team"
     }
   }
 }

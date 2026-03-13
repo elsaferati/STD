@@ -3667,16 +3667,23 @@ def process_message(
                 return str(e.get("value", "") or "").strip()
             return str(e or "").strip()
 
+        # Tour: from delivery address (Lieferanschrift)
+        lieferanschrift_val = _hv(header, "lieferanschrift")
+        if lieferanschrift_val:
+            delivery_match = lookup.find_customer_by_address(lieferanschrift_val)
+            if delivery_match:
+                header["tour"] = {
+                    "value": delivery_match["tour"],
+                    "source": "derived",
+                    "confidence": 1.0,
+                    "derived_from": "excel_lookup_by_delivery_address",
+                }
+
+        # Adressnummer: still from kundennummer
         kdnr = _hv(header, "kundennummer")
         if kdnr:
             excel_match = lookup.find_customer_by_address("", kundennummer=kdnr)
             if excel_match:
-                header["tour"] = {
-                    "value": excel_match["tour"],
-                    "source": "derived",
-                    "confidence": 1.0,
-                    "derived_from": "excel_lookup_by_kundennummer",
-                }
                 header["adressnummer"] = {
                     "value": excel_match["adressnummer"],
                     "source": "derived",
@@ -3720,7 +3727,8 @@ def process_message(
         header = normalized.get("header") if isinstance(normalized.get("header"), dict) else {}
         reply_entry = header.get("reply_needed", {})
         reply_needed = isinstance(reply_entry, dict) and reply_entry.get("value") is True
-        if reply_needed:
+        _current_status = str(normalized.get("status") or "").strip()
+        if reply_needed and _current_status not in ("post", "human_in_the_loop"):
             msg = reply_email.compose_reply_needed_email(
                 message=message,
                 normalized=normalized,
