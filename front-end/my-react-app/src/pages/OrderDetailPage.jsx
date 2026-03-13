@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { fetchBlob, fetchJson } from "../api/http";
 import { AppShell } from "../components/AppShell";
 import { StatusBadge } from "../components/StatusBadge";
@@ -90,9 +90,17 @@ const HIDDEN_HEADER_FIELDS = new Set([
 export function OrderDetailPage() {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { t, lang } = useI18n();
   const { user } = useAuth();
   const hasPxPermission = Boolean(user?.can_control_1 || user?.can_control_2 || user?.can_final_control);
+  const returnTarget = location.state?.from;
+  const openedFromClients = returnTarget?.pathname === "/clients" || location.state?.source === "clients";
+  const backToListPath = returnTarget
+    ? `${returnTarget.pathname || ""}${returnTarget.search || ""}${returnTarget.hash || ""}`
+    : "/orders";
+  const detailNavActive = openedFromClients ? "clients" : "orders";
+  const backToListLabel = openedFromClients ? t("common.clients") : t("common.orderExtractions");
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -451,7 +459,7 @@ export function OrderDetailPage() {
   if (loading) {
     return (
       <AppShell
-        active="orders"
+        active={detailNavActive}
         headerLeft={(
           <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
             <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
@@ -472,7 +480,7 @@ export function OrderDetailPage() {
   if (!order) {
     return (
       <AppShell
-        active="orders"
+        active={detailNavActive}
         headerLeft={(
           <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
             <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
@@ -486,7 +494,7 @@ export function OrderDetailPage() {
         )}
       >
         <div className="p-6">
-          <Link to="/orders" className="text-primary hover:underline">{t("common.backToOrders")}</Link>
+          <Link to={backToListPath} state={returnTarget} className="text-primary hover:underline">{backToListLabel}</Link>
           <p className="mt-4 text-danger">{error || t("orderDetail.notFound")}</p>
         </div>
       </AppShell>
@@ -518,7 +526,7 @@ export function OrderDetailPage() {
 
   return (
     <AppShell
-      active="orders"
+      active={detailNavActive}
       headerLeft={(
         <form onSubmit={handleSearchSubmit} className="relative w-full max-w-xl">
           <span className="material-icons absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
@@ -539,7 +547,7 @@ export function OrderDetailPage() {
             <nav className="flex items-center text-xs text-slate-500 gap-2">
               <Link className="hover:text-primary transition-colors" to="/">{t("common.dashboard")}</Link>
               <span className="material-icons text-base">chevron_right</span>
-              <Link className="hover:text-primary transition-colors" to="/orders">{t("common.orderExtractions")}</Link>
+              <Link className="hover:text-primary transition-colors" to={backToListPath} state={returnTarget}>{backToListLabel}</Link>
               <span className="material-icons text-base">chevron_right</span>
               <span className="text-primary font-medium">#{displayOrderRef}</span>
             </nav>

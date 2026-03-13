@@ -112,7 +112,7 @@ export function AppShell({
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col h-screen overflow-y-auto lg:px-6">
+        <div id="app-shell-scroll-container" className="flex-1 flex flex-col h-screen overflow-y-auto lg:px-6">
           <header className="sticky top-0 z-30 bg-surface-light border-b border-slate-200">
             <div className="h-16 px-6 flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">

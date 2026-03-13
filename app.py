@@ -474,6 +474,13 @@ def _effective_received_at(order: dict[str, Any]) -> datetime:
 
     return datetime.fromtimestamp(0).astimezone()
 
+
+def _format_export_datetime(value: Any) -> str:
+    parsed = _parse_received_at(value)
+    if not parsed:
+        return "-"
+    return parsed.strftime("%d.%m.%Y %H:%M")
+
 def _status_counts(orders: list[dict[str, Any]]) -> dict[str, int]:
     counts = {
         "ok": 0, "reply": 0, "human_in_the_loop": 0, "post": 0, "failed": 0,
@@ -1371,6 +1378,7 @@ def _load_order_export_data(
         "file_name": file_name,
         "message_id": str(data.get("message_id") or order.get("message_id") or order_id),
         "received_at": str(data.get("received_at") or order.get("received_at") or ""),
+        "effective_received_at": str(order.get("effective_received_at") or _effective_received_at(order).isoformat()),
         "status": _normalize_status(data.get("status") or order.get("status")),
         "item_count": len(items),
         "warnings_count": len(warnings),
@@ -1549,6 +1557,7 @@ def _as_orders_xlsx_bytes(
     orders_sheet.title = "Orders"
 
     header_fields = [
+        ("effective_received_at", "Date & Time"),
         ("ticket_number", "Ticket Number"),
         ("kundennummer", "Kundennummer"),
         ("tour", "Tour"),
@@ -1577,7 +1586,14 @@ def _as_orders_xlsx_bytes(
 
         orders_rows.append(
             [None]
-            + [(_export_entry_value(header.get(field_key, "")) or "-") for field_key, _ in header_fields]
+            + [
+                (
+                    _format_export_datetime(parsed_order.get("effective_received_at"))
+                    if field_key == "effective_received_at"
+                    else (_export_entry_value(header.get(field_key, "")) or "-")
+                )
+                for field_key, _ in header_fields
+            ]
             + ["\n".join(item_lines) if item_lines else "-"]
         )
 
