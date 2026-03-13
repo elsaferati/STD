@@ -235,12 +235,12 @@ def derive_status(payload: dict[str, Any]) -> str:
     items = payload.get("items")
     if not isinstance(header, dict) or not isinstance(items, list):
         return STATUS_FAILED
+    if _entry_bool(header.get("post_case")):
+        return STATUS_POST
     if _entry_bool(header.get("reply_needed")):
         return STATUS_WAITING_REPLY
     if _entry_bool(header.get("human_review_needed")):
         return STATUS_HUMAN
-    if _entry_bool(header.get("post_case")):
-        return STATUS_POST
     legacy = normalize_status(payload.get("status"))
     if legacy in {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}:
         return legacy

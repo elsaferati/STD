@@ -1989,7 +1989,9 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
     elif is_zusatzliche:
         _clear_reply_needed(header)
 
-    if _flag_true(header, "human_review_needed") and (
+    if _flag_true(header, "post_case"):
+        data["status"] = "post"
+    elif _flag_true(header, "human_review_needed") and (
         _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
     ):
         data["status"] = "human_in_the_loop"
@@ -1998,8 +2000,6 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         data["status"] = "reply"
     elif _flag_true(header, "human_review_needed"):
         data["status"] = "human_in_the_loop"
-    elif _flag_true(header, "post_case"):
-        data["status"] = "post"
     else:
         data["status"] = "ok"
 
@@ -2087,6 +2087,11 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         else:
             parts = [f"{f} (line {i})" for (i, f) in sorted(missing_items)]
             warnings.append(f"Missing item fields: {'; '.join(parts)}")
+
+    if _flag_true(header, "post_case") and _flag_true(header, "human_review_needed"):
+        _append_unique_warning(warnings, "Post case: also detected human review required.")
+    if _flag_true(header, "post_case") and _flag_true(header, "reply_needed"):
+        _append_unique_warning(warnings, "Post case: also detected reply needed.")
 
     data["warnings"] = warnings
 
