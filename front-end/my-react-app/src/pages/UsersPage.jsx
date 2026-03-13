@@ -478,16 +478,20 @@ export function UsersPage() {
               </label>
               <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
                 <label className="flex items-center gap-2">
+                  <input type="checkbox" name="is_super_admin" checked={form.is_super_admin} onChange={handleChange} className="h-4 w-4 accent-primary" />
+                  {t("users.permissionSuperadmin")}
+                </label>
+                <label className="flex items-center gap-2">
                   <input type="checkbox" name="can_control_1" checked={form.can_control_1} onChange={handleChange} className="h-4 w-4 accent-primary" />
-                  Control 1
+                  {t("users.permissionControl1")}
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" name="can_control_2" checked={form.can_control_2} onChange={handleChange} className="h-4 w-4 accent-primary" />
-                  Control 2
+                  {t("users.permissionControl2")}
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" name="can_final_control" checked={form.can_final_control} onChange={handleChange} className="h-4 w-4 accent-primary" />
-                  Final Control
+                  {t("users.permissionFinalControl")}
                 </label>
               </div>
               <div className="md:col-span-2 flex items-center gap-3">
@@ -536,13 +540,13 @@ export function UsersPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="px-4 py-3 text-left">Nr</th>
+                    <th className="px-4 py-3 text-left">{t("users.tableNumber")}</th>
                     <th className="px-4 py-3 text-left">{t("users.username")}</th>
                     <th className="px-4 py-3 text-left">{t("users.email")}</th>
                     <th className="px-4 py-3 text-left">{t("users.role")}</th>
                     <th className="px-4 py-3 text-left">{t("users.client")}</th>
                     <th className="px-4 py-3 text-left">{t("users.active")}</th>
-                    <th className="px-4 py-3 text-left">PX Controls</th>
+                    <th className="px-4 py-3 text-left">{t("users.pxControls")}</th>
                     <th className="px-4 py-3 text-left">{t("users.lastLogin")}</th>
                     <th className="px-4 py-3 text-right">{t("users.actions")}</th>
                   </tr>
@@ -739,16 +743,20 @@ export function UsersPage() {
                 </label>
                 <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
                   <label className="flex items-center gap-2">
+                    <input type="checkbox" name="is_super_admin" checked={editForm.is_super_admin} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
+                    {t("users.permissionSuperadmin")}
+                  </label>
+                  <label className="flex items-center gap-2">
                     <input type="checkbox" name="can_control_1" checked={editForm.can_control_1} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
-                    Control 1
+                    {t("users.permissionControl1")}
                   </label>
                   <label className="flex items-center gap-2">
                     <input type="checkbox" name="can_control_2" checked={editForm.can_control_2} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
-                    Control 2
+                    {t("users.permissionControl2")}
                   </label>
                   <label className="flex items-center gap-2">
                     <input type="checkbox" name="can_final_control" checked={editForm.can_final_control} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
-                    Final Control
+                    {t("users.permissionFinalControl")}
                   </label>
                 </div>
                 <div className="md:col-span-2 flex items-center justify-end gap-3">

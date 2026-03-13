@@ -75,35 +75,48 @@ function ImportControls({ tableName, labelKey }) {
   };
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+    <div className="flex flex-col gap-2.5 rounded-xl border border-slate-200 bg-white/90 p-3 shadow-sm">
       <span className="text-sm font-semibold text-slate-800">{t(`dataExport.${labelKey}`)}</span>
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".xlsx,.xls"
-          className="max-w-full text-sm text-slate-600 file:mr-3 file:py-2.5 file:px-4 file:rounded-xl file:border file:border-sky-200 file:text-sm file:font-medium file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100"
-          onChange={(e) => {
-            setFile(e.target.files?.[0] ?? null);
-            setStatus(null);
-          }}
-          disabled={busy}
-        />
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div className="flex items-center gap-3">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              setStatus(null);
+            }}
+            disabled={busy}
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={busy}
+            className="inline-flex items-center justify-center rounded-lg border border-sky-200 bg-sky-50 px-3.5 py-2 text-sm font-medium text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-50"
+          >
+            {t("dataExport.chooseFile")}
+          </button>
+          <span className="max-w-[220px] truncate text-sm text-slate-600">
+            {file?.name || t("dataExport.noFileSelected")}
+          </span>
+        </div>
         <button
           type="button"
           onClick={handleImport}
           disabled={!file || busy}
-          className="inline-flex items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
+          className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-50"
         >
           {busy ? t("dataExport.importing") : t("dataExport.importButton")}
         </button>
       </div>
-      <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+      <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
         {t("dataExport.importWarning")}
       </p>
       {status && (
         <p
-          className={`rounded-xl px-3 py-2 text-xs font-medium ${
+          className={`rounded-lg px-3 py-1.5 text-xs font-medium ${
             status.ok
               ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
               : "border border-rose-200 bg-rose-50 text-danger"
@@ -155,34 +168,34 @@ export function DataExportPage() {
       )}
     >
       <main className="flex-1 flex flex-col min-w-0">
-        <div className="w-full px-6 py-6 space-y-6">
+        <div className="w-full space-y-4 px-5 py-4">
           <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50 to-cyan-50 shadow-sm">
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-primary to-cyan-400" />
-            <div className="px-6 py-6 md:px-8 md:py-7">
-              <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-                <div className="space-y-2">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
+            <div className="px-5 py-4 md:px-6 md:py-5">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div className="space-y-1.5">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-700">
                     <span className="material-icons text-sm">sync_alt</span>
-                    Data Exchange
+                    {t("dataExport.headerBadge")}
                   </span>
                   <div>
-                    <h1 className="text-3xl font-bold tracking-tight text-slate-900">{t("dataExport.title")}</h1>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{t("dataExport.subtitle")}</p>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("dataExport.title")}</h1>
+                    <p className="mt-1 max-w-2xl text-sm leading-5 text-slate-600">{t("dataExport.subtitle")}</p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Datasets</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">{DATASET_ACTIONS.length}</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{t("dataExport.datasetsLabel")}</p>
+                    <p className="mt-0.5 text-base font-semibold text-slate-900">{DATASET_ACTIONS.length}</p>
                   </div>
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Export</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">Excel download</p>
+                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{t("dataExport.exportColumn")}</p>
+                    <p className="mt-0.5 text-sm font-medium text-slate-700">{t("dataExport.headerExportValue")}</p>
                   </div>
-                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-3 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Import</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">Replace table data</p>
+                  <div className="rounded-xl border border-slate-200 bg-white/80 px-4 py-2.5 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">{t("dataExport.importColumn")}</p>
+                    <p className="mt-0.5 text-sm font-medium text-slate-700">{t("dataExport.headerImportValue")}</p>
                   </div>
                 </div>
               </div>
@@ -192,14 +205,14 @@ export function DataExportPage() {
           {actionError ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{actionError}</div> : null}
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="border-b border-slate-200 bg-slate-50/80 px-6 py-4">
+            <div className="border-b border-slate-200 bg-slate-50/80 px-5 py-3">
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Export / Import Workspace</h2>
-                  <p className="mt-1 text-sm text-slate-500">Manage both directions for each dataset in one place.</p>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("dataExport.workspaceTitle")}</h2>
+                  <p className="mt-0.5 text-sm text-slate-500">{t("dataExport.workspaceSubtitle")}</p>
                 </div>
                 <div className="hidden rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500 md:block">
-                  {DATASET_ACTIONS.length} active tables
+                  {t("dataExport.activeTables", { count: DATASET_ACTIONS.length })}
                 </div>
               </div>
             </div>
@@ -207,19 +220,19 @@ export function DataExportPage() {
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 text-slate-500">
                   <tr>
-                    <th className="px-6 py-4 text-left font-semibold">{t("dataExport.exportColumn")}</th>
-                    <th className="px-6 py-4 text-left font-semibold">{t("dataExport.importColumn")}</th>
+                    <th className="px-5 py-3 text-left font-semibold">{t("dataExport.exportColumn")}</th>
+                    <th className="px-5 py-3 text-left font-semibold">{t("dataExport.importColumn")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {DATASET_ACTIONS.map((item) => (
                     <tr key={item.tableName} className="align-top transition-colors hover:bg-slate-50/70">
-                      <td className="px-6 py-5">
-                        <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-4 shadow-sm">
+                      <td className="px-5 py-4">
+                        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-3.5 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-1">
+                            <div className="space-y-0.5">
                               <span className="text-sm font-semibold text-slate-800">{t(`dataExport.${item.exportLabelKey}`)}</span>
-                              <p className="text-xs text-slate-500">Download the latest spreadsheet generated from this staging table.</p>
+                              <p className="text-xs text-slate-500">{t("dataExport.exportCardDescription")}</p>
                             </div>
                             <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-700">
                               {item.badge}
@@ -229,14 +242,14 @@ export function DataExportPage() {
                             type="button"
                             onClick={() => handleExport(item.tableName)}
                             disabled={actionBusy === item.tableName}
-                            className="inline-flex items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
+                            className="inline-flex items-center justify-center gap-2 self-start rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-60"
                           >
                             <span className="material-icons text-base">file_download</span>
                             {actionBusy === item.tableName ? t("dataExport.exporting") : t(`dataExport.${item.exportLabelKey}`)}
                           </button>
                         </div>
                       </td>
-                      <td className="min-w-[360px] px-6 py-5">
+                      <td className="min-w-[340px] px-5 py-4">
                         <ImportControls tableName={item.tableName} labelKey={item.importLabelKey} />
                       </td>
                     </tr>

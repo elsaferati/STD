@@ -43,11 +43,11 @@ function compareYearWeek(leftYear, leftWeek, rightYear, rightWeek) {
   return leftWeek - rightWeek;
 }
 
-function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
+function validateSettingsDraft(defaultPrepWeeksInput, ranges, t) {
   const errors = [];
   const defaultPrepWeeks = coerceInteger(defaultPrepWeeksInput);
   if (defaultPrepWeeks === null || defaultPrepWeeks < 0) {
-    errors.push("Default preparation weeks must be a whole number greater than or equal to 0.");
+    errors.push(t("settings.validationDefaultPrepWeeks"));
   }
 
   const normalizedRanges = [];
@@ -59,19 +59,19 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
     const prepWeeks = coerceInteger(range.prep_weeks);
 
     if (yearFrom === null || yearFrom < 1900 || yearFrom > 9999) {
-      errors.push(`Range ${index + 1}: Year from must be between 1900 and 9999.`);
+      errors.push(t("settings.validationYearFrom", { index: index + 1 }));
     }
     if (weekFrom === null || weekFrom < 1 || weekFrom > 53) {
-      errors.push(`Range ${index + 1}: Week from must be between 1 and 53.`);
+      errors.push(t("settings.validationWeekFrom", { index: index + 1 }));
     }
     if (yearTo === null || yearTo < 1900 || yearTo > 9999) {
-      errors.push(`Range ${index + 1}: Year to must be between 1900 and 9999.`);
+      errors.push(t("settings.validationYearTo", { index: index + 1 }));
     }
     if (weekTo === null || weekTo < 1 || weekTo > 53) {
-      errors.push(`Range ${index + 1}: Week to must be between 1 and 53.`);
+      errors.push(t("settings.validationWeekTo", { index: index + 1 }));
     }
     if (prepWeeks === null || prepWeeks < 0) {
-      errors.push(`Range ${index + 1}: Preparation weeks must be a whole number greater than or equal to 0.`);
+      errors.push(t("settings.validationPrepWeeks", { index: index + 1 }));
     }
     if (
       yearFrom !== null &&
@@ -80,7 +80,7 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
       weekTo !== null &&
       compareYearWeek(yearFrom, weekFrom, yearTo, weekTo) > 0
     ) {
-      errors.push(`Range ${index + 1}: The start year/week cannot be after the end year/week.`);
+      errors.push(t("settings.validationStartAfterEnd", { index: index + 1 }));
     }
 
     if (
@@ -111,9 +111,9 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges) {
     const previous = sortedRanges[index - 1];
     const current = sortedRanges[index];
     if (compareYearWeek(current.year_from, current.week_from, previous.year_to, previous.week_to) <= 0) {
-      errors.push(
-        `Custom ranges overlap between ${previous.year_from} W${String(previous.week_from).padStart(2, "0")}-${previous.year_to} W${String(previous.week_to).padStart(2, "0")} and ${current.year_from} W${String(current.week_from).padStart(2, "0")}-${current.year_to} W${String(current.week_to).padStart(2, "0")}.`,
-      );
+      const prevLabel = `${previous.year_from} W${String(previous.week_from).padStart(2, "0")}-${previous.year_to} W${String(previous.week_to).padStart(2, "0")}`;
+      const nextLabel = `${current.year_from} W${String(current.week_from).padStart(2, "0")}-${current.year_to} W${String(current.week_to).padStart(2, "0")}`;
+      errors.push(t("settings.validationOverlap", { prev: prevLabel, next: nextLabel }));
     }
   }
 
@@ -164,11 +164,11 @@ export function SettingsPage() {
       setNextRowId(loadedRanges.length + 1);
       setLoadError("");
     } catch (requestError) {
-      setLoadError(requestError.message || "Failed to load delivery preparation settings.");
+      setLoadError(requestError.message || t("settings.loadError"));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (isAdminLike) {
@@ -177,8 +177,8 @@ export function SettingsPage() {
   }, [isAdminLike, loadSettings]);
 
   const validation = useMemo(
-    () => validateSettingsDraft(defaultPrepWeeksInput, ranges),
-    [defaultPrepWeeksInput, ranges],
+    () => validateSettingsDraft(defaultPrepWeeksInput, ranges, t),
+    [defaultPrepWeeksInput, ranges, t],
   );
 
   const handleRangeChange = (rowId, field, value) => {
@@ -242,9 +242,9 @@ export function SettingsPage() {
       setDefaultPrepWeeksInput(String(payload?.default_prep_weeks ?? validation.payload.default_prep_weeks));
       setRanges(savedRanges);
       setNextRowId(savedRanges.length + 1);
-      setSaveSuccess("Delivery preparation settings saved.");
+      setSaveSuccess(t("settings.saveSuccess"));
     } catch (requestError) {
-      setSaveError(requestError.message || "Failed to save delivery preparation settings.");
+      setSaveError(requestError.message || t("settings.saveError"));
     } finally {
       setSaving(false);
     }
@@ -271,18 +271,18 @@ export function SettingsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,280px)_1fr] gap-6 items-start">
               <div className="space-y-3">
                 <div className="inline-flex items-center px-3 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold uppercase tracking-[0.12em]">
-                  Global rule
+                  {t("settings.globalSection")}
                 </div>
                 <h2 className="text-lg font-semibold text-slate-900">
-                  Default preparation weeks
+                  {t("settings.defaultPrepTitle")}
                 </h2>
                 <p className="text-sm text-slate-500">
-                  This applies outside custom year-specific ranges and remains the fallback when no database settings are available.
+                  {t("settings.defaultPrepDescription")}
                 </p>
               </div>
 
               <label className="flex flex-col gap-2 text-sm text-slate-600 max-w-xs">
-                <span>Default prep weeks</span>
+                <span>{t("settings.defaultPrepLabel")}</span>
                 <input
                   className="rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
                   type="number"
@@ -302,9 +302,9 @@ export function SettingsPage() {
             <div className="border-t border-slate-200 pt-5 space-y-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h2 className="text-lg font-semibold text-slate-900">Custom year ranges</h2>
+                  <h2 className="text-lg font-semibold text-slate-900">{t("settings.customRangesTitle")}</h2>
                   <p className="text-sm text-slate-500">
-                    Add non-overlapping ISO year and week ranges that override the default preparation time.
+                    {t("settings.customRangesDescription")}
                   </p>
                 </div>
                 <button
@@ -314,7 +314,7 @@ export function SettingsPage() {
                   className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                 >
                   <span className="material-icons text-base">add</span>
-                  <span>Add range</span>
+                  <span>{t("settings.addRange")}</span>
                 </button>
               </div>
 
@@ -323,12 +323,12 @@ export function SettingsPage() {
                   <table className="min-w-full text-sm">
                     <thead className="bg-slate-50 text-slate-500">
                       <tr>
-                        <th className="px-4 py-3 text-left">Range</th>
-                        <th className="px-4 py-3 text-left">Year from</th>
-                        <th className="px-4 py-3 text-left">Week from</th>
-                        <th className="px-4 py-3 text-left">Year to</th>
-                        <th className="px-4 py-3 text-left">Week to</th>
-                        <th className="px-4 py-3 text-left">Prep weeks</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tableRange")}</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tableYearFrom")}</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tableWeekFrom")}</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tableYearTo")}</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tableWeekTo")}</th>
+                        <th className="px-4 py-3 text-left">{t("settings.tablePrepWeeks")}</th>
                         <th className="px-4 py-3 text-right">{t("common.actions")}</th>
                       </tr>
                     </thead>
@@ -336,13 +336,15 @@ export function SettingsPage() {
                       {loading ? (
                         <tr>
                           <td className="px-4 py-4 text-slate-500" colSpan={7}>
-                            Loading delivery preparation settings...
+                            {t("settings.loading")}
                           </td>
                         </tr>
                       ) : ranges.length ? (
                         ranges.map((range, index) => (
                           <tr key={range.rowId}>
-                            <td className="px-4 py-3 font-medium text-slate-900">Range {index + 1}</td>
+                            <td className="px-4 py-3 font-medium text-slate-900">
+                              {t("settings.rangeLabel", { index: index + 1 })}
+                            </td>
                             <td className="px-4 py-3">
                               <input
                                 className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-slate-900"
@@ -409,7 +411,7 @@ export function SettingsPage() {
                                 disabled={saving}
                                 className="inline-flex items-center px-3 py-1.5 rounded-lg border border-red-200 text-red-700 hover:bg-red-50 disabled:opacity-60"
                               >
-                                Remove
+                                {t("settings.remove")}
                               </button>
                             </td>
                           </tr>
@@ -417,7 +419,7 @@ export function SettingsPage() {
                       ) : (
                         <tr>
                           <td className="px-4 py-4 text-slate-500" colSpan={7}>
-                            No custom ranges configured. The default value will be used for all year/week combinations.
+                            {t("settings.noRanges")}
                           </td>
                         </tr>
                       )}
@@ -456,7 +458,7 @@ export function SettingsPage() {
                     disabled={loading || saving}
                     className="px-4 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                   >
-                    Reload
+                    {t("settings.reload")}
                   </button>
                   <button
                     type="submit"

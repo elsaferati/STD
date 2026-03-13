@@ -310,7 +310,7 @@ export function ClientsPage() {
           {error ? <div className="text-sm text-danger bg-danger/10 border border-danger/20 rounded p-3">{error}</div> : null}
 
           <section className="bg-surface-light border border-slate-200 rounded-xl p-4 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3">{t("clients.filterLabel")}</p>
+            <p className="text-xs tracking-[0.2em] text-slate-500 mb-3">{t("clients.filterLabel")}</p>
             <div className="flex flex-wrap gap-2">
               {filterOptions.map((option) => {
                 const active = selectedClient === option.id;
@@ -343,7 +343,7 @@ export function ClientsPage() {
             <table className="w-full table-fixed text-left text-sm whitespace-nowrap">
               <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                 <tr>
-                  <th className="px-4 py-3 font-semibold text-slate-500 w-[56px]">Nr</th>
+                  <th className="px-4 py-3 font-semibold text-slate-500 w-[56px]">Nr.</th>
                   <th className="px-4 py-3 font-semibold text-slate-500 w-[180px]">
                     {t("common.orderId")}
                   </th>

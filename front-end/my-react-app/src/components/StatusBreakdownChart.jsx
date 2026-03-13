@@ -119,7 +119,7 @@ export function StatusBreakdownChart({ data, locale, t, onSelectDay, selectedDay
               viewMode === "volume" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
             }`}
           >
-            {t("overview.volumeView", null, "Volume View")}
+            {t("overview.volumeView")}
           </button>
           <button
             type="button"
@@ -128,7 +128,7 @@ export function StatusBreakdownChart({ data, locale, t, onSelectDay, selectedDay
               viewMode === "percentage" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
             }`}
           >
-            {t("overview.percentageView", null, "Percentage View")}
+            {t("overview.percentageView")}
           </button>
         </div>
       </div>
