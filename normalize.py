@@ -1833,6 +1833,7 @@ def normalize_output(
         missing_header = [field for field in missing_header if field != "store_address"]
     segmuller_review_only = _is_segmuller_missing_layout_review_only(header, branch_id)
     is_zusatzliche = (branch_id or "").strip() == "xxxlutz_zusatzliche"
+    is_porta = (branch_id or "").strip() == "porta"
     if is_zusatzliche:
         _ensure_field(header, "human_review_needed")["value"] = True
         _clear_reply_needed(header)
@@ -1878,6 +1879,9 @@ def normalize_output(
     # Status: furncloud_id alone is non-blocking (OK with warning)
     if not had_structure and not items:
         data["status"] = "failed"
+    elif is_porta:
+        data["status"] = "human_in_the_loop"
+        _clear_reply_needed(header)
     elif _flag_true(header, "human_review_needed") and (
         _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
     ):
@@ -1951,6 +1955,7 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
         extraction_branch,
     )
     is_zusatzliche = extraction_branch == "xxxlutz_zusatzliche"
+    is_porta = extraction_branch == "porta"
     if is_zusatzliche:
         _ensure_field(header, "human_review_needed")["value"] = True
         _clear_reply_needed(header)
@@ -1991,6 +1996,9 @@ def refresh_missing_warnings(data: dict[str, Any]) -> None:
 
     if _flag_true(header, "post_case"):
         data["status"] = "post"
+    elif is_porta:
+        data["status"] = "human_in_the_loop"
+        _clear_reply_needed(header)
     elif _flag_true(header, "human_review_needed") and (
         _is_ab_nr_order(header) or segmuller_review_only or is_zusatzliche
     ):
