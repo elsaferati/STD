@@ -39,7 +39,7 @@ export function ClientsPage() {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const isAdmin = user?.role === "admin";
+  const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
   const assignedClientBranchIds = useMemo(() => {
     const assigned = Array.isArray(user?.client_branches) ? user.client_branches : [];
     return new Set(
@@ -49,16 +49,16 @@ export function ClientsPage() {
     );
   }, [user?.client_branches]);
   const visibleKnownBranches = useMemo(() => {
-    if (isAdmin) return CLIENT_BRANCHES;
+    if (isAdminLike) return CLIENT_BRANCHES;
     return CLIENT_BRANCHES.filter((branch) => assignedClientBranchIds.has(branch.id));
-  }, [assignedClientBranchIds, isAdmin]);
+  }, [assignedClientBranchIds, isAdminLike]);
   const visibleKnownBranchIds = useMemo(
     () => visibleKnownBranches.map((branch) => branch.id),
     [visibleKnownBranches],
   );
-  const includeUnknownBranch = isAdmin || assignedClientBranchIds.has(UNKNOWN_CLIENT_BRANCH_ID);
+  const includeUnknownBranch = isAdminLike || assignedClientBranchIds.has(UNKNOWN_CLIENT_BRANCH_ID);
   const visibleBranchCount = visibleKnownBranchIds.length + (includeUnknownBranch ? 1 : 0);
-  const showAllFilter = isAdmin || visibleBranchCount > 1;
+  const showAllFilter = isAdminLike || visibleBranchCount > 1;
   const defaultNonAllFilterId = useMemo(() => {
     if (visibleKnownBranchIds.length > 0) {
       return visibleKnownBranchIds[0];

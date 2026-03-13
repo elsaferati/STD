@@ -29,7 +29,7 @@ export function AppShell({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef(null);
 
-  const isAdmin = user?.role === "admin";
+  const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
   const username = user?.username ?? user?.email ?? "";
   const showUser = Boolean(username);
 
@@ -88,10 +88,10 @@ export function AppShell({
                 <NavLink to="/clients" active={active === "clients"} icon="groups" label={t("common.clients")} />
                 <NavLink to="/data-export" active={active === "dataExport"} icon="file_download" label={t("common.dataExport")} />
                 <NavLink to="/excel-orders" active={active === "excelOrders"} icon="table_view" label={t("common.excelOrders")} />
-                {isAdmin ? (
+                {isAdminLike ? (
                   <NavLink to="/settings" active={active === "settings"} icon="settings" label={t("common.settings")} />
                 ) : null}
-                {isAdmin ? (
+                {isAdminLike ? (
                   <NavLink to="/users" active={active === "users"} icon="manage_accounts" label={t("common.users")} />
                 ) : null}
               </div>

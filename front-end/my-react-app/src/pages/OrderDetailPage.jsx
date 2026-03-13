@@ -7,6 +7,7 @@ import { ValidationBadge } from "../components/ValidationBadge";
 import { useI18n } from "../i18n/I18nContext";
 import { useAuth } from "../auth/useAuth";
 import { downloadBlob } from "../utils/download";
+import { localizeOperationalMessages, visibleOperationalMessages } from "../utils/operationalSignals";
 import {
   entryValue,
   fieldLabel,
@@ -496,6 +497,8 @@ export function OrderDetailPage() {
   const validationStatus = String(order.validation_status || "not_run").toLowerCase();
   const validationIssues = Array.isArray(order.validation_issues) ? order.validation_issues : [];
   const canResolveValidation = validationStatus === "flagged" || validationStatus === "stale";
+  const visibleErrors = localizeOperationalMessages(visibleOperationalMessages(order?.errors), t);
+  const visibleWarnings = localizeOperationalMessages(visibleOperationalMessages(order?.warnings), t);
 
   return (
     <AppShell
@@ -774,7 +777,7 @@ export function OrderDetailPage() {
                   {t("orderDetail.operationalSignals")}
                 </h2>
                 <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-full">
-                  {t("orderDetail.issues", { count: (order.errors || []).length + (order.warnings || []).length })}
+                  {t("orderDetail.issues", { count: visibleErrors.length + visibleWarnings.length })}
                 </span>
               </div>
 
@@ -808,21 +811,21 @@ export function OrderDetailPage() {
               </div>
 
               <div className="p-4 space-y-3 max-h-[420px] overflow-y-auto">
-                {(order.errors || []).map((message, index) => (
+                {visibleErrors.map((message, index) => (
                   <div key={`error-${index}`} className={`rounded-lg border p-3 ${levelClass("error")}`}>
                     <p className="font-semibold text-xs uppercase tracking-wide mb-1">{t("common.error")}</p>
                     <p className="text-sm">{message}</p>
                   </div>
                 ))}
 
-                {(order.warnings || []).map((message, index) => (
+                {visibleWarnings.map((message, index) => (
                   <div key={`warning-${index}`} className={`rounded-lg border p-3 ${levelClass("warning")}`}>
                     <p className="font-semibold text-xs uppercase tracking-wide mb-1">{t("common.warning")}</p>
                     <p className="text-sm">{message}</p>
                   </div>
                 ))}
 
-                {!(order.errors || []).length && !(order.warnings || []).length ? (
+                {!visibleErrors.length && !visibleWarnings.length ? (
                   <div className={`rounded-lg border p-3 ${levelClass("info")}`}>
                     <p className="font-semibold text-xs uppercase tracking-wide mb-1">{t("common.info")}</p>
                     <p className="text-sm">{t("orderDetail.noIssues")}</p>
@@ -867,7 +870,6 @@ export function OrderDetailPage() {
                   {["control_1", "control_2", "final_control"].map((lvl, idx) => {
                     const doneMap = { control_1: ["control_1_done", "control_2_done", "done"], control_2: ["control_2_done", "done"], final_control: ["done"] };
                     const isDone = doneMap[lvl].includes(status);
-                    const userField = `${lvl}_user_id`;
                     const atField = `${lvl}_at`;
                     return (
                       <div key={lvl} className={`flex-1 rounded-lg border p-3 ${isDone ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>

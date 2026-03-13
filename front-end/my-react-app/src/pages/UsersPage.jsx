@@ -8,6 +8,14 @@ import { CLIENT_BRANCHES, UNKNOWN_CLIENT_BRANCH_ID } from "../constants/clientBr
 
 const DEFAULT_USER_CLIENTS = [];
 
+function isAdminLikeRole(role) {
+  return role === "admin" || role === "superadmin";
+}
+
+function isSuperadminRole(role) {
+  return role === "superadmin";
+}
+
 const toggleClientBranchSelection = (currentSelection, branchId) => {
   if (currentSelection.includes(branchId)) {
     return currentSelection.filter((entry) => entry !== branchId);
@@ -103,6 +111,7 @@ function ClientBranchPicker({
 export function UsersPage() {
   const { user } = useAuth();
   const { t } = useI18n();
+  const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -114,7 +123,6 @@ export function UsersPage() {
     role: "user",
     client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
-    is_super_admin: false,
     can_control_1: false,
     can_control_2: false,
     can_final_control: false,
@@ -128,7 +136,6 @@ export function UsersPage() {
     client_branches: [...DEFAULT_USER_CLIENTS],
     is_active: true,
     password: "",
-    is_super_admin: false,
     can_control_1: false,
     can_control_2: false,
     can_final_control: false,
@@ -239,6 +246,9 @@ export function UsersPage() {
   };
 
   const openEdit = (entry) => {
+    if (isSuperadminRole(entry.role)) {
+      return;
+    }
     const assignedBranches = Array.isArray(entry.client_branches)
       ? entry.client_branches.filter((item) => typeof item === "string" && item.trim())
       : [];
@@ -250,7 +260,6 @@ export function UsersPage() {
       client_branches: assignedBranches.length ? assignedBranches : [],
       is_active: Boolean(entry.is_active),
       password: "",
-      is_super_admin: Boolean(entry.is_super_admin),
       can_control_1: Boolean(entry.can_control_1),
       can_control_2: Boolean(entry.can_control_2),
       can_final_control: Boolean(entry.can_final_control),
@@ -266,7 +275,6 @@ export function UsersPage() {
       client_branches: [...DEFAULT_USER_CLIENTS],
       is_active: true,
       password: "",
-      is_super_admin: false,
       can_control_1: false,
       can_control_2: false,
       can_final_control: false,
@@ -291,7 +299,6 @@ export function UsersPage() {
           role: form.role,
           client_branches: form.role === "admin" ? [] : form.client_branches,
           is_active: form.is_active,
-          is_super_admin: form.is_super_admin,
           can_control_1: form.can_control_1,
           can_control_2: form.can_control_2,
           can_final_control: form.can_final_control,
@@ -304,7 +311,6 @@ export function UsersPage() {
         role: "user",
         client_branches: [...DEFAULT_USER_CLIENTS],
         is_active: true,
-        is_super_admin: false,
         can_control_1: false,
         can_control_2: false,
         can_final_control: false,
@@ -343,7 +349,6 @@ export function UsersPage() {
           client_branches: editForm.role === "admin" ? [] : editForm.client_branches,
           is_active: editForm.is_active,
           password: editForm.password || undefined,
-          is_super_admin: editForm.is_super_admin,
           can_control_1: editForm.can_control_1,
           can_control_2: editForm.can_control_2,
           can_final_control: editForm.can_final_control,
@@ -376,7 +381,7 @@ export function UsersPage() {
     }
   };
 
-  if (user && user.role !== "admin") {
+  if (user && !isAdminLike) {
     return <Navigate to="/" replace />;
   }
 
@@ -473,10 +478,6 @@ export function UsersPage() {
               </label>
               <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
                 <label className="flex items-center gap-2">
-                  <input type="checkbox" name="is_super_admin" checked={form.is_super_admin} onChange={handleChange} className="h-4 w-4 accent-primary" />
-                  Super Admin
-                </label>
-                <label className="flex items-center gap-2">
                   <input type="checkbox" name="can_control_1" checked={form.can_control_1} onChange={handleChange} className="h-4 w-4 accent-primary" />
                   Control 1
                 </label>
@@ -562,16 +563,22 @@ export function UsersPage() {
                         <td className="px-4 py-3">
                           <span
                             className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                              entry.role === "admin"
-                                ? "bg-indigo-50 text-indigo-700"
+                              entry.role === "superadmin"
+                                ? "bg-purple-50 text-purple-700"
+                                : entry.role === "admin"
+                                  ? "bg-indigo-50 text-indigo-700"
                                 : "bg-slate-100 text-slate-700"
                             }`}
                           >
-                            {entry.role}
+                            {entry.role === "superadmin"
+                              ? t("users.roleSuperadmin", null, "Superadmin")
+                              : entry.role === "admin"
+                                ? t("users.roleAdmin")
+                                : t("users.roleUser")}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-600">
-                          {entry.role === "admin"
+                          {isAdminLikeRole(entry.role)
                             ? "-"
                             : (
                               Array.isArray(entry.client_branches) && entry.client_branches.length > 0 ? (
@@ -599,24 +606,30 @@ export function UsersPage() {
                         </td>
                         <td className="px-4 py-3 text-slate-600">
                           <div className="flex flex-wrap gap-1">
-                            {entry.is_super_admin && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700">Super Admin</span>}
+                            {isSuperadminRole(entry.role) && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-50 text-purple-700">
+                                {t("users.roleSuperadmin", null, "Superadmin")}
+                              </span>
+                            )}
                             {entry.can_control_1 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-sky-50 text-sky-700">C1</span>}
                             {entry.can_control_2 && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">C2</span>}
                             {entry.can_final_control && <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700">Final</span>}
-                            {!entry.is_super_admin && !entry.can_control_1 && !entry.can_control_2 && !entry.can_final_control && <span className="text-slate-400">-</span>}
+                            {!isSuperadminRole(entry.role) && !entry.can_control_1 && !entry.can_control_2 && !entry.can_final_control && <span className="text-slate-400">-</span>}
                           </div>
                         </td>
                         <td className="px-4 py-3 text-slate-600">{entry.last_login_at ? new Date(entry.last_login_at).toLocaleString() : "-"}</td>
                         <td className="px-4 py-3 text-right">
                           <div className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEdit(entry)}
-                              className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
-                            >
-                              {t("users.edit")}
-                            </button>
-                            {entry.role !== "admin" ? (
+                            {!isSuperadminRole(entry.role) ? (
+                              <button
+                                type="button"
+                                onClick={() => openEdit(entry)}
+                                className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                              >
+                                {t("users.edit")}
+                              </button>
+                            ) : null}
+                            {!isAdminLikeRole(entry.role) ? (
                               <button
                                 type="button"
                                 onClick={() => handleToggleActive(entry)}
@@ -725,10 +738,6 @@ export function UsersPage() {
                   />
                 </label>
                 <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="is_super_admin" checked={editForm.is_super_admin} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
-                    Super Admin
-                  </label>
                   <label className="flex items-center gap-2">
                     <input type="checkbox" name="can_control_1" checked={editForm.can_control_1} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
                     Control 1
