@@ -47,13 +47,18 @@ import xml_exporter
 import order_store
 from auth import (
     authenticate_user,
+    can_assign_role,
+    can_mutate_user,
     create_session,
     get_session_user,
     hash_password,
+    is_admin_like,
+    is_superadmin,
     revoke_session,
-    seed_admin_user,
+    seed_superadmin_user,
     session_cookie_name,
     session_cookie_options,
+    VALID_USER_ROLES,
 )
 from db import _drop_thread_connection, execute, fetch_all, fetch_one, init_db, transaction
 
@@ -192,8 +197,8 @@ _ORDERS_FILTER_COUNTS_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 _ORDERS_FILTER_COUNTS_LOCK = Lock()
 
 init_db()
-if seed_admin_user():
-    print("Admin user created from environment configuration.")
+if seed_superadmin_user():
+    print("Superadmin user created from environment configuration.")
 
 
 def _safe_id(value: str) -> str | None:
@@ -378,7 +383,7 @@ def _order_access_scope(
     include_assignment: bool = False,
 ) -> dict[str, Any]:
     principal = user or {}
-    is_admin = principal.get("role") == "admin"
+    is_admin = is_admin_like(principal)
     user_id = str(principal.get("id") or "").strip()
     if is_admin:
         return {"is_admin": True, "assigned_user_id": None, "allowed_client_branches": None}
@@ -401,9 +406,20 @@ def _effective_client_branches(
     return requested & allowed
 
 
+def _normalized_user_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in VALID_USER_ROLES:
+        return role
+    return "user"
+
+
+def _current_user_role() -> str:
+    return _normalized_user_role((getattr(g, "user", {}) or {}).get("role"))
+
+
 def _serialize_user_record(row: dict[str, Any]) -> dict[str, Any]:
     user_id = str(row.get("id") or "")
-    role = str(row.get("role") or "user")
+    role = _normalized_user_role(row.get("role"))
     payload = {
         "id": user_id,
         "username": row.get("username"),
@@ -414,14 +430,24 @@ def _serialize_user_record(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row.get("updated_at"),
         "last_login_at": row.get("last_login_at"),
         "client_branches": _fetch_user_client_branches(user_id),
-        "is_super_admin": bool(row.get("is_super_admin")),
+        "is_super_admin": is_superadmin({"role": role}),
         "can_control_1": bool(row.get("can_control_1")),
         "can_control_2": bool(row.get("can_control_2")),
         "can_final_control": bool(row.get("can_final_control")),
     }
-    if role == "admin":
+    if is_admin_like({"role": role}):
         payload["client_branches"] = []
     return payload
+
+
+def _payload_has_key(payload: dict[str, Any], key: str) -> bool:
+    return isinstance(payload, dict) and key in payload
+
+
+def _reject_superadmin_write_fields(payload: dict[str, Any]) -> Response | None:
+    if _payload_has_key(payload, "is_super_admin"):
+        return _api_error(400, "bad_request", "is_super_admin is read-only")
+    return None
 
 
 def _parse_received_at(value: Any) -> datetime | None:
@@ -828,7 +854,7 @@ def _response_status_code(error_response: Any, default: int = 500) -> int:
 
 def _require_admin() -> Any:
     user = getattr(g, "user", None) or {}
-    if user.get("role") != "admin":
+    if not is_admin_like(user):
         return _api_error(403, "forbidden", "Admin access required")
     return None
 
@@ -1213,6 +1239,7 @@ def _load_order(
     *,
     assigned_user_id: str | None = None,
     allowed_client_branches: set[str] | None = None,
+    role: str | None = None,
 ) -> tuple[dict[str, Any] | None, Any]:
     safe_id = _safe_id(order_id)
     if not safe_id:
@@ -1227,13 +1254,18 @@ def _load_order(
             safe_id,
             assigned_user_id=assigned_user_id,
             allowed_client_branches=allowed_client_branches,
+            role=role,
         )
     except Exception as exc:  # noqa: BLE001
         return None, _api_error(500, "db_error", f"Failed to load order: {exc}")
     if not order:
         return None, _api_error(404, "not_found", "Order not found")
     order["reply_mailto"] = (
-        _reply_mailto(order.get("message_id") or safe_id, safe_id, _reply_case_from_warnings(order.get("warnings", [])))
+        _reply_mailto(
+            order.get("message_id") or safe_id,
+            safe_id,
+            _reply_case_from_warnings(order.get("raw_warnings", order.get("warnings", []))),
+        )
         if order.get("reply_needed")
         else ""
     )
@@ -1916,7 +1948,7 @@ def api_auth_me():
                 "username": user["username"],
                 "role": user["role"],
                 "client_branches": user.get("client_branches", []),
-                "is_super_admin": bool(user.get("is_super_admin")),
+                "is_super_admin": is_superadmin(user),
                 "can_control_1": bool(user.get("can_control_1")),
                 "can_control_2": bool(user.get("can_control_2")),
                 "can_final_control": bool(user.get("can_final_control")),
@@ -1993,7 +2025,8 @@ def api_users():
         rows = fetch_all(
             """
             SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at,
-                   is_super_admin, can_control_1, can_control_2, can_final_control
+                   (LOWER(BTRIM(COALESCE(role, ''))) = 'superadmin') AS is_super_admin,
+                   can_control_1, can_control_2, can_final_control
             FROM users
             ORDER BY created_at DESC
             """
@@ -2002,6 +2035,9 @@ def api_users():
         return jsonify({"users": users})
 
     payload = request.get_json(silent=True) or {}
+    write_error = _reject_superadmin_write_fields(payload)
+    if write_error:
+        return write_error
     username = _clean_form_value(payload.get("username"))
     password = _clean_form_value(payload.get("password"))
     email = _clean_form_value(payload.get("email")) or None
@@ -2014,15 +2050,17 @@ def api_users():
         return branch_error
 
     current_user_create = getattr(g, "user", {}) or {}
-    caller_is_super_admin = bool(current_user_create.get("is_super_admin")) or current_user_create.get("role") == "admin"
-    new_is_super_admin = bool(payload.get("is_super_admin")) if caller_is_super_admin else False
-    new_can_control_1 = bool(payload.get("can_control_1")) if caller_is_super_admin else False
-    new_can_control_2 = bool(payload.get("can_control_2")) if caller_is_super_admin else False
-    new_can_final_control = bool(payload.get("can_final_control")) if caller_is_super_admin else False
+    new_can_control_1 = bool(payload.get("can_control_1"))
+    new_can_control_2 = bool(payload.get("can_control_2"))
+    new_can_final_control = bool(payload.get("can_final_control"))
 
     if not username or not password:
         return _api_error(400, "bad_request", "Username and password are required")
-    if role not in {"user", "admin"}:
+    if role not in VALID_USER_ROLES:
+        return _api_error(400, "bad_request", "Role must be 'user', 'admin', or 'superadmin'")
+    if role == "superadmin":
+        return _api_error(400, "bad_request", "Role 'superadmin' cannot be assigned via this endpoint")
+    if not can_assign_role(current_user_create, role):
         return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
     if role != "admin" and not client_branches:
         return _api_error(400, "bad_request", "client_branches is required for role 'user'")
@@ -2047,9 +2085,9 @@ def api_users():
     execute(
         """
         INSERT INTO users (id, username, password_hash, email, role, is_active,
-                           is_super_admin, can_control_1, can_control_2, can_final_control,
+                           can_control_1, can_control_2, can_final_control,
                            created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             new_id,
@@ -2058,7 +2096,6 @@ def api_users():
             email,
             role,
             is_active,
-            new_is_super_admin,
             new_can_control_1,
             new_can_control_2,
             new_can_final_control,
@@ -2066,7 +2103,7 @@ def api_users():
             now,
         ),
     )
-    if role == "admin":
+    if is_admin_like({"role": role}):
         _replace_user_client_scopes(new_id, set(), now=now)
     else:
         _replace_user_client_scopes(new_id, client_branches or set(), now=now)
@@ -2080,8 +2117,8 @@ def api_users():
                     "role": role,
                     "is_active": is_active,
                     "created_at": now.isoformat(),
-                    "client_branches": [] if role == "admin" else sorted(client_branches or set()),
-                    "is_super_admin": new_is_super_admin,
+                    "client_branches": [] if is_admin_like({"role": role}) else sorted(client_branches or set()),
+                    "is_super_admin": is_superadmin({"role": role}),
                     "can_control_1": new_can_control_1,
                     "can_control_2": new_can_control_2,
                     "can_final_control": new_can_final_control,
@@ -2099,6 +2136,9 @@ def api_user_update(user_id: str):
         return admin_error
 
     payload = request.get_json(silent=True) or {}
+    write_error = _reject_superadmin_write_fields(payload)
+    if write_error:
+        return write_error
     username = _clean_form_value(payload.get("username")) or None
     password = _clean_form_value(payload.get("password")) or None
     email = _clean_form_value(payload.get("email")) or None
@@ -2111,29 +2151,42 @@ def api_user_update(user_id: str):
         return branch_error
 
     current_user_upd = getattr(g, "user", {}) or {}
-    caller_is_super_admin_upd = bool(current_user_upd.get("is_super_admin")) or current_user_upd.get("role") == "admin"
-    upd_is_super_admin = payload.get("is_super_admin")
     upd_can_control_1 = payload.get("can_control_1")
     upd_can_control_2 = payload.get("can_control_2")
     upd_can_final_control = payload.get("can_final_control")
 
-    existing = fetch_one("SELECT id, username, role FROM users WHERE id = %s", (user_id,))
+    existing = fetch_one(
+        """
+        SELECT id, username, email, role, is_active,
+               (LOWER(BTRIM(COALESCE(role, ''))) = 'superadmin') AS is_super_admin,
+               can_control_1, can_control_2, can_final_control
+        FROM users
+        WHERE id = %s
+        """,
+        (user_id,),
+    )
     if not existing:
         return _api_error(404, "not_found", "User not found")
+    if not can_mutate_user(current_user_upd, existing):
+        return _api_error(403, "forbidden", "The seeded superadmin account is managed by environment configuration")
 
     current_user = getattr(g, "user", {}) or {}
     if current_user.get("id") == user_id:
         if is_active is False:
             return _api_error(400, "bad_request", "You cannot deactivate your own account")
-        if role and role != "admin":
+        if role and not is_admin_like({"role": role}):
             return _api_error(400, "bad_request", "You cannot remove your own admin role")
 
-    if role and role not in {"user", "admin"}:
+    if role and role not in VALID_USER_ROLES:
+        return _api_error(400, "bad_request", "Role must be 'user', 'admin', or 'superadmin'")
+    if role == "superadmin":
+        return _api_error(400, "bad_request", "Role 'superadmin' cannot be assigned via this endpoint")
+    if role is not None and not can_assign_role(current_user_upd, role):
         return _api_error(400, "bad_request", "Role must be 'user' or 'admin'")
 
-    effective_role = role or str(existing.get("role") or "user")
+    effective_role = role or _normalized_user_role(existing.get("role"))
     existing_client_branches = set(_fetch_user_client_branches(user_id))
-    if effective_role == "admin":
+    if is_admin_like({"role": effective_role}):
         effective_client_branches: set[str] = set()
     elif has_client_branches:
         if not client_branches:
@@ -2177,16 +2230,13 @@ def api_user_update(user_id: str):
     if password:
         fields.append("password_hash = %s")
         values.append(hash_password(password))
-    if caller_is_super_admin_upd and upd_is_super_admin is not None:
-        fields.append("is_super_admin = %s")
-        values.append(bool(upd_is_super_admin))
-    if caller_is_super_admin_upd and upd_can_control_1 is not None:
+    if upd_can_control_1 is not None:
         fields.append("can_control_1 = %s")
         values.append(bool(upd_can_control_1))
-    if caller_is_super_admin_upd and upd_can_control_2 is not None:
+    if upd_can_control_2 is not None:
         fields.append("can_control_2 = %s")
         values.append(bool(upd_can_control_2))
-    if caller_is_super_admin_upd and upd_can_final_control is not None:
+    if upd_can_final_control is not None:
         fields.append("can_final_control = %s")
         values.append(bool(upd_can_final_control))
 
@@ -2207,7 +2257,8 @@ def api_user_update(user_id: str):
     updated_row = fetch_one(
         """
         SELECT id, username, email, role, is_active, created_at, updated_at, last_login_at,
-               is_super_admin, can_control_1, can_control_2, can_final_control
+               (LOWER(BTRIM(COALESCE(role, ''))) = 'superadmin') AS is_super_admin,
+               can_control_1, can_control_2, can_final_control
         FROM users
         WHERE id = %s
         """,
@@ -2311,7 +2362,7 @@ def api_review_task_resolve(task_id: str):
         task = order_store.resolve_task(
             task_id=task_id,
             user_id=str(user.get("id") or ""),
-            is_admin=user.get("role") == "admin",
+            is_admin=is_admin_like(user),
             outcome=str(body.get("outcome") or "resolved"),
             note=str(body.get("note") or ""),
             force=bool(body.get("force")),
@@ -2448,6 +2499,82 @@ def api_overview():
                 ],
                 "days": orders_by_client_hour,
             },
+        }
+    )
+
+
+@app.route("/api/superadmin/xml-activity")
+def api_superadmin_xml_activity():
+    user = getattr(g, "user", {}) or {}
+    if not is_superadmin(user):
+        return _api_error(403, "forbidden", "Superadmin access required")
+
+    now = datetime.now().astimezone()
+    overview_range, error_response = _parse_overview_range(now)
+    if error_response is not None:
+        return error_response
+
+    try:
+        activity = order_store.query_xml_activity(
+            range_start=overview_range["start"],
+            range_end=overview_range["end"],
+            chart_start=overview_range["chart_start"],
+            chart_end=overview_range["chart_end"],
+            bucket_granularity=overview_range["bucket_granularity"],
+            local_timezone=_postgres_timezone_name(now.tzinfo),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return _api_error(500, "db_error", f"Failed to load XML activity: {exc}")
+
+    by_day = []
+    for row in activity.get("by_day", []):
+        bucket_start = row.get("bucket_start")
+        if isinstance(bucket_start, datetime):
+            bucket_point = bucket_start.astimezone()
+        elif isinstance(bucket_start, date):
+            bucket_point = datetime.combine(bucket_start, datetime.min.time(), tzinfo=overview_range["start"].tzinfo)
+        else:
+            bucket_point = overview_range["start"]
+        if overview_range["bucket_granularity"] == "month":
+            label = bucket_point.strftime("%b %Y")
+            iso_value = bucket_point.date().isoformat()
+        else:
+            label = bucket_point.strftime("%b %d")
+            iso_value = bucket_point.date().isoformat()
+        gen_orders = int(row.get("generated_orders") or 0)
+        regen_events = int(row.get("regenerated_events") or 0)
+        by_day.append(
+            {
+                "date": iso_value,
+                "label": label,
+                "generated_orders": gen_orders,
+                "regenerated_events": regen_events,
+                "generated_files": gen_orders * 2,
+                "regenerated_files": regen_events * 2,
+            }
+        )
+
+    summary = activity.get("summary", {})
+    return jsonify(
+        {
+            "generated_at": now.isoformat(),
+            "range": {
+                "preset": overview_range["preset"],
+                "month": overview_range.get("month"),
+                "year": overview_range.get("year"),
+                "start": overview_range["start"].isoformat(),
+                "end": overview_range["end"].isoformat(),
+                "chart_start": overview_range["chart_range_start"].isoformat(),
+                "chart_end": overview_range["chart_range_end"].isoformat(),
+                "bucket_granularity": overview_range["bucket_granularity"],
+            },
+            "summary": {
+                "generated_orders": int(summary.get("generated_orders") or 0),
+                "regenerated_events": int(summary.get("regenerated_events") or 0),
+                "generated_files": int(summary.get("generated_files") or 0),
+                "regenerated_files": int(summary.get("regenerated_files") or 0),
+            },
+            "by_day": by_day,
         }
     )
 
@@ -2687,13 +2814,14 @@ def api_order_detail(order_id: str):
         order_id,
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if load_error is not None:
         return load_error
 
     current_user = getattr(g, "user", {}) or {}
     current_user_id = str(current_user.get("id") or "")
-    is_admin = current_user.get("role") == "admin"
+    is_admin = is_admin_like(current_user)
     can_edit, _edit_reason = (False, "Order is not editable")
     if current_user_id:
         can_edit, _edit_reason = order_store.is_order_editable_for_detail(
@@ -2892,6 +3020,7 @@ def api_order_detail(order_id: str):
         order["safe_id"],
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if updated_error is not None:
         return updated_error
@@ -2915,6 +3044,7 @@ def api_export_order_header_xlsx(order_id: str):
         order_id,
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if load_error is not None:
         return load_error
@@ -2942,6 +3072,7 @@ def api_export_order_xml(order_id: str):
         order_id,
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if load_error is not None:
         return load_error
@@ -2990,6 +3121,7 @@ def api_resolve_order_validation(order_id: str):
         order_id,
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if load_error is not None:
         return load_error
@@ -3020,6 +3152,7 @@ def api_resolve_order_validation(order_id: str):
         order["safe_id"],
         assigned_user_id=scope.get("assigned_user_id"),
         allowed_client_branches=scope.get("allowed_client_branches"),
+        role=_current_user_role(),
     )
     if updated_error is not None:
         return updated_error
@@ -3030,7 +3163,7 @@ def api_resolve_order_validation(order_id: str):
 def api_px_status(order_id: str):
     user = getattr(g, "user", {}) or {}
     has_px = any([user.get("can_control_1"), user.get("can_control_2"), user.get("can_final_control")])
-    if not has_px and user.get("role") != "admin":
+    if not has_px and not is_admin_like(user):
         return _api_error(403, "forbidden", "PX permission required")
     px = order_store.get_px_controls(order_id)
     if not px:
@@ -3054,7 +3187,7 @@ def api_px_confirm(order_id: str):
         "control_2": "can_control_2",
         "final_control": "can_final_control",
     }
-    if not user.get(perm_map[level]) and user.get("role") != "admin":
+    if not user.get(perm_map[level]) and not is_admin_like(user):
         return _api_error(403, "forbidden", f"No {level} permission")
 
     px = order_store.get_px_controls(order_id)
@@ -3247,7 +3380,7 @@ def download_file(filename: str):
 
 @app.route("/order/<order_id>/export-xml", methods=["POST"])
 def export_order_xml(order_id: str):
-    order, load_error = _load_order(order_id)
+    order, load_error = _load_order(order_id, role=_current_user_role())
     if load_error is not None:
         abort(_response_status_code(load_error, 500))
     if order["parse_error"]:
@@ -3280,7 +3413,7 @@ def export_order_xml(order_id: str):
 
 @app.route("/order/<order_id>/delete", methods=["POST"])
 def delete_order(order_id: str):
-    order, load_error = _load_order(order_id)
+    order, load_error = _load_order(order_id, role=_current_user_role())
     if load_error is not None:
         abort(_response_status_code(load_error, 500))
     try:
@@ -3298,7 +3431,7 @@ def delete_order(order_id: str):
 
 @app.route("/order/<order_id>", methods=["GET", "POST"])
 def order_detail(order_id: str) -> str:
-    order, load_error = _load_order(order_id)
+    order, load_error = _load_order(order_id, role=_current_user_role())
     if load_error is not None:
         abort(_response_status_code(load_error, 500))
 

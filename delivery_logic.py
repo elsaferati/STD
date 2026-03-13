@@ -280,8 +280,7 @@ def calculate_delivery_week(order_date_str: str, tour: str, requested_week_str: 
             debug_info["requested_week"] = _format_year_week(req_y, req_w)
             request_week_start = _iso_week_start(req_y, req_w)
             if request_week_start is not None:
-                is_braun = isinstance(client_name, str) and "braun" in client_name.lower()
-                early_offset = 2 if is_braun else 5
+                early_offset = 2
                 earliest_allowed_by_request = _year_week_from_date(
                     request_week_start - datetime.timedelta(weeks=early_offset)
                 )

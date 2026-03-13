@@ -4,10 +4,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 import uuid
 
-from db import fetch_all, fetch_one, get_connection
+from db import execute, fetch_all, fetch_one, get_connection
 from extraction_branches import BRANCHES
 from gemini_validation import (
     VALIDATION_PROVIDER_GEMINI,
@@ -128,6 +129,594 @@ def _normalize_validation_issues(value: Any) -> list[dict[str, str]]:
     return issues
 
 
+_ACTIONABLE_SIGNAL_PATTERNS = (
+    re.compile(r"\bmissing (critical )?header fields?\b", re.IGNORECASE),
+    re.compile(r"\bmissing (critical )?item fields?\b", re.IGNORECASE),
+    re.compile(r"\bmissing line(?:-level)? data\b", re.IGNORECASE),
+    re.compile(r"\bmissing ticket\b", re.IGNORECASE),
+    re.compile(r"\bmissing items?\b", re.IGNORECASE),
+    re.compile(r"\bno items?\b", re.IGNORECASE),
+    re.compile(r"\breply needed:\s*missing\b", re.IGNORECASE),
+)
+_FOLLOW_UP_SIGNAL_PATTERNS = (
+    re.compile(r"\bauto-?reply\b", re.IGNORECASE),
+    re.compile(r"\breply email\b", re.IGNORECASE),
+    re.compile(r"\bfollow-?up email\b", re.IGNORECASE),
+    re.compile(r"\bmail (?:sent|queued|triggered)\b", re.IGNORECASE),
+    re.compile(r"\bemail (?:sent|queued|triggered)\b", re.IGNORECASE),
+)
+_MAPPING_SIGNAL_PATTERNS = (
+    re.compile(r"\blookup\b", re.IGNORECASE),
+    re.compile(r"\bmapp(?:ing|ed|er)?\b", re.IGNORECASE),
+    re.compile(r"\bmatch(?:ed|ing)?\b", re.IGNORECASE),
+    re.compile(r"\bunmatched\b", re.IGNORECASE),
+)
+_INTERNAL_REVIEW_SIGNAL_PATTERNS = (
+    re.compile(r"\brouting\b", re.IGNORECASE),
+    re.compile(r"\bdebug\b", re.IGNORECASE),
+    re.compile(r"\binternal (?:trigger|review|check)\b", re.IGNORECASE),
+    re.compile(r"\breview check\b", re.IGNORECASE),
+)
+_HIDDEN_WARNING_PATTERNS = _FOLLOW_UP_SIGNAL_PATTERNS + _MAPPING_SIGNAL_PATTERNS + _INTERNAL_REVIEW_SIGNAL_PATTERNS + (
+    re.compile(r"^Porta ambiguous-code human-review trigger activated from warning:", re.IGNORECASE),
+    re.compile(r"^Porta explicit-pair review retained\b", re.IGNORECASE),
+    re.compile(r"^Porta code consistency correction\b", re.IGNORECASE),
+    re.compile(r"^Porta code-shape validation\b", re.IGNORECASE),
+    re.compile(r"^Porta reconciliation\b", re.IGNORECASE),
+    re.compile(r"^Porta component occurrence reconciliation\b", re.IGNORECASE),
+    re.compile(r"^Porta inline pair reconciliation\b", re.IGNORECASE),
+    re.compile(r"^Porta article-only reconciliation\b", re.IGNORECASE),
+    re.compile(r"^Porta model-only reconciliation\b", re.IGNORECASE),
+    re.compile(
+        r"^zubeh(?:o|ö)rzeilen\b.*\bohne\s+explizite\s+mengenangabe\b.*\bmenge\s*=\s*1\s+default\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^kommission\s+im\s+pdf\s+als\s+.+?\/0\s+angegeben;\s*['\"]?\/0['\"]?\s+gem(?:aess|äß)\s+regel\s+entfernt\.?$", re.IGNORECASE),
+    re.compile(
+        r"^position\s+'.+?'\s+enth(?:aelt|ält)\s+keine\s+eindeutige\s+artikelnummer;\s+nur\s+modellnummer\s+extrahiert\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^artikel-nr\.\s*'.+?'\s*ist als porta-interne artikelnummer gekennzeichnet und wurde .+?artikelnummer\/modellnummer .+$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^artikel-nr\.\s*'.+?'\s*ist eine tabellen-spalte und wurde .+? ignoriert;\s*keine gueltige 5-stellige artikelnummer\/modellnummer im liefermodelltext gefunden\.?$",
+        re.IGNORECASE,
+    ),
+)
+# Warnings that should only be visible to superadmin
+_SUPERADMIN_ONLY_WARNING_PATTERNS = (
+    re.compile(
+        r"^Position\s+'.+?'\s+und\s+'.+?'\s+sind\s+als\s+Artikel-Nr\.\s+im\s+PDF\s+ausgewiesen,\s+dürfen\s+laut\s+Regelwerk\s+nicht\s+als\s+artikelnummer[\/\\]modellnummer\s+übernommen\s+werden;\s+daher\s+leer\s+gelassen\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Für\s+Einlegeboden\s+ist\s+nur\s+'.+?'\s+sichtbar;\s+keine\s+eindeutige\s+artikelnummer\s+vorhanden\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Erste\s+Position\s+enthält\s+nur\s+porta-interne\s+Artikel-Nr\.\s+'.+?'\s+und\s+wurde\s+gemäß\s+Regel\s+nicht\s+als\s+artikelnummer[\/\\]modellnummer\s+übernommen\.?$",
+        re.IGNORECASE,
+    ),
+    # Generic patterns for system action warnings (wurde/wurden + action verb + gemäß Regel)
+    re.compile(
+        r".*wurde\s+(?:entfernt|gelöscht|ignoriert|extrahiert|gesetzt|korrigiert|übernommen).*gemäß\s+Regel.*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurden\s+(?:ignoriert|extrahiert|übernommen|entfernt|gelöscht|gesetzt|korrigiert).*gemäß\s+Regel.*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemäß\s+Regel\s+(?:entfernt|ignoriert|extrahiert|gesetzt|korrigiert|übernommen|gelöscht).*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+Regel\s+(?:entfernt|ignoriert|extrahiert|gesetzt|korrigiert|übernommen|gelöscht).*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*laut\s+Regelwerk\s+(?:entfernt|ignoriert|extrahiert|gesetzt|korrigiert|übernommen|gelöscht).*",
+        re.IGNORECASE,
+    ),
+    # Patterns for rule-based corrections without explicit "gemäß Regel" but describing system actions
+    re.compile(
+        r".*wurde\s+(?:entfernt|gelöscht|ignoriert|extrahiert|gesetzt|korrigiert).*regel.*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurden\s+(?:ignoriert|extrahiert|entfernt|gelöscht|gesetzt|korrigiert).*regel.*",
+        re.IGNORECASE,
+    ),
+    # Specific patterns for known warning formats
+    re.compile(
+        r"^Artikelcodes\s+in\s+der\s+Tabelle\s+sind.*store-intern\s+und\s+wurden\s+ignoriert.*extrahiert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Mengen\s+für\s+die\s+Zusatzpositionen.*gemäß\s+Regel\s+auf\s+\d+\s+gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Mengen\s+für\s+die\s+Zusatzpositionen.*gemaess\s+Regel\s+auf\s+\d+\s+gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for "auf X gesetzt" (set to X) corrections
+    re.compile(
+        r".*gemäß\s+Regel\s+auf\s+\d+\s+gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+Regel\s+auf\s+\d+\s+gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for extraction actions
+    re.compile(
+        r".*wurden\s+aus\s+.*\s+extrahiert\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurde\s+aus\s+.*\s+extrahiert\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for ignored actions
+    re.compile(
+        r".*wurden\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurde\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for PDF extraction method warnings
+    re.compile(
+        r"^No\s+digital\s+PDF\s+text\s+extracted.*using\s+images\s+only\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for image reading warnings
+    re.compile(
+        r".*wurden\s+aus\s+dem\s+Bild\s+gelesen.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurde\s+aus\s+dem\s+Bild\s+gelesen.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for image merging warnings
+    re.compile(
+        r".*aus\s+dem\s+Bild\s+zusammengeführt.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for rule-based splitting
+    re.compile(
+        r".*gemäß\s+MULTI-ID\s+SPLIT.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+MULTI-ID\s+SPLIT.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurde.*gemäß.*aufgeteilt.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*wurde.*gemaess.*aufgeteilt.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for specific rule name patterns
+    re.compile(
+        r".*gemäß\s+Regel\s+['\"].*?['\"]\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+Regel\s+['\"].*?['\"]\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemäß\s+Regel\s+\d+\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+Regel\s+\d+\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for found and removed
+    re.compile(
+        r".*gefunden.*entfernt\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "der Hauptposition...gemäß Regel ignoriert"
+    re.compile(
+        r".*der\s+Hauptposition.*gemäß\s+Regel.*ignoriert.*daher\s+leer\s+gelassen\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*der\s+Hauptposition.*gemaess\s+Regel.*ignoriert.*daher\s+leer\s+gelassen\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "Artikelcodes stammen aus...Split nach Regel"
+    re.compile(
+        r"^Artikelcodes\s+stammen\s+aus.*Split\s+nach\s+Regel.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Artikelcodes\s+stammen\s+aus.*Split\s+nach\s+regel.*$",
+        re.IGNORECASE,
+    ),
+    # Pattern for store_name Filialzusatz warning
+    re.compile(
+        r"^store_name\s+enthält\s+keinen\s+Filialzusatz.*in\s+derselben\s+Zeile.*Filialname\s+separat\s+im\s+PDF\s+vorhanden\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^store_name\s+enthaelt\s+keinen\s+Filialzusatz.*in\s+derselben\s+Zeile.*Filialname\s+separat\s+im\s+PDF\s+vorhanden\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for Komponentenblock warnings (component block recognized, main line ignored)
+    re.compile(
+        r"^Komponentenblock\s+'.+?'\s+erkannt;.*Hauptzeile\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Komponentenblock.*erkannt;.*Hauptzeile\s+ignoriert.*$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "ist eine interne Nummer und wurde nicht als artikelnummer verwendet"
+    re.compile(
+        r".*ist\s+eine\s+interne\s+Nummer\s+und\s+wurde\s+nicht\s+als\s+artikelnummer\s+verwendet.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for invalid codes and positions taken without codes
+    re.compile(
+        r".*enthält\s+keine\s+gültigen\s+Porta.*Position\s+als\s+Menge.*ohne\s+Codes\s+übernommen\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*enthaelt\s+keine\s+gueltigen\s+Porta.*Position\s+als\s+Menge.*ohne\s+Codes\s+uebernommen\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for heuristic compaction/compression
+    re.compile(
+        r".*heuristisch\s+kompaktisiert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*heuristisch\s+komprimiert.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*nicht\s+explizit\s+gelabelt\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for furncloud_id not found (variations)
+    re.compile(
+        r"^Kein\s+furncloud_id\s+im\s+Dokument\s+gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Keine\s+furncloud_id\s+im\s+Dokument\s+gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for positions without clear table structure and derived quantities
+    re.compile(
+        r".*Positionen.*erscheinen\s+ohne\s+klare\s+Tabellenstruktur.*Mengen\s+teils\s+abgeleitet\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*Positionen.*erscheinen\s+ohne\s+klare\s+Tabellenstruktur.*quantities\s+partly\s+derived\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for extraction from blocks and rule-based field adoption
+    re.compile(
+        r".*aus\s+.*Block\s+extrahiert.*nicht.*übernommen.*Regel.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*aus\s+.*Block\s+extrahiert.*nicht.*uebernommen.*Regel.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*aus\s+.*Block\s+extrahiert.*nicht.*übernommen.*\(Regel\)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*aus\s+.*Block\s+extrahiert.*nicht.*uebernommen.*\(Regel\)\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "kundennummer/adressnummer/tour nicht im PDF gefunden" (moved from _HIDDEN_WARNING_PATTERNS)
+    re.compile(
+        r"\bkundennummer\/adressnummer\/tour\s+nicht\s+im\s+pdf\s+gefunden\b",
+        re.IGNORECASE,
+    ),
+    # Pattern for "kundennummer nicht im PDF gefunden"
+    re.compile(
+        r"^kundennummer\s+nicht\s+im\s+PDF\s+gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "No unambiguous article/model number could be identified in the PDF"
+    re.compile(
+        r"^No\s+unambiguous\s+article[\/\\]model\s+number\s+could\s+be\s+identified\s+in\s+the\s+PDF\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "Positionen enthalten mehrere Code-Zeilen...Menge je Zeile auf X gesetzt"
+    re.compile(
+        r".*Positionen\s+enthalten\s+mehrere\s+Code-Zeilen.*Menge\s+je\s+Zeile\s+auf\s+\d+\s+gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    # Pattern for "lieferanschrift ohne Empfängername (nur Adresszeilen) extrahiert"
+    re.compile(
+        r"^lieferanschrift\s+ohne\s+Empfängername\s+\(nur\s+Adresszeilen\)\s+extrahiert\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^lieferanschrift\s+ohne\s+Empfaengername\s+\(nur\s+Adresszeilen\)\s+extrahiert\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for fallback filling
+    re.compile(
+        r"^Porta:.*filled\s+from.*fallback\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for rule-based derivation
+    re.compile(
+        r".*per\s+Regel\s+\w+\s+abgeleitet.*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r".*gemaess\s+Regel\s+\w+\s+abgeleitet.*$",
+        re.IGNORECASE,
+    ),
+    # Patterns for quantity setting for accessory positions
+    re.compile(
+        r"^Menge\s+für\s+Zubehör.*nicht\s+explizit\s+angegeben.*auf.*gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Menge\s+fuer\s+Zubehoer.*nicht\s+explizit\s+angegeben.*auf.*gesetzt\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for multiple positions with internal article numbers
+    re.compile(
+        r"^Mehrere\s+Hauptpositionen.*interne\s+Artikel-Nr\..*laut\s+Regel.*ignorieren.*artikelnummer[\/\\]modellnummer.*leer\s+gelassen\.?$",
+        re.IGNORECASE,
+    ),
+    # Extended "nicht im PDF gefunden" patterns
+    re.compile(
+        r"^kundennummer\/adressnummer\/kom_name\/tour\/mail_to\s+nicht\s+im\s+PDF\s+gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^kundennummer.*nicht\s+im\s+PDF\/Email\s+gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for Firmenzeile not adopted per rule
+    re.compile(
+        r"^Lieferanschrift:\s+Firmenzeile.*gemäß\s+Regel\s+nicht\s+in\s+lieferanschrift\s+übernommen\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Lieferanschrift:\s+Firmenzeile.*gemaess\s+Regel\s+nicht\s+in\s+lieferanschrift\s+uebernommen\.?$",
+        re.IGNORECASE,
+    ),
+    # Patterns for unambiguous candidate not found
+    re.compile(
+        r"^Kein\s+eindeutiger.*Kandidat.*gefunden\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^Keine\s+eindeutige.*Kandidat.*gefunden\.?$",
+        re.IGNORECASE,
+    ),
+)
+_PROCESSING_FAILURE_PATTERNS = (
+    re.compile(r"\btraceback\b", re.IGNORECASE),
+    re.compile(r"\bexception\b", re.IGNORECASE),
+    re.compile(r"\b(?:database|db|sql|psycopg|postgres)\b", re.IGNORECASE),
+    re.compile(r"\b(?:extract(?:ion)?|convert(?:ed|ing|ion)?|parse|decode|serialize)\b", re.IGNORECASE),
+    re.compile(r"\b(?:failed|failure|crash(?:ed)?|timeout)\b", re.IGNORECASE),
+    re.compile(r"\b(?:valueerror|typeerror|keyerror|attributeerror|indexerror|syntaxerror)\b", re.IGNORECASE),
+)
+_TECHNICAL_SIGNAL_PATTERNS = _PROCESSING_FAILURE_PATTERNS + (
+    re.compile(r'file "[^"]+"', re.IGNORECASE),
+    re.compile(r"\bline \d+\b", re.IGNORECASE),
+    re.compile(r"\b(?:table|column|relation|constraint|endpoint|router|service|provider)\b", re.IGNORECASE),
+    re.compile(r"[A-Za-z]:\\", re.IGNORECASE),
+    re.compile(r"/[\w./-]+\.(?:py|js|ts|json|xml|sql)", re.IGNORECASE),
+)
+_INTERNAL_HEADER_FIELDS = frozenset(
+    {
+        "human_review_needed",
+        "iln",
+        "iln_anl",
+        "iln_fil",
+        "post_case",
+        "reply_needed",
+        "seller",
+    }
+)
+_FRIENDLY_WARNING_FALLBACK = "Some order information needs review."
+_FRIENDLY_ERROR_FALLBACK = "We could not fully process part of this order automatically. Please review it manually."
+_FRIENDLY_PORTA_INTERNAL_REFERENCE = (
+    "The PDF code '{value}' is an internal store reference and cannot be used as the product article/model number."
+)
+_FRIENDLY_PORTA_AMBIGUOUS_CODES = "The PDF contains ambiguous item codes. Please confirm the correct item codes."
+
+
+def _normalize_detail_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in {"user", "admin", "superadmin"}:
+        return role
+    return "user"
+
+
+def _coerce_signal_messages(messages: Any) -> list[str]:
+    if not isinstance(messages, list):
+        return []
+    return [str(item) for item in messages]
+
+
+def _is_actionable_operational_signal(message: str) -> bool:
+    normalized = message.strip()
+    if not normalized:
+        return False
+    if any(pattern.search(normalized) for pattern in _ACTIONABLE_SIGNAL_PATTERNS):
+        return True
+    lowered = normalized.lower()
+    if "line " in lowered and any(token in lowered for token in ("missing", "empty", "incomplete", "not provided")):
+        return True
+    return False
+
+
+def _looks_technical_operational_signal(message: str) -> bool:
+    normalized = message.strip()
+    if not normalized:
+        return False
+    return any(pattern.search(normalized) for pattern in _TECHNICAL_SIGNAL_PATTERNS)
+
+
+def _friendly_operational_signal(level: str) -> str:
+    if str(level or "").strip().lower() == "error":
+        return _FRIENDLY_ERROR_FALLBACK
+    return _FRIENDLY_WARNING_FALLBACK
+
+
+def _sanitize_missing_header_signal(message: str) -> str | None:
+    patterns = (
+        re.compile(r"^(Missing header fields:\s*)(.+)$", re.IGNORECASE),
+        re.compile(r"^(Missing critical header fields:\s*)(.+)$", re.IGNORECASE),
+        re.compile(r"^(Reply needed:\s*Missing critical header fields:\s*)(.+)$", re.IGNORECASE),
+    )
+    for pattern in patterns:
+        match = pattern.match(message.strip())
+        if not match:
+            continue
+        prefix, raw_fields = match.groups()
+        visible_fields = [
+            token.strip()
+            for token in raw_fields.split(",")
+            if token.strip() and token.strip().lower() not in _INTERNAL_HEADER_FIELDS
+        ]
+        if not visible_fields:
+            return None
+        return f"{prefix}{', '.join(visible_fields)}"
+    return message
+
+
+def _rewrite_client_warning(message: str) -> str | None:
+    lowered = message.lower()
+    if lowered.startswith("artikel-nr."):
+        if "porta-interne artikelnummer" in lowered and "artikelnummer/modellnummer" in lowered:
+            return None
+        if "tabellen-spalte" in lowered and "ignoriert" in lowered and "liefermodelltext" in lowered:
+            return None
+    if lowered.startswith("article no.") and "porta internal article number" in lowered:
+        return None
+
+    internal_article_patterns = (
+        re.compile(
+            r"^Artikel-Nr\.\s*'(.+?)'\s*ist als porta-interne Artikelnummer gekennzeichnet und wurde "
+            r"(?:gemaess|gemäß) Regel nicht als artikelnummer\/modellnummer (?:uebernommen|übernommen)\.?$",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"^Article no\.\s*'(.+?)'\s*is marked as a Porta internal article number and was not copied "
+            r"into the article\/model number fields per rule\.?$",
+            re.IGNORECASE,
+        ),
+    )
+    for pattern in internal_article_patterns:
+        match = pattern.match(message)
+        if match:
+            return _FRIENDLY_PORTA_INTERNAL_REFERENCE.format(value=match.group(1))
+
+    flagged_match = re.match(
+        r"^Human review needed:\s*Porta ambiguous standalone code token\(s\) retained "
+        r"for human confirmation;\s*please confirm valid item codes\.\s*Flagged:\s*(.+)$",
+        message,
+        re.IGNORECASE,
+    )
+    if flagged_match:
+        flagged = str(flagged_match.group(1) or "").strip().rstrip(".")
+        return f"{_FRIENDLY_PORTA_AMBIGUOUS_CODES} Flagged: {flagged}"
+
+    ignored_match = re.match(
+        r"^Human review needed:\s*Porta ambiguous standalone code token\(s\) were ignored;\s*please confirm valid item codes\.?$",
+        message,
+        re.IGNORECASE,
+    )
+    if ignored_match:
+        return _FRIENDLY_PORTA_AMBIGUOUS_CODES
+
+    return None
+
+
+def _sanitize_operational_signal(message: str, *, level: str, role: str | None = None) -> str | None:
+    normalized = message.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    if "header fields:" in lowered:
+        normalized = _sanitize_missing_header_signal(normalized)
+        if normalized is None:
+            return None
+        lowered = normalized.lower()
+    if str(level or "").strip().lower() == "warning":
+        rewritten = _rewrite_client_warning(normalized)
+        if rewritten is not None:
+            return rewritten
+    if _is_actionable_operational_signal(normalized):
+        return normalized
+    if str(level or "").strip().lower() == "warning":
+        # Hide superadmin-only warnings for non-superadmin users
+        normalized_role = _normalize_detail_role(role)
+        if normalized_role != "superadmin":
+            if any(pattern.search(normalized) for pattern in _SUPERADMIN_ONLY_WARNING_PATTERNS):
+                return None
+        if any(pattern.search(normalized) for pattern in _HIDDEN_WARNING_PATTERNS):
+            return None
+        if _looks_technical_operational_signal(normalized):
+            return None
+    if any(pattern.search(normalized) for pattern in _PROCESSING_FAILURE_PATTERNS):
+        return _FRIENDLY_ERROR_FALLBACK
+    if _looks_technical_operational_signal(normalized):
+        return _friendly_operational_signal(level)
+    return normalized
+
+
+def sanitize_operational_signal_messages(messages: Any, *, level: str, role: str | None) -> list[str]:
+    raw_messages = _coerce_signal_messages(messages)
+    normalized_role = _normalize_detail_role(role)
+    if normalized_role == "superadmin":
+        return raw_messages
+    sanitized: list[str] = []
+    seen: set[str] = set()
+    for message in raw_messages:
+        safe_message = _sanitize_operational_signal(message, level=level, role=role)
+        if safe_message is not None and safe_message not in seen:
+            sanitized.append(safe_message)
+            seen.add(safe_message)
+    # Additional deduplication: remove duplicate furncloud ID warnings
+    # Check for both "Furncloud ID is missing" and "furncloud_id is missing" variations
+    furncloud_patterns = [
+        "furncloud id is missing for one or more items",
+        "furncloud_id is missing for one or more items",
+    ]
+    furncloud_found = False
+    result: list[str] = []
+    for msg in sanitized:
+        msg_lower = msg.lower().strip()
+        is_furncloud_warning = any(pattern in msg_lower for pattern in furncloud_patterns)
+        if is_furncloud_warning:
+            if not furncloud_found:
+                result.append(msg)
+                furncloud_found = True
+        else:
+            result.append(msg)
+    return result
+
+
 def _default_validation_projection() -> dict[str, Any]:
     return {
         "validation_status": VALIDATION_STATUS_NOT_RUN,
@@ -235,12 +824,12 @@ def derive_status(payload: dict[str, Any]) -> str:
     items = payload.get("items")
     if not isinstance(header, dict) or not isinstance(items, list):
         return STATUS_FAILED
+    if _entry_bool(header.get("post_case")):
+        return STATUS_POST
     if _entry_bool(header.get("reply_needed")):
         return STATUS_WAITING_REPLY
     if _entry_bool(header.get("human_review_needed")):
         return STATUS_HUMAN
-    if _entry_bool(header.get("post_case")):
-        return STATUS_POST
     legacy = normalize_status(payload.get("status"))
     if legacy in {STATUS_WAITING_REPLY, STATUS_HUMAN, STATUS_POST}:
         return legacy
@@ -1483,11 +2072,109 @@ def query_overview_snapshot(
     }
 
 
+def query_xml_activity(
+    *,
+    range_start: datetime,
+    range_end: datetime,
+    chart_start: datetime,
+    chart_end: datetime,
+    bucket_granularity: str = "day",
+    local_timezone: str = "UTC",
+) -> dict[str, Any]:
+    summary = fetch_one(
+        """
+        SELECT
+          COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+          (SELECT COUNT(*) FROM order_events
+           WHERE event_type = 'xml_regenerated'
+             AND created_at >= %s AND created_at < %s)::bigint AS regenerated_events
+        FROM order_px_controls px
+        WHERE px.xml_sent_at >= %s AND px.xml_sent_at < %s
+        """,
+        [range_start, range_end, range_start, range_end],
+    ) or {}
+
+    if bucket_granularity == "month":
+        bucket_rows = fetch_all(
+            """
+            WITH month_buckets AS (
+                SELECT generate_series(%s::date, %s::date, interval '1 month')::date AS bucket_start
+            )
+            SELECT
+              b.bucket_start,
+              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+            FROM month_buckets b
+            LEFT JOIN order_px_controls px
+              ON (px.xml_sent_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (px.xml_sent_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            LEFT JOIN order_events e
+              ON e.event_type = 'xml_regenerated'
+             AND (e.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (e.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [
+                chart_start.date(),
+                chart_end.date(),
+                local_timezone,
+                local_timezone,
+                local_timezone,
+                local_timezone,
+            ],
+        )
+    else:
+        bucket_rows = fetch_all(
+            """
+            WITH day_buckets AS (
+                SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 day') AS bucket_start
+            )
+            SELECT
+              b.bucket_start,
+              COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
+              COUNT(DISTINCT e.id)::bigint        AS regenerated_events
+            FROM day_buckets b
+            LEFT JOIN order_px_controls px
+              ON px.xml_sent_at >= b.bucket_start
+             AND px.xml_sent_at < b.bucket_start + interval '1 day'
+            LEFT JOIN order_events e
+              ON e.event_type = 'xml_regenerated'
+             AND e.created_at >= b.bucket_start
+             AND e.created_at < b.bucket_start + interval '1 day'
+            GROUP BY b.bucket_start
+            ORDER BY b.bucket_start
+            """,
+            [chart_start, chart_end],
+        )
+
+    generated_orders = int(summary.get("generated_orders") or 0)
+    regenerated_events = int(summary.get("regenerated_events") or 0)
+
+    return {
+        "summary": {
+            "generated_orders": generated_orders,
+            "regenerated_events": regenerated_events,
+            "generated_files": generated_orders * 2,
+            "regenerated_files": regenerated_events * 2,
+        },
+        "by_day": [
+            {
+                "bucket_start": row.get("bucket_start"),
+                "generated_orders": int(row.get("generated_orders") or 0),
+                "regenerated_events": int(row.get("regenerated_events") or 0),
+            }
+            for row in bucket_rows
+        ],
+    }
+
+
 def get_order_detail(
     order_id: str,
     *,
     assigned_user_id: str | None = None,
     allowed_client_branches: set[str] | None = None,
+    role: str | None = None,
 ) -> dict[str, Any] | None:
     where_parts = [
         "o.id = %s",
@@ -1562,8 +2249,10 @@ def get_order_detail(
         payload = {}
     payload = _normalize_payload(payload)
 
-    warnings = payload.get("warnings", [])
-    errors = payload.get("errors", [])
+    raw_warnings = _coerce_signal_messages(payload.get("warnings", []))
+    raw_errors = _coerce_signal_messages(payload.get("errors", []))
+    warnings = sanitize_operational_signal_messages(raw_warnings, level="warning", role=role)
+    errors = sanitize_operational_signal_messages(raw_errors, level="error", role=role)
     validation_issues = _normalize_validation_issues(row.get("latest_validation_run_issues"))
     validation_result_json = row.get("latest_validation_run_result")
     if isinstance(validation_result_json, str):
@@ -1579,8 +2268,10 @@ def get_order_detail(
         "parse_error": row.get("parse_error"),
         "header": payload.get("header") if isinstance(payload.get("header"), dict) else {},
         "items": payload.get("items") if isinstance(payload.get("items"), list) else [],
-        "warnings": [str(item) for item in warnings] if isinstance(warnings, list) else [],
-        "errors": [str(item) for item in errors] if isinstance(errors, list) else [],
+        "raw_warnings": raw_warnings,
+        "raw_errors": raw_errors,
+        "warnings": warnings,
+        "errors": errors,
         "status": normalize_status(row.get("status")),
         "human_review_needed": bool(row.get("human_review_needed")),
         "reply_needed": bool(row.get("reply_needed")),

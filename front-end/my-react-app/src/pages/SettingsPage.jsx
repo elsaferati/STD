@@ -135,6 +135,7 @@ function validateSettingsDraft(defaultPrepWeeksInput, ranges, t) {
 export function SettingsPage() {
   const { user } = useAuth();
   const { t } = useI18n();
+  const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
   const [defaultPrepWeeksInput, setDefaultPrepWeeksInput] = useState("2");
   const [ranges, setRanges] = useState([]);
   const [nextRowId, setNextRowId] = useState(1);
@@ -170,10 +171,10 @@ export function SettingsPage() {
   }, [t]);
 
   useEffect(() => {
-    if (user?.role === "admin") {
+    if (isAdminLike) {
       loadSettings();
     }
-  }, [loadSettings, user?.role]);
+  }, [isAdminLike, loadSettings]);
 
   const validation = useMemo(
     () => validateSettingsDraft(defaultPrepWeeksInput, ranges, t),
@@ -249,7 +250,7 @@ export function SettingsPage() {
     }
   };
 
-  if (user && user.role !== "admin") {
+  if (user && !isAdminLike) {
     return <Navigate to="/" replace />;
   }
 

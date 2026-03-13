@@ -11,6 +11,7 @@ from db import execute, fetch_one
 
 _PWD_CONTEXT = CryptContext(schemes=["argon2"], deprecated="auto")
 _SESSION_COOKIE_NAME = "session_id"
+VALID_USER_ROLES = frozenset({"user", "admin", "superadmin"})
 
 
 def _now() -> datetime:
@@ -20,6 +21,45 @@ def _now() -> datetime:
 def _session_ttl() -> timedelta:
     days = int((os.getenv("AUTH_SESSION_DAYS") or "7").strip())
     return timedelta(days=max(1, days))
+
+
+def _normalized_role(value: Any) -> str:
+    role = str(value or "").strip().lower()
+    if role in VALID_USER_ROLES:
+        return role
+    return "user"
+
+
+def _seeded_superadmin_username() -> str:
+    return (os.getenv("SUPERADMIN_USERNAME") or "").strip()
+
+
+def is_superadmin(user: dict[str, Any] | None) -> bool:
+    return _normalized_role((user or {}).get("role")) == "superadmin"
+
+
+def is_admin_like(user: dict[str, Any] | None) -> bool:
+    return _normalized_role((user or {}).get("role")) in {"admin", "superadmin"}
+
+
+def is_seeded_superadmin(user: dict[str, Any] | None) -> bool:
+    principal = user or {}
+    username = _seeded_superadmin_username()
+    if not username or not is_superadmin(principal):
+        return False
+    return str(principal.get("username") or "").strip().lower() == username.lower()
+
+
+def can_assign_role(actor: dict[str, Any] | None, role: str | None) -> bool:
+    if not is_admin_like(actor):
+        return False
+    return str(role or "").strip().lower() in {"user", "admin"}
+
+
+def can_mutate_user(actor: dict[str, Any] | None, target: dict[str, Any] | None) -> bool:
+    if not is_admin_like(actor):
+        return False
+    return not is_seeded_superadmin(target)
 
 
 def hash_password(password: str) -> str:
@@ -89,7 +129,7 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
                u.username,
                u.role,
                u.is_active,
-               u.is_super_admin,
+               (LOWER(BTRIM(COALESCE(u.role, ''))) = 'superadmin') AS is_super_admin,
                u.can_control_1,
                u.can_control_2,
                u.can_final_control
@@ -113,13 +153,16 @@ def get_session_user(session_id: str) -> dict[str, Any] | None:
     last_seen_at = row.get("last_seen_at")
     if not isinstance(last_seen_at, datetime) or last_seen_at <= now - timedelta(seconds=60):
         execute("UPDATE sessions SET last_seen_at = %s WHERE id = %s", (now, session_id))
+    client_branches = _user_client_branches(str(row.get("id") or ""))
+    if is_admin_like(row):
+        client_branches = []
     return {
         "id": row.get("id"),
         "username": row.get("username"),
-        "role": row.get("role"),
-        "client_branches": _user_client_branches(str(row.get("id") or "")),
+        "role": _normalized_role(row.get("role")),
+        "client_branches": client_branches,
         "session_id": row.get("session_id"),
-        "is_super_admin": bool(row.get("is_super_admin")),
+        "is_super_admin": is_superadmin(row),
         "can_control_1": bool(row.get("can_control_1")),
         "can_control_2": bool(row.get("can_control_2")),
         "can_final_control": bool(row.get("can_final_control")),
@@ -132,7 +175,8 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     row = fetch_one(
         """
         SELECT id, username, password_hash, role, is_active,
-               is_super_admin, can_control_1, can_control_2, can_final_control
+               (LOWER(BTRIM(COALESCE(role, ''))) = 'superadmin') AS is_super_admin,
+               can_control_1, can_control_2, can_final_control
         FROM users
         WHERE lower(username) = lower(%s)
         """,
@@ -143,49 +187,101 @@ def authenticate_user(username: str, password: str) -> dict[str, Any] | None:
     if not verify_password(password, row.get("password_hash") or ""):
         return None
     execute("UPDATE users SET last_login_at = %s WHERE id = %s", (_now(), row["id"]))
+    client_branches = _user_client_branches(str(row["id"]))
+    if is_admin_like(row):
+        client_branches = []
     return {
         "id": row["id"],
         "username": row["username"],
-        "role": row["role"],
-        "client_branches": _user_client_branches(str(row["id"])),
-        "is_super_admin": bool(row.get("is_super_admin")),
+        "role": _normalized_role(row.get("role")),
+        "client_branches": client_branches,
+        "is_super_admin": is_superadmin(row),
         "can_control_1": bool(row.get("can_control_1")),
         "can_control_2": bool(row.get("can_control_2")),
         "can_final_control": bool(row.get("can_final_control")),
     }
 
 
-def seed_admin_user() -> bool:
-    username = (os.getenv("ADMIN_USERNAME") or "").strip()
-    password = (os.getenv("ADMIN_PASSWORD") or "").strip()
-    email = (os.getenv("ADMIN_EMAIL") or "").strip() or None
+def seed_superadmin_user() -> bool:
+    username = _seeded_superadmin_username()
+    password = (os.getenv("SUPERADMIN_PASSWORD") or "").strip()
+    email = (os.getenv("SUPERADMIN_EMAIL") or "").strip() or None
     if not username or not password:
+        print("WARNING: SUPERADMIN_USERNAME and SUPERADMIN_PASSWORD are not fully configured; skipping superadmin bootstrap.")
         return False
 
     existing = fetch_one(
-        "SELECT id FROM users WHERE lower(username) = lower(%s)",
+        """
+        SELECT id, username, email, role, is_active
+        FROM users
+        WHERE lower(username) = lower(%s)
+        """,
         (username,),
     )
+    now = _now()
+    user_id = str(existing.get("id") or "") if existing else str(uuid4())
+    created = False
+
     if existing:
-        return False
+        execute(
+            """
+            UPDATE users
+            SET role = %s,
+                is_active = %s,
+                is_super_admin = %s,
+                updated_at = %s
+            WHERE id = %s
+              AND (
+                    LOWER(BTRIM(COALESCE(role, ''))) <> 'superadmin'
+                 OR is_active IS NOT TRUE
+                 OR COALESCE(is_super_admin, FALSE) IS NOT TRUE
+              )
+            """,
+            ("superadmin", True, True, now, user_id),
+        )
+    else:
+        execute(
+            """
+            INSERT INTO users (id, username, password_hash, email, role, is_active, is_super_admin, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                username,
+                hash_password(password),
+                email,
+                "superadmin",
+                True,
+                True,
+                now,
+                now,
+            ),
+        )
+        created = True
 
     execute(
         """
-        INSERT INTO users (id, username, password_hash, email, role, is_active, created_at, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        UPDATE users
+        SET role = %s,
+            is_super_admin = %s,
+            updated_at = %s
+        WHERE LOWER(BTRIM(COALESCE(role, ''))) = 'superadmin'
+          AND id <> %s
         """,
-        (
-            str(uuid4()),
-            username,
-            hash_password(password),
-            email,
-            "admin",
-            True,
-            _now(),
-            _now(),
-        ),
+        ("admin", False, now, user_id),
     )
-    return True
+    execute("DELETE FROM user_client_scopes WHERE user_id = %s", (user_id,))
+    execute(
+        """
+        UPDATE users
+        SET is_super_admin = %s,
+            updated_at = %s
+        WHERE id <> %s
+          AND COALESCE(is_super_admin, FALSE) IS NOT FALSE
+        """,
+        (False, now, user_id),
+    )
+    return created
 
 
 def session_cookie_name() -> str:

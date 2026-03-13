@@ -140,7 +140,7 @@ def _format_affected_items(items: list[Any], missing_field: str) -> str:
         else:
             ref_val = ""
         bullets.append(f"- {ref_label}: {ref_val}" if ref_val else f"- Position {idx}")
-    return "\n".join(bullets) if bullets else "- (keine Zuordnung verfugbar)"
+    return "\n".join(bullets) if bullets else "- (keine Zuordnung verfügbar)"
 
 
 def _format_missing_field_list(missing_fields: list[str], reply_cases: list[str]) -> str:
@@ -312,8 +312,8 @@ def send_px_xml_email(order_id: str, config: Config, output_dir: "Path") -> None
             filename=doc.filename,
         )
 
-    send_email_via_smtp(config, msg)
     _order_store.mark_px_xml_sent(order_id)
+    send_email_via_smtp(config, msg)
 
 
 def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
