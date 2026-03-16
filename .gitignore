@@ -11,3 +11,4 @@ build/
 coverage/
 *.log
 .cache/
+.oauth2_token_cache.json
