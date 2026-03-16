@@ -112,6 +112,7 @@ export function UsersPage() {
   const { user } = useAuth();
   const { t } = useI18n();
   const isAdminLike = user?.role === "admin" || user?.role === "superadmin";
+  const isSuperAdmin = user?.role === "superadmin";
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -476,6 +477,7 @@ export function UsersPage() {
                 />
                 {t("users.active")}
               </label>
+              {isSuperAdmin && (
               <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
                 <label className="flex items-center gap-2">
                   <input type="checkbox" name="is_super_admin" checked={form.is_super_admin} onChange={handleChange} className="h-4 w-4 accent-primary" />
@@ -494,6 +496,7 @@ export function UsersPage() {
                   {t("users.permissionFinalControl")}
                 </label>
               </div>
+              )}
               <div className="md:col-span-2 flex items-center gap-3">
                 <button
                   type="submit"
@@ -546,7 +549,7 @@ export function UsersPage() {
                     <th className="px-4 py-3 text-left">{t("users.role")}</th>
                     <th className="px-4 py-3 text-left">{t("users.client")}</th>
                     <th className="px-4 py-3 text-left">{t("users.active")}</th>
-                    <th className="px-4 py-3 text-left">{t("users.pxControls")}</th>
+                    {isSuperAdmin && <th className="px-4 py-3 text-left">{t("users.pxControls")}</th>}
                     <th className="px-4 py-3 text-left">{t("users.lastLogin")}</th>
                     <th className="px-4 py-3 text-right">{t("users.actions")}</th>
                   </tr>
@@ -554,7 +557,7 @@ export function UsersPage() {
                 <tbody className="divide-y divide-slate-100">
                   {loading ? (
                     <tr>
-                      <td className="px-4 py-4 text-slate-500" colSpan={8}>
+                      <td className="px-4 py-4 text-slate-500" colSpan={isSuperAdmin ? 9 : 8}>
                         {t("users.loading")}
                       </td>
                     </tr>
@@ -608,6 +611,7 @@ export function UsersPage() {
                             {entry.is_active ? t("users.activeYes") : t("users.activeNo")}
                           </span>
                         </td>
+                        {isSuperAdmin && (
                         <td className="px-4 py-3 text-slate-600">
                           <div className="flex flex-wrap gap-1">
                             {isSuperadminRole(entry.role) && (
@@ -621,6 +625,7 @@ export function UsersPage() {
                             {!isSuperadminRole(entry.role) && !entry.can_control_1 && !entry.can_control_2 && !entry.can_final_control && <span className="text-slate-400">-</span>}
                           </div>
                         </td>
+                        )}
                         <td className="px-4 py-3 text-slate-600">{entry.last_login_at ? new Date(entry.last_login_at).toLocaleString() : "-"}</td>
                         <td className="px-4 py-3 text-right">
                           <div className="inline-flex items-center gap-2">
@@ -652,7 +657,7 @@ export function UsersPage() {
                     ))
                   ) : (
                     <tr>
-                      <td className="px-4 py-4 text-slate-500" colSpan={8}>
+                      <td className="px-4 py-4 text-slate-500" colSpan={isSuperAdmin ? 9 : 8}>
                         {t("users.noUsers")}
                       </td>
                     </tr>
@@ -741,6 +746,7 @@ export function UsersPage() {
                     placeholder={t("users.resetPasswordHint")}
                   />
                 </label>
+                {isSuperAdmin && (
                 <div className="md:col-span-2 flex flex-wrap gap-4 text-sm text-slate-600 pt-1">
                   <label className="flex items-center gap-2">
                     <input type="checkbox" name="is_super_admin" checked={editForm.is_super_admin} onChange={handleEditChange} className="h-4 w-4 accent-primary" />
@@ -759,6 +765,7 @@ export function UsersPage() {
                     {t("users.permissionFinalControl")}
                   </label>
                 </div>
+                )}
                 <div className="md:col-span-2 flex items-center justify-end gap-3">
                   <button
                     type="button"
