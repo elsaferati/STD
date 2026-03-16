@@ -325,6 +325,7 @@ export function UsersPage() {
   };
 
   const filteredUsers = users.filter((entry) => {
+    if (entry.role === "superadmin" && !isSuperAdmin) return false;
     if (statusFilter === "active" && !entry.is_active) return false;
     if (statusFilter === "inactive" && entry.is_active) return false;
     const query = searchInput.trim().toLowerCase();
