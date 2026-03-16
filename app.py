@@ -1379,6 +1379,9 @@ def _load_order_export_data(
         "message_id": str(data.get("message_id") or order.get("message_id") or order_id),
         "received_at": str(data.get("received_at") or order.get("received_at") or ""),
         "effective_received_at": str(order.get("effective_received_at") or _effective_received_at(order).isoformat()),
+        "extraction_branch": _normalize_extraction_branch(
+            data.get("extraction_branch") or order.get("extraction_branch")
+        ),
         "status": _normalize_status(data.get("status") or order.get("status")),
         "item_count": len(items),
         "warnings_count": len(warnings),
@@ -1558,6 +1561,7 @@ def _as_orders_xlsx_bytes(
 
     header_fields = [
         ("effective_received_at", "Date & Time"),
+        ("client", "Client"),
         ("ticket_number", "Ticket Number"),
         ("kundennummer", "Kundennummer"),
         ("tour", "Tour"),
@@ -1571,17 +1575,23 @@ def _as_orders_xlsx_bytes(
         ("delivery_week", "Delivery Week"),
         ("mail_to", "Mail To"),
     ]
-    orders_columns = ["Nr"] + [label for _, label in header_fields] + ["Items"]
+    orders_columns = ["Nr"] + [label for _, label in header_fields] + ["Furncloud ID", "Items"]
     orders_rows: list[list[Any]] = []
 
     for parsed_order in parsed_orders:
         header = parsed_order["header"]
         items = [item for item in parsed_order.get("items", []) if isinstance(item, dict)]
         item_lines: list[str] = []
+        furncloud_values: list[str] = []
+        seen_furncloud_values: set[str] = set()
         for index, item in enumerate(items, start=1):
             quantity = _export_entry_value(item.get("menge", "")) or "-"
             article_number = _export_entry_value(item.get("artikelnummer", "")) or "-"
             model_number = _export_entry_value(item.get("modellnummer", "")) or "-"
+            furncloud_id = str(_export_entry_value(item.get("furncloud_id", "")) or "").strip()
+            if furncloud_id and furncloud_id not in seen_furncloud_values:
+                furncloud_values.append(furncloud_id)
+                seen_furncloud_values.add(furncloud_id)
             item_lines.append(f"{index}. {quantity} - {article_number} {model_number}".strip())
 
         orders_rows.append(
@@ -1590,10 +1600,13 @@ def _as_orders_xlsx_bytes(
                 (
                     _format_export_datetime(parsed_order.get("effective_received_at"))
                     if field_key == "effective_received_at"
+                    else (parsed_order.get("extraction_branch") or "unknown")
+                    if field_key == "client"
                     else (_export_entry_value(header.get(field_key, "")) or "-")
                 )
                 for field_key, _ in header_fields
             ]
+            + ["\n".join(furncloud_values) if furncloud_values else "-"]
             + ["\n".join(item_lines) if item_lines else "-"]
         )
 
