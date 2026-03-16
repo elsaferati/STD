@@ -321,7 +321,7 @@ def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
         raise ValueError("SMTP_HOST is missing")
     if not config.smtp_user:
         raise ValueError("SMTP_USER is missing")
-    if not config.smtp_password:
+    if not config.smtp_password and not config.azure_client_id:
         raise ValueError("SMTP_PASSWORD is missing")
 
     if "From" in email_message:
@@ -332,10 +332,19 @@ def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
     host = config.smtp_host
     port = int(config.smtp_port or 0) or 587
 
+    def _smtp_login(server: smtplib.SMTP, user: str, password: str) -> None:
+        if config.azure_client_id:
+            from oauth2_helper import build_xoauth2_bytes, get_access_token
+            token = get_access_token(config.azure_client_id, config.azure_tenant_id, user, config.azure_client_secret)
+            xoauth2 = build_xoauth2_bytes(user, token).decode()
+            server.docmd("AUTH", f"XOAUTH2 {xoauth2}")
+        else:
+            server.login(user, password)
+
     if config.smtp_ssl and port == 465:
         with smtplib.SMTP_SSL(host, port) as server:
             server.ehlo()
-            server.login(config.smtp_user, config.smtp_password)
+            _smtp_login(server, config.smtp_user, config.smtp_password)
             server.send_message(email_message)
         return
 
@@ -344,5 +353,5 @@ def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:
         if config.smtp_ssl:
             server.starttls()
             server.ehlo()
-        server.login(config.smtp_user, config.smtp_password)
+        _smtp_login(server, config.smtp_user, config.smtp_password)
         server.send_message(email_message)

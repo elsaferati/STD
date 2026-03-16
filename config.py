@@ -66,6 +66,10 @@ class Config:
     smtp_password: str
     smtp_ssl: bool
 
+    azure_client_id: str
+    azure_tenant_id: str
+    azure_client_secret: str
+
     reply_email_to: str
     reply_email_body: str
     reply_template_file: Path
@@ -121,6 +125,10 @@ class Config:
             smtp_user=os.getenv("SMTP_USER", "").strip(),
             smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
             smtp_ssl=_get_bool("SMTP_SSL", True),
+
+            azure_client_id=os.getenv("AZURE_CLIENT_ID", "").strip(),
+            azure_tenant_id=os.getenv("AZURE_TENANT_ID", "").strip(),
+            azure_client_secret=os.getenv("AZURE_CLIENT_SECRET", "").strip(),
 
             reply_email_to=os.getenv("REPLY_EMAIL_TO", "333primex.eu@gmail.com").strip(),
             reply_email_body=os.getenv(

@@ -205,6 +205,9 @@ class EmailClient:
         limit: int,
         mark_seen: bool,
         only_after: datetime | None,
+        azure_client_id: str = "",
+        azure_tenant_id: str = "",
+        azure_client_secret: str = "",
     ) -> None:
         self.protocol = protocol
         self.host = host
@@ -217,6 +220,9 @@ class EmailClient:
         self.limit = limit
         self.mark_seen = mark_seen
         self.only_after = only_after
+        self.azure_client_id = azure_client_id
+        self.azure_tenant_id = azure_tenant_id
+        self.azure_client_secret = azure_client_secret
 
     def fetch(self) -> list[IngestedEmail]:
         if self.protocol == "imap":
@@ -231,7 +237,13 @@ class EmailClient:
         else:
             client = imaplib.IMAP4(self.host, self.port)
 
-        client.login(self.user, self.password)
+        if self.azure_client_id:
+            from oauth2_helper import build_xoauth2_raw, get_access_token
+            token = get_access_token(self.azure_client_id, self.azure_tenant_id, self.user, self.azure_client_secret)
+            xoauth2 = build_xoauth2_raw(self.user, token)
+            client.authenticate("XOAUTH2", lambda x: xoauth2)
+        else:
+            client.login(self.user, self.password)
         client.select(self.folder)
 
         criteria = self.search_criteria.strip()

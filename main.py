@@ -86,7 +86,7 @@ def main() -> int:
         return 1
 
     start_time = datetime.now(timezone.utc)
-    only_after = start_time if config.email_only_after_start else None
+    only_after = start_time.replace(hour=0, minute=0, second=0, microsecond=0) if config.email_only_after_start else None
 
     email_client = EmailClient(
         protocol=config.email_protocol,
@@ -100,6 +100,9 @@ def main() -> int:
         limit=config.email_limit,
         mark_seen=config.email_mark_seen,
         only_after=only_after,
+        azure_client_id=config.azure_client_id,
+        azure_tenant_id=config.azure_tenant_id,
+        azure_client_secret=config.azure_client_secret,
     )
 
     extractor = OpenAIExtractor(
