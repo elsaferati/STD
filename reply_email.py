@@ -285,7 +285,13 @@ def compose_reply_needed_email(
         )
 
 
-def send_px_xml_email(order_id: str, config: Config, output_dir: "Path") -> None:
+def send_px_xml_email(
+    order_id: str,
+    config: Config,
+    output_dir: "Path",
+    *,
+    record_generation_activity: bool = True,
+) -> None:
     """Send both XML files to 333primex.eu@gmail.com after triple PX control confirmation."""
     import order_store as _order_store
     import xml_exporter as _xml_exporter
@@ -312,8 +318,14 @@ def send_px_xml_email(order_id: str, config: Config, output_dir: "Path") -> None
             filename=doc.filename,
         )
 
-    _order_store.mark_px_xml_sent(order_id)
     send_email_via_smtp(config, msg)
+    _order_store.mark_px_xml_sent(order_id)
+    if record_generation_activity:
+        _order_store.record_xml_generated_after_final_control(
+            order_id_snapshot=order_id,
+            source="px_email_send",
+            metadata={"recipient": recipient, "document_count": len(documents)},
+        )
 
 
 def send_email_via_smtp(config: Config, email_message: EmailMessage) -> None:

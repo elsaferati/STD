@@ -18,6 +18,15 @@ const RANGE_PRESETS = [
   { id: "year", labelKey: "overview.rangeThisYear" },
 ];
 
+const XML_RANGE_PRESETS = [
+  { id: "today", labelKey: "overview.rangeToday" },
+  { id: "week", labelKey: "overview.rangeThisWeek" },
+  { id: "custom_month", labelKey: "overview.rangeSelectMonth" },
+  { id: "3m", labelKey: "overview.rangeThreeMonths" },
+  { id: "6m", labelKey: "overview.rangeSixMonths" },
+  { id: "year", labelKey: "overview.rangeThisYear" },
+];
+
 const STATUS_CONFIG = [
   {
     key: "ok",
@@ -215,8 +224,15 @@ export function OverviewPage() {
   const [isMonthMenuOpen, setIsMonthMenuOpen] = useState(false);
   const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
   const [isYearMenuOpen, setIsYearMenuOpen] = useState(false);
+  const [xmlRangePreset, setXmlRangePreset] = useState("today");
+  const [xmlSelectedMonth, setXmlSelectedMonth] = useState(getCurrentMonthToken());
+  const [xmlIsMonthMenuOpen, setXmlIsMonthMenuOpen] = useState(false);
+  const [xmlSelectedYear, setXmlSelectedYear] = useState(String(new Date().getFullYear()));
+  const [xmlIsYearMenuOpen, setXmlIsYearMenuOpen] = useState(false);
   const monthMenuRef = useRef(null);
   const yearMenuRef = useRef(null);
+  const xmlMonthMenuRef = useRef(null);
+  const xmlYearMenuRef = useRef(null);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -245,14 +261,14 @@ export function OverviewPage() {
     try {
       const payload = await fetchJson(
         withQuery("/api/superadmin/xml-activity", {
-          range: rangePreset,
-          month: rangePreset === "custom_month" ? selectedMonth : null,
-          year: rangePreset === "year" ? selectedYear : null,
+          range: xmlRangePreset,
+          month: xmlRangePreset === "custom_month" ? xmlSelectedMonth : null,
+          year: xmlRangePreset === "year" ? xmlSelectedYear : null,
         }),
       );
       setXmlActivity(payload);
     } catch { /* silent — section simply won't render */ }
-  }, [isSuperadmin, rangePreset, selectedMonth, selectedYear]);
+  }, [isSuperadmin, xmlRangePreset, xmlSelectedMonth, xmlSelectedYear]);
 
   useEffect(() => {
     loadXmlActivity();
@@ -289,6 +305,32 @@ export function OverviewPage() {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isYearMenuOpen]);
+
+  useEffect(() => {
+    if (!xmlIsMonthMenuOpen) {
+      return undefined;
+    }
+    const handlePointerDown = (event) => {
+      if (!xmlMonthMenuRef.current?.contains(event.target)) {
+        setXmlIsMonthMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [xmlIsMonthMenuOpen]);
+
+  useEffect(() => {
+    if (!xmlIsYearMenuOpen) {
+      return undefined;
+    }
+    const handlePointerDown = (event) => {
+      if (!xmlYearMenuRef.current?.contains(event.target)) {
+        setXmlIsYearMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [xmlIsYearMenuOpen]);
 
   const summary = normalizeOverviewSummary(overview);
   const statusByDay = overview?.status_by_day || [];
@@ -331,6 +373,7 @@ export function OverviewPage() {
     ? formatBucketLabel(selectedBucket, locale, bucketGranularity)
     : "";
   const rangeLabel = formatRangeLabel(overview?.range, locale);
+  const xmlRangeLabel = formatRangeLabel(xmlActivity?.range, locale);
   const chartRangeLabel = formatRangeLabel(
     overview?.range
       ? {
@@ -589,20 +632,142 @@ export function OverviewPage() {
 
         {isSuperadmin && xmlActivity ? (
           <section className="bg-surface-light rounded-2xl border border-slate-200 shadow-sm p-4 space-y-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="material-icons text-violet-600">shield</span>
-                <h2 className="text-lg font-bold text-slate-900">XML Activity</h2>
-                <span className="text-[11px] uppercase tracking-widest text-violet-600 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">Superadmin</span>
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="material-icons text-violet-600">shield</span>
+                  <h2 className="text-lg font-bold text-slate-900">XML Activity</h2>
+                  <span className="text-[11px] uppercase tracking-widest text-violet-600 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">Superadmin</span>
+                </div>
+                <p className="text-[13px] text-slate-500 mt-1">{xmlRangeLabel}</p>
               </div>
-              <p className="text-[13px] text-slate-500 mt-1">{rangeLabel}</p>
+              <div className="xl:max-w-[760px] w-full xl:w-auto">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                    <span>{t("overview.filterTitle")}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {XML_RANGE_PRESETS.map((preset) => {
+                      const isActive = xmlRangePreset === preset.id;
+                      if (preset.id === "custom_month") {
+                        return (
+                          <div key={preset.id} ref={xmlMonthMenuRef} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setXmlRangePreset("custom_month");
+                                setXmlIsMonthMenuOpen((current) => (xmlRangePreset === "custom_month" ? !current : true));
+                              }}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border transition-colors ${
+                                isActive
+                                  ? "bg-primary text-white border-primary shadow-sm"
+                                  : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span>{t(preset.labelKey)}</span>
+                              <span className="material-icons text-sm">expand_more</span>
+                            </button>
+                            {isActive && xmlIsMonthMenuOpen ? (
+                              <div className="absolute top-full right-0 xl:left-0 xl:right-auto mt-1 w-[180px] max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg z-20 p-1">
+                                {monthOptions.map((option) => {
+                                  const selected = option.value === xmlSelectedMonth;
+                                  return (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      onClick={() => {
+                                        setXmlSelectedMonth(option.value);
+                                        setXmlIsMonthMenuOpen(false);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 rounded-lg text-[12px] ${
+                                        selected
+                                          ? "bg-primary/10 text-primary font-semibold"
+                                          : "text-slate-700 hover:bg-slate-50"
+                                      }`}
+                                    >
+                                      {option.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      }
+                      if (preset.id === "year") {
+                        return (
+                          <div key={preset.id} ref={xmlYearMenuRef} className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setXmlRangePreset("year");
+                                setXmlIsYearMenuOpen((current) => (xmlRangePreset === "year" ? !current : true));
+                              }}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border transition-colors ${
+                                isActive
+                                  ? "bg-primary text-white border-primary shadow-sm"
+                                  : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                              }`}
+                            >
+                              <span>{t(preset.labelKey)}</span>
+                              <span className="material-icons text-sm">expand_more</span>
+                            </button>
+                            {isActive && xmlIsYearMenuOpen ? (
+                              <div className="absolute top-full right-0 xl:left-0 xl:right-auto mt-1 w-[120px] max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg z-20 p-1">
+                                {yearOptions.map((option) => {
+                                  const selected = option.value === xmlSelectedYear;
+                                  return (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      onClick={() => {
+                                        setXmlSelectedYear(option.value);
+                                        setXmlIsYearMenuOpen(false);
+                                      }}
+                                      className={`w-full text-left px-3 py-2 rounded-lg text-[12px] ${
+                                        selected
+                                          ? "bg-primary/10 text-primary font-semibold"
+                                          : "text-slate-700 hover:bg-slate-50"
+                                      }`}
+                                    >
+                                      {option.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      }
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => {
+                            setXmlRangePreset(preset.id);
+                            setXmlIsMonthMenuOpen(false);
+                            setXmlIsYearMenuOpen(false);
+                          }}
+                          className={`px-2.5 py-1.5 rounded-lg text-[12px] font-semibold border transition-colors ${
+                            isActive
+                              ? "bg-primary text-white border-primary shadow-sm"
+                              : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+                          }`}
+                        >
+                          {t(preset.labelKey)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <MetricCard
                 title="XMLs Generated"
                 value={xmlActivity.summary.generated_files}
-                detail={`from ${xmlActivity.summary.generated_orders} orders (OrderInfo + ArticleInfo)`}
+                detail={`from ${xmlActivity.summary.generated_events || xmlActivity.summary.generated_orders || 0} generation events`}
                 icon="description"
                 accentClass="border-l-4 border-l-violet-500"
                 iconClass="text-violet-600 bg-violet-50"
@@ -617,7 +782,7 @@ export function OverviewPage() {
               />
             </div>
 
-            {xmlActivity.by_day.some((d) => d.generated_orders > 0 || d.regenerated_events > 0) ? (
+            {xmlActivity.by_day.some((d) => (d.generated_events || d.generated_orders) > 0 || d.regenerated_events > 0) ? (
               <div className="overflow-x-auto rounded-xl border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-slate-500 text-[12px] uppercase tracking-wide">
@@ -632,13 +797,13 @@ export function OverviewPage() {
                   </thead>
                   <tbody>
                     {xmlActivity.by_day
-                      .filter((d) => d.generated_orders > 0 || d.regenerated_events > 0)
+                      .filter((d) => (d.generated_events || d.generated_orders) > 0 || d.regenerated_events > 0)
                       .map((d) => (
                         <tr key={d.date} className="border-t border-slate-100 hover:bg-slate-50">
                           <td className="px-4 py-2 font-medium text-slate-700">{d.label}</td>
                           <td className="px-4 py-2 text-right">{d.generated_files}</td>
-                          <td className="px-4 py-2 text-right text-slate-500">{d.generated_orders}</td>
-                          <td className="px-4 py-2 text-right text-slate-500">{d.generated_orders}</td>
+                          <td className="px-4 py-2 text-right text-slate-500">{d.orderinfo_files || 0}</td>
+                          <td className="px-4 py-2 text-right text-slate-500">{d.articleinfo_files || 0}</td>
                           <td className="px-4 py-2 text-right">{d.regenerated_files}</td>
                           <td className="px-4 py-2 text-right font-semibold">{d.generated_files + d.regenerated_files}</td>
                         </tr>

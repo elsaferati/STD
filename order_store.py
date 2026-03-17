@@ -44,6 +44,23 @@ TASK_DONE_STATES = {"resolved", "cancelled"}
 UNKNOWN_EXTRACTION_BRANCH = "unknown"
 KNOWN_EXTRACTION_BRANCHES = frozenset(BRANCHES.keys())
 ALLOWED_EXTRACTION_BRANCHES = KNOWN_EXTRACTION_BRANCHES | {UNKNOWN_EXTRACTION_BRANCH}
+XML_ACTIVITY_EVENT_GENERATED = "xml_generated_after_final_control"
+XML_ACTIVITY_EVENT_REGENERATED_BOTH = "xml_regenerated_both"
+XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY = "xml_regenerated_order_only"
+XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY = "xml_regenerated_article_only"
+XML_ACTIVITY_REGENERATED_EVENTS = (
+    XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+    XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY,
+    XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY,
+)
+XML_ACTIVITY_GENERATED_EVENTS = (
+    XML_ACTIVITY_EVENT_GENERATED,
+)
+XML_ACTIVITY_FROM_ORDER_EVENT = {
+    "xml_regenerated": (XML_ACTIVITY_EVENT_REGENERATED_BOTH, 2),
+    "order_xml_regenerated": (XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY, 1),
+    "article_xml_regenerated": (XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY, 1),
+}
 _KNOWN_BRANCHES_SQL = ", ".join(f"'{branch}'" for branch in sorted(ALLOWED_EXTRACTION_BRANCHES))
 _STATUS_SQL = """
 CASE
@@ -872,6 +889,420 @@ def _to_iso(value: Any) -> str:
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat()
     return str(value or "")
+
+
+MANUAL_COMPARE_ITEM_FIELDS = ("artikelnummer", "modellnummer", "menge", "furncloud_id")
+
+
+def _coerce_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
+    return value if isinstance(value, dict) else {}
+
+
+def _normalized_revision_payload(value: Any) -> dict[str, Any]:
+    return _normalize_payload(_coerce_json_object(value))
+
+
+def _normalize_manual_diff(diff_json: Any) -> dict[str, Any]:
+    raw = _coerce_json_object(diff_json)
+
+    header = raw.get("header")
+    normalized_header = header if isinstance(header, dict) else {}
+
+    items = raw.get("items")
+    normalized_items: dict[int, dict[str, Any]] = {}
+    if isinstance(items, dict):
+        for raw_index, value in items.items():
+            if not isinstance(value, dict):
+                continue
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                continue
+            normalized_items[index] = value
+
+    deleted_indexes = raw.get("deleted_item_indexes")
+    normalized_deleted_indexes: list[int] = []
+    if isinstance(deleted_indexes, list):
+        seen_deleted: set[int] = set()
+        for value in deleted_indexes:
+            try:
+                index = int(value)
+            except (TypeError, ValueError):
+                continue
+            if index < 0 or index in seen_deleted:
+                continue
+            normalized_deleted_indexes.append(index)
+            seen_deleted.add(index)
+    normalized_deleted_indexes.sort()
+
+    new_items = raw.get("new_items")
+    normalized_new_items = [item for item in new_items if isinstance(item, dict)] if isinstance(new_items, list) else []
+
+    return {
+        "header": normalized_header,
+        "items": normalized_items,
+        "deleted_item_indexes": normalized_deleted_indexes,
+        "new_items": normalized_new_items,
+    }
+
+
+def _entry_compare_text(entry: Any) -> str:
+    value = _entry_value(entry)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _row_line_no(item: Any, fallback_index: int) -> int:
+    if isinstance(item, dict):
+        raw_line_no = item.get("line_no")
+        try:
+            parsed = int(raw_line_no)
+        except (TypeError, ValueError):
+            parsed = fallback_index + 1
+        if parsed > 0:
+            return parsed
+    return fallback_index + 1
+
+
+def _item_values_snapshot(item: Any) -> dict[str, str]:
+    raw = item if isinstance(item, dict) else {}
+    return {
+        field: _entry_compare_text(raw.get(field))
+        for field in MANUAL_COMPARE_ITEM_FIELDS
+    }
+
+
+def _field_change(before: str, after: str) -> dict[str, str] | None:
+    if before == after:
+        return None
+    return {"before": before, "after": after}
+
+
+def _header_changes(before_header: Any, after_header: Any) -> dict[str, dict[str, str]]:
+    before = before_header if isinstance(before_header, dict) else {}
+    after = after_header if isinstance(after_header, dict) else {}
+    changes: dict[str, dict[str, str]] = {}
+    for field in sorted(set(before.keys()) | set(after.keys())):
+        diff = _field_change(_entry_compare_text(before.get(field)), _entry_compare_text(after.get(field)))
+        if diff is not None:
+            changes[str(field)] = diff
+    return changes
+
+
+def _item_field_changes(before_item: Any, after_item: Any) -> dict[str, dict[str, str]]:
+    before = before_item if isinstance(before_item, dict) else {}
+    after = after_item if isinstance(after_item, dict) else {}
+    changes: dict[str, dict[str, str]] = {}
+    for field in MANUAL_COMPARE_ITEM_FIELDS:
+        diff = _field_change(_entry_compare_text(before.get(field)), _entry_compare_text(after.get(field)))
+        if diff is not None:
+            changes[field] = diff
+    return changes
+
+
+def _manual_compare_baseline(
+    *,
+    key: str,
+    label: str,
+    header_snapshot: dict[str, Any],
+    item_snapshot: list[Any],
+    header_changes: dict[str, dict[str, str]],
+    item_changes_by_baseline_index: dict[str, dict[str, Any]],
+    added_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    modified_count = sum(
+        1
+        for row in item_changes_by_baseline_index.values()
+        if str(row.get("row_status") or "") == "modified"
+    )
+    deleted_count = sum(
+        1
+        for row in item_changes_by_baseline_index.values()
+        if str(row.get("row_status") or "") == "deleted"
+    )
+    return {
+        "key": key,
+        "label": label,
+        "available": True,
+        "header_snapshot": header_snapshot,
+        "item_snapshot": item_snapshot,
+        "counts": {
+            "header_fields": len(header_changes),
+            "modified_item_rows": modified_count,
+            "added_item_rows": len(added_rows),
+            "deleted_item_rows": deleted_count,
+        },
+        "header_changes": header_changes,
+        "item_changes_by_baseline_index": item_changes_by_baseline_index,
+        "added_rows": added_rows,
+    }
+
+
+def _baseline_row_change(
+    *,
+    row_status: str,
+    field_changes: dict[str, dict[str, str]],
+    current_index: int | None,
+    current_item: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "row_status": row_status,
+        "field_changes": field_changes,
+    }
+    if current_index is not None:
+        payload["current_index"] = current_index
+        payload["current_line_no"] = _row_line_no(current_item, current_index)
+    else:
+        payload["current_index"] = None
+        payload["current_line_no"] = None
+    return payload
+
+
+def _added_compare_row(current_index: int, item: Any) -> dict[str, Any]:
+    return {
+        "row_status": "added",
+        "current_index": current_index,
+        "current_line_no": _row_line_no(item, current_index),
+        "values": _item_values_snapshot(item),
+    }
+
+
+def _fetch_order_revisions(order_id: str) -> list[dict[str, Any]]:
+    rows = fetch_all(
+        """
+        SELECT id, revision_no, change_type, payload_json, diff_json, created_at
+        FROM order_revisions
+        WHERE order_id = %s
+        ORDER BY revision_no ASC
+        """,
+        (order_id,),
+    )
+    revisions: list[dict[str, Any]] = []
+    for row in rows:
+        revisions.append(
+            {
+                "id": str(row.get("id") or ""),
+                "revision_no": int(row.get("revision_no") or 0),
+                "change_type": str(row.get("change_type") or ""),
+                "payload": _normalized_revision_payload(row.get("payload_json")),
+                "diff": _normalize_manual_diff(row.get("diff_json")),
+                "created_at": _to_iso(row.get("created_at")) if row.get("created_at") else "",
+            }
+        )
+    return revisions
+
+
+def _resync_compare_state(
+    state: list[str],
+    payload_items: list[Any],
+    revision_no: int,
+    metadata: dict[str, dict[str, Any]],
+) -> list[str]:
+    next_state: list[str] = []
+    for index, _ in enumerate(payload_items):
+        if index < len(state):
+            stable_id = state[index]
+        else:
+            stable_id = f"system-{revision_no}-{index}"
+            metadata.setdefault(stable_id, {"baseline_index": None, "baseline_item": None})
+        next_state.append(stable_id)
+    return next_state
+
+
+def _build_previous_revision_compare(revisions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if len(revisions) < 2:
+        return None
+
+    previous_revision = revisions[-2]
+    current_revision = revisions[-1]
+    previous_payload = previous_revision.get("payload", {})
+    current_payload = current_revision.get("payload", {})
+    previous_header = previous_payload.get("header") if isinstance(previous_payload.get("header"), dict) else {}
+    current_header = current_payload.get("header") if isinstance(current_payload.get("header"), dict) else {}
+    previous_items = previous_payload.get("items") if isinstance(previous_payload.get("items"), list) else []
+    current_items = current_payload.get("items") if isinstance(current_payload.get("items"), list) else []
+    current_diff = current_revision.get("diff", {})
+
+    header_changes = _header_changes(previous_header, current_header)
+    deleted_indexes = [
+        index for index in current_diff.get("deleted_item_indexes", [])
+        if 0 <= index < len(previous_items)
+    ]
+    deleted_set = set(deleted_indexes)
+
+    survivor_map: dict[int, int] = {}
+    next_current_index = 0
+    for previous_index in range(len(previous_items)):
+        if previous_index in deleted_set:
+            continue
+        survivor_map[previous_index] = next_current_index
+        next_current_index += 1
+
+    item_changes_by_baseline_index: dict[str, dict[str, Any]] = {}
+    for previous_index in sorted(current_diff.get("items", {}).keys()):
+        current_index = survivor_map.get(previous_index)
+        if current_index is None or current_index >= len(current_items):
+            continue
+        field_changes = _item_field_changes(previous_items[previous_index], current_items[current_index])
+        if field_changes:
+            item_changes_by_baseline_index[str(previous_index)] = _baseline_row_change(
+                row_status="modified",
+                field_changes=field_changes,
+                current_index=current_index,
+                current_item=current_items[current_index],
+            )
+
+    for deleted_index in deleted_indexes:
+        item_changes_by_baseline_index[str(deleted_index)] = _baseline_row_change(
+            row_status="deleted",
+            field_changes={},
+            current_index=None,
+            current_item=None,
+        )
+
+    added_rows: list[dict[str, Any]] = []
+    for offset, _ in enumerate(current_diff.get("new_items", [])):
+        current_index = next_current_index + offset
+        if current_index >= len(current_items):
+            continue
+        added_rows.append(_added_compare_row(current_index, current_items[current_index]))
+
+    return _manual_compare_baseline(
+        key="previous_revision",
+        label="Previous save",
+        header_snapshot=previous_header,
+        item_snapshot=previous_items,
+        header_changes=header_changes,
+        item_changes_by_baseline_index=item_changes_by_baseline_index,
+        added_rows=added_rows,
+    )
+
+
+def _build_original_extraction_compare(revisions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not revisions:
+        return None
+
+    baseline_revision = revisions[0]
+    current_revision = revisions[-1]
+    baseline_payload = baseline_revision.get("payload", {})
+    current_payload = current_revision.get("payload", {})
+    baseline_header = baseline_payload.get("header") if isinstance(baseline_payload.get("header"), dict) else {}
+    current_header = current_payload.get("header") if isinstance(current_payload.get("header"), dict) else {}
+    baseline_items = baseline_payload.get("items") if isinstance(baseline_payload.get("items"), list) else []
+    current_items = current_payload.get("items") if isinstance(current_payload.get("items"), list) else []
+
+    state: list[str] = []
+    metadata: dict[str, dict[str, Any]] = {}
+    for index, item in enumerate(baseline_items):
+        stable_id = f"baseline-{index}"
+        state.append(stable_id)
+        metadata[stable_id] = {"baseline_index": index, "baseline_item": item}
+
+    for revision in revisions[1:]:
+        payload = revision.get("payload", {})
+        payload_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        if revision.get("change_type") == "manual_edit":
+            diff = revision.get("diff", {})
+            deleted_set = {
+                index for index in diff.get("deleted_item_indexes", [])
+                if 0 <= index < len(state)
+            }
+            state = [stable_id for index, stable_id in enumerate(state) if index not in deleted_set]
+            for offset, _ in enumerate(diff.get("new_items", [])):
+                stable_id = f"added-{revision.get('revision_no', 0)}-{offset}"
+                metadata.setdefault(stable_id, {"baseline_index": None, "baseline_item": None})
+                state.append(stable_id)
+            if len(state) != len(payload_items):
+                state = _resync_compare_state(state, payload_items, int(revision.get("revision_no") or 0), metadata)
+        else:
+            state = _resync_compare_state(state, payload_items, int(revision.get("revision_no") or 0), metadata)
+
+    if len(state) != len(current_items):
+        state = _resync_compare_state(state, current_items, int(current_revision.get("revision_no") or 0), metadata)
+
+    live_state = set(state)
+    header_changes = _header_changes(baseline_header, current_header)
+    item_changes_by_baseline_index: dict[str, dict[str, Any]] = {}
+    added_rows: list[dict[str, Any]] = []
+    for current_index, stable_id in enumerate(state):
+        if current_index >= len(current_items):
+            continue
+        current_item = current_items[current_index]
+        baseline_meta = metadata.get(stable_id, {})
+        baseline_index = baseline_meta.get("baseline_index")
+        if baseline_index is None:
+            added_rows.append(_added_compare_row(current_index, current_item))
+            continue
+        field_changes = _item_field_changes(baseline_meta.get("baseline_item"), current_item)
+        if field_changes:
+            item_changes_by_baseline_index[str(baseline_index)] = _baseline_row_change(
+                row_status="modified",
+                field_changes=field_changes,
+                current_index=current_index,
+                current_item=current_item,
+            )
+
+    for index, item in enumerate(baseline_items):
+        stable_id = f"baseline-{index}"
+        if stable_id not in live_state:
+            item_changes_by_baseline_index[str(index)] = _baseline_row_change(
+                row_status="deleted",
+                field_changes={},
+                current_index=None,
+                current_item=None,
+            )
+
+    return _manual_compare_baseline(
+        key="original_extraction",
+        label="Original extraction",
+        header_snapshot=baseline_header,
+        item_snapshot=baseline_items,
+        header_changes=header_changes,
+        item_changes_by_baseline_index=item_changes_by_baseline_index,
+        added_rows=added_rows,
+    )
+
+
+def build_manual_compare(order_id: str) -> dict[str, Any] | None:
+    revisions = _fetch_order_revisions(order_id)
+    if not revisions:
+        return None
+
+    current_revision = revisions[-1]
+    if current_revision.get("change_type") != "manual_edit":
+        return None
+
+    baselines: dict[str, dict[str, Any]] = {}
+    available_baselines: list[str] = []
+
+    original_baseline = _build_original_extraction_compare(revisions)
+    if original_baseline is not None:
+        baselines["original_extraction"] = original_baseline
+        available_baselines.append("original_extraction")
+
+    previous_baseline = _build_previous_revision_compare(revisions)
+    if previous_baseline is not None:
+        baselines["previous_revision"] = previous_baseline
+        available_baselines.append("previous_revision")
+
+    if not baselines:
+        return None
+
+    default_baseline = "original_extraction" if "original_extraction" in baselines else available_baselines[0]
+    return {
+        "has_manual_revisions": True,
+        "default_baseline": default_baseline,
+        "available_baselines": available_baselines,
+        "current_revision_no": int(current_revision.get("revision_no") or 0),
+        "current_revision_created_at": str(current_revision.get("created_at") or ""),
+        "baselines": baselines,
+    }
 
 
 def _dedupe_key(message_id: str) -> str:
@@ -2084,17 +2515,25 @@ def query_xml_activity(
     summary = fetch_one(
         """
         SELECT
-          COUNT(DISTINCT px.order_id)::bigint AS generated_orders,
-          (SELECT COUNT(*) FROM order_events
-           WHERE event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
-             AND created_at >= %s AND created_at < %s)::bigint AS regenerated_events,
-          (SELECT COUNT(*) FROM order_events
-           WHERE event_type = 'xml_regenerated'
-             AND created_at >= %s AND created_at < %s)::bigint AS both_events
-        FROM order_px_controls px
-        WHERE px.xml_sent_at >= %s AND px.xml_sent_at < %s
+          COUNT(*) FILTER (WHERE event_type = ANY(%s))::bigint AS generated_events,
+          COALESCE(SUM(file_count) FILTER (WHERE event_type = ANY(%s)), 0)::bigint AS generated_files,
+          COUNT(*) FILTER (WHERE event_type = ANY(%s))::bigint AS regenerated_events,
+          COALESCE(SUM(file_count) FILTER (WHERE event_type = ANY(%s)), 0)::bigint AS regenerated_files,
+          COUNT(*) FILTER (WHERE event_type = %s)::bigint AS orderinfo_files,
+          COUNT(*) FILTER (WHERE event_type = %s)::bigint AS articleinfo_files
+        FROM xml_activity_events
+        WHERE occurred_at >= %s AND occurred_at < %s
         """,
-        [range_start, range_end, range_start, range_end, range_start, range_end],
+        [
+            list(XML_ACTIVITY_GENERATED_EVENTS),
+            list(XML_ACTIVITY_GENERATED_EVENTS),
+            list(XML_ACTIVITY_REGENERATED_EVENTS),
+            list(XML_ACTIVITY_REGENERATED_EVENTS),
+            XML_ACTIVITY_EVENT_GENERATED,
+            XML_ACTIVITY_EVENT_GENERATED,
+            range_start,
+            range_end,
+        ],
     ) or {}
 
     if bucket_granularity == "month":
@@ -2105,29 +2544,28 @@ def query_xml_activity(
             )
             SELECT
               b.bucket_start,
-              COUNT(DISTINCT px.order_id)::bigint      AS generated_orders,
-              COUNT(DISTINCT e.id)::bigint             AS regenerated_events,
-              COUNT(DISTINCT e_both.id)::bigint        AS both_events
+              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
+              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
+              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
+              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
+              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
+              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files
             FROM month_buckets b
-            LEFT JOIN order_px_controls px
-              ON (px.xml_sent_at AT TIME ZONE %s) >= b.bucket_start::timestamp
-             AND (px.xml_sent_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
-            LEFT JOIN order_events e
-              ON e.event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
-             AND (e.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
-             AND (e.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
-            LEFT JOIN order_events e_both
-              ON e_both.event_type = 'xml_regenerated'
-             AND (e_both.created_at AT TIME ZONE %s) >= b.bucket_start::timestamp
-             AND (e_both.created_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+            LEFT JOIN xml_activity_events e
+              ON (e.occurred_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+             AND (e.occurred_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
             GROUP BY b.bucket_start
             ORDER BY b.bucket_start
             """,
             [
                 chart_start.date(),
                 chart_end.date(),
-                local_timezone,
-                local_timezone,
+                list(XML_ACTIVITY_GENERATED_EVENTS),
+                list(XML_ACTIVITY_GENERATED_EVENTS),
+                list(XML_ACTIVITY_REGENERATED_EVENTS),
+                list(XML_ACTIVITY_REGENERATED_EVENTS),
+                XML_ACTIVITY_EVENT_GENERATED,
+                XML_ACTIVITY_EVENT_GENERATED,
                 local_timezone,
                 local_timezone,
             ],
@@ -2140,45 +2578,58 @@ def query_xml_activity(
             )
             SELECT
               b.bucket_start,
-              COUNT(DISTINCT px.order_id)::bigint      AS generated_orders,
-              COUNT(DISTINCT e.id)::bigint             AS regenerated_events,
-              COUNT(DISTINCT e_both.id)::bigint        AS both_events
+              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
+              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
+              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
+              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
+              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
+              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files
             FROM day_buckets b
-            LEFT JOIN order_px_controls px
-              ON px.xml_sent_at >= b.bucket_start
-             AND px.xml_sent_at < b.bucket_start + interval '1 day'
-            LEFT JOIN order_events e
-              ON e.event_type IN ('xml_regenerated', 'article_xml_regenerated', 'order_xml_regenerated')
-             AND e.created_at >= b.bucket_start
-             AND e.created_at < b.bucket_start + interval '1 day'
-            LEFT JOIN order_events e_both
-              ON e_both.event_type = 'xml_regenerated'
-             AND e_both.created_at >= b.bucket_start
-             AND e_both.created_at < b.bucket_start + interval '1 day'
+            LEFT JOIN xml_activity_events e
+              ON e.occurred_at >= b.bucket_start
+             AND e.occurred_at < b.bucket_start + interval '1 day'
             GROUP BY b.bucket_start
             ORDER BY b.bucket_start
             """,
-            [chart_start, chart_end],
+            [
+                chart_start,
+                chart_end,
+                list(XML_ACTIVITY_GENERATED_EVENTS),
+                list(XML_ACTIVITY_GENERATED_EVENTS),
+                list(XML_ACTIVITY_REGENERATED_EVENTS),
+                list(XML_ACTIVITY_REGENERATED_EVENTS),
+                XML_ACTIVITY_EVENT_GENERATED,
+                XML_ACTIVITY_EVENT_GENERATED,
+            ],
         )
 
-    generated_orders = int(summary.get("generated_orders") or 0)
+    generated_events = int(summary.get("generated_events") or 0)
     regenerated_events = int(summary.get("regenerated_events") or 0)
-    both_events = int(summary.get("both_events") or 0)
-    regenerated_files = both_events * 2 + (regenerated_events - both_events)
+    generated_files = int(summary.get("generated_files") or 0)
+    regenerated_files = int(summary.get("regenerated_files") or 0)
+    orderinfo_files = int(summary.get("orderinfo_files") or 0)
+    articleinfo_files = int(summary.get("articleinfo_files") or 0)
 
     return {
         "summary": {
-            "generated_orders": generated_orders,
+            "generated_orders": generated_events,
+            "generated_events": generated_events,
             "regenerated_events": regenerated_events,
-            "generated_files": generated_orders * 2,
+            "generated_files": generated_files,
             "regenerated_files": regenerated_files,
+            "orderinfo_files": orderinfo_files,
+            "articleinfo_files": articleinfo_files,
         },
         "by_day": [
             {
                 "bucket_start": row.get("bucket_start"),
-                "generated_orders": int(row.get("generated_orders") or 0),
+                "generated_orders": int(row.get("generated_events") or 0),
+                "generated_events": int(row.get("generated_events") or 0),
                 "regenerated_events": int(row.get("regenerated_events") or 0),
-                "both_events": int(row.get("both_events") or 0),
+                "generated_files": int(row.get("generated_files") or 0),
+                "regenerated_files": int(row.get("regenerated_files") or 0),
+                "orderinfo_files": int(row.get("orderinfo_files") or 0),
+                "articleinfo_files": int(row.get("articleinfo_files") or 0),
             }
             for row in bucket_rows
         ],
@@ -2278,6 +2729,9 @@ def get_order_detail(
             validation_result_json = {}
     if not isinstance(validation_result_json, dict):
         validation_result_json = {}
+    manual_compare = None
+    if row.get("current_revision_id"):
+        manual_compare = build_manual_compare(str(row["id"]))
     return {
         "safe_id": str(row["id"]),
         "data": payload,
@@ -2312,6 +2766,7 @@ def get_order_detail(
         "claim_expires_at": _to_iso(row.get("claim_expires_at")) if row.get("claim_expires_at") else None,
         "sla_due_at": _to_iso(row.get("sla_due_at")) if row.get("sla_due_at") else None,
         "last_event_at": _to_iso(row.get("last_event_at")) if row.get("last_event_at") else None,
+        "manual_compare": manual_compare,
     }
 
 
@@ -2459,6 +2914,100 @@ def record_order_event(
                 ),
             )
         conn.commit()
+
+
+def record_xml_activity_event(
+    *,
+    order_id_snapshot: str,
+    event_type: str,
+    file_count: int,
+    source: str,
+    actor_user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    occurred_at: datetime | None = None,
+    source_ref: str | None = None,
+) -> None:
+    timestamp = occurred_at or _now()
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO xml_activity_events (
+                    id,
+                    order_id_snapshot,
+                    event_type,
+                    file_count,
+                    occurred_at,
+                    source,
+                    source_ref,
+                    actor_user_id,
+                    metadata_json,
+                    created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    str(uuid.uuid4()),
+                    str(order_id_snapshot or "").strip(),
+                    str(event_type or "").strip(),
+                    int(file_count or 0),
+                    timestamp,
+                    str(source or "").strip() or "unknown",
+                    str(source_ref or "").strip() or None,
+                    actor_user_id,
+                    _jsonb(metadata),
+                    timestamp,
+                ),
+            )
+        conn.commit()
+
+
+def record_xml_generated_after_final_control(
+    *,
+    order_id_snapshot: str,
+    source: str,
+    actor_user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    occurred_at: datetime | None = None,
+    source_ref: str | None = None,
+) -> None:
+    record_xml_activity_event(
+        order_id_snapshot=order_id_snapshot,
+        event_type=XML_ACTIVITY_EVENT_GENERATED,
+        file_count=2,
+        source=source,
+        actor_user_id=actor_user_id,
+        metadata=metadata,
+        occurred_at=occurred_at,
+        source_ref=source_ref,
+    )
+
+
+def record_xml_activity_from_regen_event(
+    *,
+    order_id_snapshot: str,
+    regen_event_type: str,
+    source: str,
+    actor_user_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    occurred_at: datetime | None = None,
+    source_ref: str | None = None,
+) -> None:
+    mapped = XML_ACTIVITY_FROM_ORDER_EVENT.get(str(regen_event_type or "").strip())
+    if mapped is None:
+        raise ValueError(f"Unsupported XML regeneration event type: {regen_event_type}")
+    event_type, file_count = mapped
+    record_xml_activity_event(
+        order_id_snapshot=order_id_snapshot,
+        event_type=event_type,
+        file_count=file_count,
+        source=source,
+        actor_user_id=actor_user_id,
+        metadata=metadata,
+        occurred_at=occurred_at,
+        source_ref=source_ref,
+    )
 
 
 def record_validation_run(
