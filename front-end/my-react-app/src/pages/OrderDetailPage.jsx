@@ -55,6 +55,29 @@ function buildItemDraft(order) {
   });
 }
 
+function buildOrderedHeaderRows(header, editableFields) {
+  const safeHeader = header && typeof header === "object" ? header : {};
+  const ordered = [];
+  const seen = new Set();
+  const isVisibleField = (field) => !HIDDEN_HEADER_FIELDS.has(String(field || "").toLowerCase());
+
+  (editableFields || []).forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(safeHeader, field) && isVisibleField(field)) {
+      ordered.push([field, safeHeader[field]]);
+      seen.add(field);
+    }
+  });
+
+  Object.keys(safeHeader)
+    .filter((field) => !seen.has(field) && isVisibleField(field))
+    .sort()
+    .forEach((field) => {
+      ordered.push([field, safeHeader[field]]);
+    });
+
+  return ordered;
+}
+
 function levelClass(level) {
   if (level === "error") {
     return "bg-red-50 border-red-200 text-red-700";
@@ -87,6 +110,96 @@ const HIDDEN_HEADER_FIELDS = new Set([
   "adressnummer",
 ]);
 
+const COMPARE_ITEM_FIELDS = ["artikelnummer", "modellnummer", "menge", "furncloud_id"];
+
+function compareBaselineLabel(key, t) {
+  if (key === "modifications") {
+    return t("orderDetail.compareModifications");
+  }
+  return t("orderDetail.compareOriginalExtraction");
+}
+
+function displayCompareValue(value) {
+  const normalized = String(value ?? "").trim();
+  return normalized ? normalized : "-";
+}
+
+function CompareToolbar({
+  t,
+  manualCompare,
+  activeBaselineKey,
+  onBaselineChange,
+  onlyChanged,
+  onOnlyChangedChange,
+}) {
+  if (!manualCompare) {
+    return null;
+  }
+
+  const availableBaselines = ["original_extraction", "modifications"];
+  const activeBaseline = manualCompare.baselines?.original_extraction || null;
+
+  if (!activeBaseline) {
+    return null;
+  }
+
+  const counts = activeBaseline.counts || {};
+  return (
+    <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            {t("orderDetail.compareTitle")}
+          </span>
+          {availableBaselines.map((baselineKey) => {
+            const selected = baselineKey === activeBaselineKey;
+            return (
+              <button
+                key={baselineKey}
+                type="button"
+                onClick={() => onBaselineChange(baselineKey)}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                  selected
+                    ? "border-primary bg-primary text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-primary/40 hover:text-primary"
+                }`}
+              >
+                {compareBaselineLabel(baselineKey, t)}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={() => onOnlyChangedChange((current) => !current)}
+          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+            onlyChanged
+              ? "border-amber-300 bg-amber-50 text-amber-800"
+              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+          }`}
+        >
+          <span className="material-icons text-sm">{onlyChanged ? "check_circle" : "radio_button_unchecked"}</span>
+          {t("orderDetail.compareOnlyChanged")}
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-600 border border-slate-200">
+          {t("orderDetail.compareHeaderFields", { count: counts.header_fields || 0 })}
+        </span>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 border border-amber-200">
+          {t("orderDetail.compareModifiedRows", { count: counts.modified_item_rows || 0 })}
+        </span>
+        <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800 border border-emerald-200">
+          {t("orderDetail.compareAddedRows", { count: counts.added_item_rows || 0 })}
+        </span>
+        <span className="rounded-full bg-rose-50 px-2.5 py-1 font-semibold text-rose-800 border border-rose-200">
+          {t("orderDetail.compareDeletedRows", { count: counts.deleted_item_rows || 0 })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function OrderDetailPage() {
   const { orderId } = useParams();
   const navigate = useNavigate();
@@ -116,6 +229,8 @@ export function OrderDetailPage() {
   const [deletedPersistedIndexes, setDeletedPersistedIndexes] = useState([]);
   const [headerDraft, setHeaderDraft] = useState({});
   const [itemDraft, setItemDraft] = useState([]);
+  const [compareBaselineKey, setCompareBaselineKey] = useState("original_extraction");
+  const [showOnlyChanged, setShowOnlyChanged] = useState(false);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) {
@@ -156,28 +271,170 @@ export function OrderDetailPage() {
     [order],
   );
 
-  const headerRows = useMemo(() => {
-    const header = order?.header || {};
-    const ordered = [];
-    const seen = new Set();
-    const isVisibleField = (field) => !HIDDEN_HEADER_FIELDS.has(String(field || "").toLowerCase());
+  const currentHeaderRows = useMemo(
+    () => buildOrderedHeaderRows(order?.header || {}, order?.editable_header_fields || []),
+    [order],
+  );
 
-    (order?.editable_header_fields || []).forEach((field) => {
-      if (Object.prototype.hasOwnProperty.call(header, field) && isVisibleField(field)) {
-        ordered.push([field, header[field]]);
-        seen.add(field);
+  const manualCompare = order?.manual_compare?.has_manual_revisions
+    ? order.manual_compare
+    : null;
+  const originalExtractionBaseline = manualCompare?.baselines?.original_extraction || null;
+  const showCompareUI = useMemo(() => {
+    const counts = originalExtractionBaseline?.counts || {};
+    return (
+      (counts.header_fields || 0)
+      + (counts.modified_item_rows || 0)
+      + (counts.added_item_rows || 0)
+      + (counts.deleted_item_rows || 0)
+    ) > 0;
+  }, [originalExtractionBaseline]);
+  const isModificationCompareView = showCompareUI && compareBaselineKey === "modifications";
+
+  const availableCompareBaselines = useMemo(
+    () => (showCompareUI ? ["original_extraction", "modifications"] : []),
+    [showCompareUI],
+  );
+
+  useEffect(() => {
+    if (!showCompareUI) {
+      setCompareBaselineKey("original_extraction");
+      setShowOnlyChanged(false);
+      return;
+    }
+    const preferredBaseline = "original_extraction";
+    setCompareBaselineKey((current) => (
+      availableCompareBaselines.includes(current) ? current : preferredBaseline
+    ));
+  }, [availableCompareBaselines, showCompareUI]);
+
+  useEffect(() => {
+    setShowOnlyChanged(false);
+  }, [order?.order_id, manualCompare?.current_revision_no, showCompareUI]);
+
+  const activeCompareBaseline = useMemo(() => {
+    if (!showCompareUI) {
+      return null;
+    }
+    return originalExtractionBaseline;
+  }, [originalExtractionBaseline, showCompareUI]);
+
+  const headerChangeMap = useMemo(
+    () => (activeCompareBaseline?.header_changes || {}),
+    [activeCompareBaseline],
+  );
+  const baselineHeaderRows = useMemo(
+    () => buildOrderedHeaderRows(
+      activeCompareBaseline?.header_snapshot || order?.header || {},
+      order?.editable_header_fields || [],
+    ),
+    [activeCompareBaseline, order],
+  );
+  const baselineItemChangeMap = useMemo(() => {
+    const raw = activeCompareBaseline?.item_changes_by_baseline_index || {};
+    return new Map(
+      Object.entries(raw).map(([baselineIndex, row]) => [Number(baselineIndex), row]),
+    );
+  }, [activeCompareBaseline]);
+  const addedCompareRows = useMemo(
+    () => (Array.isArray(activeCompareBaseline?.added_rows) ? activeCompareBaseline.added_rows : []),
+    [activeCompareBaseline],
+  );
+  const currentItemCompareMap = useMemo(() => {
+    const next = new Map();
+    baselineItemChangeMap.forEach((row) => {
+      const currentIndex = Number(row?.current_index);
+      if (Number.isFinite(currentIndex) && currentIndex >= 0) {
+        next.set(currentIndex, row);
       }
     });
-
-    Object.keys(header)
-      .filter((field) => !seen.has(field) && isVisibleField(field))
-      .sort()
-      .forEach((field) => {
-        ordered.push([field, header[field]]);
-      });
-
-    return ordered;
-  }, [order]);
+    addedCompareRows.forEach((row) => {
+      const currentIndex = Number(row?.current_index);
+      if (Number.isFinite(currentIndex) && currentIndex >= 0) {
+        next.set(currentIndex, row);
+      }
+    });
+    return next;
+  }, [addedCompareRows, baselineItemChangeMap]);
+  const baselineItemRows = useMemo(() => {
+    const snapshot = Array.isArray(activeCompareBaseline?.item_snapshot)
+      ? activeCompareBaseline.item_snapshot
+      : (order?.items || []);
+    const rows = snapshot.map((item, baselineIndex) => ({
+      item,
+      index: baselineIndex,
+      baselineIndex,
+      compareRow: baselineItemChangeMap.get(baselineIndex) || null,
+    }));
+    if (!showOnlyChanged || !activeCompareBaseline) {
+      return rows;
+    }
+    return rows.filter((row) => Boolean(row.compareRow));
+  }, [activeCompareBaseline, baselineItemChangeMap, order?.items, showOnlyChanged]);
+  const editModeItemRows = useMemo(() => {
+    return itemDraft.map((item, index) => ({
+      item,
+      index,
+      compareRow: currentItemCompareMap.get(
+        Number.isFinite(Number(item?.__sourceIndex)) ? Number(item.__sourceIndex) : index,
+      ) || null,
+    }));
+  }, [currentItemCompareMap, itemDraft]);
+  const displayedHeaderRows = useMemo(() => {
+    if (isEditing) {
+      return currentHeaderRows;
+    }
+    if (!showCompareUI || isModificationCompareView) {
+      return currentHeaderRows;
+    }
+    return baselineHeaderRows;
+  }, [baselineHeaderRows, currentHeaderRows, isEditing, isModificationCompareView, showCompareUI]);
+  const visibleHeaderRows = useMemo(() => {
+    if (isEditing || !showOnlyChanged || !activeCompareBaseline) {
+      return displayedHeaderRows;
+    }
+    return displayedHeaderRows.filter(([field]) => Boolean(headerChangeMap[field]));
+  }, [activeCompareBaseline, displayedHeaderRows, headerChangeMap, isEditing, showOnlyChanged]);
+  const visibleItemRows = useMemo(() => {
+    if (isEditing) {
+      return editModeItemRows;
+    }
+    if (!showCompareUI) {
+      return (order?.items || []).map((item, index) => ({
+        item,
+        index,
+        compareRow: null,
+      }));
+    }
+    if (isModificationCompareView) {
+      return (order?.items || []).map((item, index) => ({
+        item,
+        index,
+        compareRow: currentItemCompareMap.get(index) || null,
+      })).filter((row) => (!showOnlyChanged || !activeCompareBaseline ? true : Boolean(row.compareRow)));
+    }
+    return baselineItemRows;
+  }, [activeCompareBaseline, baselineItemRows, currentItemCompareMap, editModeItemRows, isEditing, isModificationCompareView, order?.items, showCompareUI, showOnlyChanged]);
+  const visibleAddedRows = useMemo(() => {
+    if (isEditing || !activeCompareBaseline || !showCompareUI) {
+      return [];
+    }
+    if (isModificationCompareView) {
+      return [];
+    }
+    if (!showOnlyChanged) {
+      return addedCompareRows;
+    }
+    return addedCompareRows;
+  }, [activeCompareBaseline, addedCompareRows, isEditing, isModificationCompareView, showCompareUI, showOnlyChanged]);
+  const displayedItemCount = useMemo(() => {
+    if (isEditing) {
+      return itemDraft.length;
+    }
+    return visibleItemRows.length + visibleAddedRows.length;
+  }, [isEditing, itemDraft.length, visibleAddedRows.length, visibleItemRows.length]);
+  const noChangedHeaderRows = !isEditing && showCompareUI && showOnlyChanged && activeCompareBaseline && visibleHeaderRows.length === 0;
+  const noChangedItemRows = !isEditing && showCompareUI && showOnlyChanged && activeCompareBaseline && visibleItemRows.length === 0 && visibleAddedRows.length === 0;
 
   const startEditing = async () => {
     if (!orderId || !order?.is_editable || startingEdit) {
@@ -569,6 +826,16 @@ export function OrderDetailPage() {
             {notice ? <div className="text-sm text-success bg-success/10 border border-success/20 rounded-lg p-3">{notice}</div> : null}
 
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              {showCompareUI ? (
+                <CompareToolbar
+                  t={t}
+                  manualCompare={manualCompare}
+                  activeBaselineKey={compareBaselineKey}
+                  onBaselineChange={setCompareBaselineKey}
+                  onlyChanged={showOnlyChanged}
+                  onOnlyChangedChange={setShowOnlyChanged}
+                />
+              ) : null}
               <div className="bg-slate-50 border-b border-slate-200">
                 <table className="w-full text-sm text-left table-fixed">
                   <colgroup>
@@ -593,39 +860,90 @@ export function OrderDetailPage() {
                     <col className="w-[52%]" />
                   </colgroup>
                   <tbody className="divide-y divide-slate-200">
-                    {headerRows.map(([field, entry], index) => {
+                    {visibleHeaderRows.length ? visibleHeaderRows.map(([field, entry], index) => {
                       const editable = editableHeaderFields.has(field) && isEditing;
+                      const change = headerChangeMap[field] || null;
+                      const showModificationView = isModificationCompareView;
+                      const showHeaderCompare = Boolean(change) && showModificationView;
                       return (
                         <tr key={field}>
                           <td className="px-4 py-2.5 text-slate-500 sticky left-0 z-10 border-r border-slate-200 bg-white">
                             {index + 1}
                           </td>
                           <td className="px-4 py-2.5 font-medium text-slate-900">{fieldLabel(field, t)}</td>
-                          <td className="px-4 py-2.5">
+                          <td className={`px-4 py-2.5 ${showHeaderCompare ? "bg-amber-50/30" : ""}`}>
                             {editable ? (
-                              <input
-                                value={headerDraft[field] || ""}
-                                onChange={(event) => setHeaderDraft((current) => ({ ...current, [field]: event.target.value }))}
-                                className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
-                              />
+                              <div className="space-y-2">
+                                <input
+                                  value={headerDraft[field] || ""}
+                                  onChange={(event) => setHeaderDraft((current) => ({ ...current, [field]: event.target.value }))}
+                                  className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
+                                />
+                                {showHeaderCompare ? (
+                                  <div className="border-l-2 border-amber-300 pl-3 py-0.5">
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                                      {t("orderDetail.comparePreviousValue")}: {displayCompareValue(change.before)}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-600">
+                                      {t("orderDetail.compareCurrentValue")}: {displayCompareValue(
+                                        Object.prototype.hasOwnProperty.call(headerDraft, field)
+                                          ? headerDraft[field]
+                                          : entryValue(order?.header?.[field]),
+                                      )}
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : showHeaderCompare ? (
+                              <div className="border-l-2 border-amber-300 pl-3 py-0.5">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-[11px] uppercase tracking-wide text-slate-500">
+                                    {showModificationView
+                                      ? `${t("orderDetail.comparePreviousValue")}: ${displayCompareValue(change.before)}`
+                                      : `${t("orderDetail.compareCurrentValue")}: ${displayCompareValue(change.after)}`}
+                                  </span>
+                                  <span className="rounded-full bg-amber-100/70 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                    {t("orderDetail.compareEdited")}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-sm font-medium text-slate-900">
+                                  {displayCompareValue(entryValue(entry))}
+                                </p>
+                              </div>
                             ) : (
                               <span className="text-slate-700">{entryValue(entry) || "-"}</span>
                             )}
                           </td>
                         </tr>
                       );
-                    })}
+                    }) : (
+                      <tr>
+                        <td colSpan={3} className="px-4 py-4 text-sm text-slate-500">
+                          {noChangedHeaderRows ? t("orderDetail.compareNoChangedHeaderFields") : t("orderDetail.noChanges")}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
 
             <div className="bg-surface-light rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              {showCompareUI ? (
+                <CompareToolbar
+                  t={t}
+                  manualCompare={manualCompare}
+                  activeBaselineKey={compareBaselineKey}
+                  onBaselineChange={setCompareBaselineKey}
+                  onlyChanged={showOnlyChanged}
+                  onOnlyChangedChange={setShowOnlyChanged}
+                />
+              ) : null}
               <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
                 <h2 className="font-bold text-base text-slate-800">{t("orderDetail.lineItems")}</h2>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-500">
-                    {(isEditing ? itemDraft.length : (order.items || []).length)} {t("common.items")}
+                    {displayedItemCount} {t("common.items")}
                   </span>
                   {isEditing ? (
                     <button
@@ -652,31 +970,83 @@ export function OrderDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {(isEditing ? itemDraft : (order.items || [])).map((item, index) => (
-                      <tr key={item?.__draftId || `${order.order_id}-${index}`}>
-                        <td className="px-4 py-2.5 text-slate-500 sticky left-0 z-10 bg-white border-r border-slate-200">
-                          {isEditing ? index + 1 : (item?.line_no ?? index + 1)}
+                    {visibleItemRows.length ? visibleItemRows.map(({ item, index, compareRow }) => (
+                      <tr
+                        key={item?.__draftId || `${order.order_id}-${index ?? "baseline"}`}
+                        className={!isEditing && isModificationCompareView && compareRow?.row_status === "deleted" ? "bg-rose-50/40" : ""}
+                      >
+                        <td className={`px-4 py-2.5 text-slate-500 sticky left-0 z-10 border-r border-slate-200 ${
+                          !isEditing && isModificationCompareView && compareRow?.row_status === "deleted" ? "bg-rose-50/70" : "bg-white"
+                        }`}>
+                          <div className="flex flex-col gap-1">
+                            <span>{isEditing ? index + 1 : (item?.line_no ?? index + 1)}</span>
+                            {!isEditing && isModificationCompareView && compareRow?.row_status === "deleted" ? (
+                              <span className="inline-flex w-fit rounded-full border border-rose-200 bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">
+                                {t("orderDetail.compareDeletedInCurrent")}
+                              </span>
+                            ) : null}
+                            {!isEditing && isModificationCompareView && compareRow?.row_status === "added" ? (
+                              <span className="inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                {t("orderDetail.compareAdded")}
+                              </span>
+                            ) : null}
+                            {isEditing && isModificationCompareView && compareRow?.row_status === "added" ? (
+                              <span className="inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                                {t("orderDetail.compareAdded")}
+                              </span>
+                            ) : null}
+                          </div>
                         </td>
-                        {["artikelnummer", "modellnummer", "menge", "furncloud_id"].map((field) => (
-                          <td key={field} className="px-4 py-2.5">
+                        {COMPARE_ITEM_FIELDS.map((field) => {
+                          const fieldChange = compareRow?.field_changes?.[field] || null;
+                          const showItemCompare = Boolean(fieldChange) && isModificationCompareView;
+                          return (
+                          <td key={field} className={`px-4 py-2.5 ${showItemCompare ? "bg-amber-50/25" : ""}`}>
                             {isEditing && editableItemFields.has(field) ? (
-                              <input
-                                value={itemDraft[index]?.[field] || ""}
-                                onChange={(event) => {
-                                  const next = [...itemDraft];
-                                  next[index] = {
-                                    ...(next[index] || {}),
-                                    [field]: event.target.value,
-                                  };
-                                  setItemDraft(next);
-                                }}
-                                className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
-                              />
+                              <div className="space-y-2">
+                                <input
+                                  value={itemDraft[index]?.[field] || ""}
+                                  onChange={(event) => {
+                                    const next = [...itemDraft];
+                                    next[index] = {
+                                      ...(next[index] || {}),
+                                      [field]: event.target.value,
+                                    };
+                                    setItemDraft(next);
+                                  }}
+                                  className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
+                                />
+                                {showItemCompare ? (
+                                  <div className="border-l-2 border-amber-300 pl-3 py-0.5">
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                                      {t("orderDetail.comparePreviousValue")}: {displayCompareValue(fieldChange.before)}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-600">
+                                      {t("orderDetail.compareCurrentValue")}: {displayCompareValue(
+                                        Object.prototype.hasOwnProperty.call(itemDraft[index] || {}, field)
+                                          ? itemDraft[index]?.[field]
+                                          : "",
+                                      )}
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : showItemCompare ? (
+                              <div className="border-l-2 border-amber-300 pl-3 py-0.5">
+                                <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                                  {isModificationCompareView
+                                    ? `${t("orderDetail.comparePreviousValue")}: ${displayCompareValue(fieldChange.before)}`
+                                    : `${t("orderDetail.compareCurrentValue")}: ${displayCompareValue(fieldChange.after)}`}
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-slate-900">
+                                  {displayCompareValue(entryValue(item[field]))}
+                                </p>
+                              </div>
                             ) : (
                               <span>{isEditing ? (item?.[field] || "-") : (entryValue(item[field]) || "-")}</span>
                             )}
                           </td>
-                        ))}
+                        )})}
                         {isEditing ? (
                           <td className="px-4 py-2.5 text-right">
                             {item?.__isNew ? (
@@ -703,10 +1073,47 @@ export function OrderDetailPage() {
                           </td>
                         ) : null}
                       </tr>
-                    ))}
+                    )) : (
+                      <tr>
+                        <td colSpan={isEditing ? 6 : 5} className="px-4 py-4 text-sm text-slate-500">
+                          {noChangedItemRows ? t("orderDetail.compareNoChangedItemRows") : t("orderDetail.noChanges")}
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
+              {!isEditing && isModificationCompareView && visibleAddedRows.length ? (
+                <div className="border-t border-emerald-200 bg-emerald-50/40 px-4 py-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-bold text-emerald-900">{t("orderDetail.compareAddedAfterVersion")}</h3>
+                    <span className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                      {visibleAddedRows.length}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {visibleAddedRows.map((row, rowIndex) => (
+                      <div key={`added-row-${rowIndex}`} className="rounded-lg border border-emerald-200 bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                            {t("orderDetail.compareAddedRowLabel", { line: row.current_line_no || rowIndex + 1 })}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          {COMPARE_ITEM_FIELDS.map((field) => (
+                            <div key={`${rowIndex}-${field}`} className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                              <p className="text-[11px] uppercase tracking-wide text-slate-500">{fieldLabel(field, t)}</p>
+                              <p className="mt-1 text-sm font-medium text-slate-900">
+                                {displayCompareValue(row?.values?.[field])}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 

@@ -1241,6 +1241,30 @@ def _resolve_xml_files(order_id: str, header: dict[str, Any]) -> list[dict[str, 
     return xml_files
 
 
+def _record_xml_activity_for_regeneration(
+    *,
+    order_id: str,
+    regen_event_type: str,
+    source: str,
+    actor_user_id: str | None = None,
+    revision_id: str | None = None,
+    xml_paths: list[str] | None = None,
+) -> None:
+    metadata: dict[str, Any] = {
+        "legacy_event_type": regen_event_type,
+        "files": list(xml_paths or []),
+    }
+    if revision_id:
+        metadata["revision_id"] = revision_id
+    order_store.record_xml_activity_from_regen_event(
+        order_id_snapshot=order_id,
+        regen_event_type=regen_event_type,
+        source=source,
+        actor_user_id=actor_user_id,
+        metadata=metadata,
+    )
+
+
 def _load_order(
     order_id: str,
     *,
@@ -1312,6 +1336,7 @@ def _order_api_payload(order: dict[str, Any]) -> dict[str, Any]:
     response["claim_expires_at"] = order.get("claim_expires_at")
     response["sla_due_at"] = order.get("sla_due_at")
     response["last_event_at"] = order.get("last_event_at")
+    response["manual_compare"] = order.get("manual_compare")
     response["editable_header_fields"] = EDITABLE_HEADER_FIELDS
     response["editable_item_fields"] = EDITABLE_ITEM_FIELDS
     try:
@@ -2570,17 +2595,19 @@ def api_superadmin_xml_activity():
         else:
             label = bucket_point.strftime("%b %d")
             iso_value = bucket_point.date().isoformat()
-        gen_orders = int(row.get("generated_orders") or 0)
+        gen_events = int(row.get("generated_events") or row.get("generated_orders") or 0)
         regen_events = int(row.get("regenerated_events") or 0)
-        both_events = int(row.get("both_events") or 0)
         by_day.append(
             {
                 "date": iso_value,
                 "label": label,
-                "generated_orders": gen_orders,
+                "generated_orders": gen_events,
+                "generated_events": gen_events,
                 "regenerated_events": regen_events,
-                "generated_files": gen_orders * 2,
-                "regenerated_files": both_events * 2 + (regen_events - both_events),
+                "generated_files": int(row.get("generated_files") or 0),
+                "regenerated_files": int(row.get("regenerated_files") or 0),
+                "orderinfo_files": int(row.get("orderinfo_files") or 0),
+                "articleinfo_files": int(row.get("articleinfo_files") or 0),
             }
         )
 
@@ -2600,9 +2627,12 @@ def api_superadmin_xml_activity():
             },
             "summary": {
                 "generated_orders": int(summary.get("generated_orders") or 0),
+                "generated_events": int(summary.get("generated_events") or summary.get("generated_orders") or 0),
                 "regenerated_events": int(summary.get("regenerated_events") or 0),
                 "generated_files": int(summary.get("generated_files") or 0),
                 "regenerated_files": int(summary.get("regenerated_files") or 0),
+                "orderinfo_files": int(summary.get("orderinfo_files") or 0),
+                "articleinfo_files": int(summary.get("articleinfo_files") or 0),
             },
             "by_day": by_day,
         }
@@ -3054,6 +3084,14 @@ def api_order_detail(order_id: str):
                 actor_user_id=current_user_id or None,
                 event_data={"files": xml_paths},
             )
+            _record_xml_activity_for_regeneration(
+                order_id=order["safe_id"],
+                regen_event_type=regen_event_type,
+                source="api_order_patch",
+                actor_user_id=current_user_id or None,
+                revision_id=revision_id,
+                xml_paths=xml_paths,
+            )
         except Exception as exc:  # noqa: BLE001
             return _api_error(500, "db_error", f"Failed to record XML regeneration metadata: {exc}")
 
@@ -3061,7 +3099,12 @@ def api_order_detail(order_id: str):
         if px_controls and px_controls.get("xml_sent_at"):
             try:
                 from reply_email import send_px_xml_email as _send_px_xml_email
-                _send_px_xml_email(order["safe_id"], config, OUTPUT_DIR)
+                _send_px_xml_email(
+                    order["safe_id"],
+                    config,
+                    OUTPUT_DIR,
+                    record_generation_activity=False,
+                )
             except Exception as exc:  # noqa: BLE001
                 app.logger.error("PX XML re-send failed for order %s: %s", order["safe_id"], exc)
 
@@ -3148,6 +3191,13 @@ def api_export_order_xml(order_id: str):
             event_type="xml_regenerated",
             actor_user_id=actor_user_id,
             event_data={"files": xml_paths},
+        )
+        _record_xml_activity_for_regeneration(
+            order_id=order["safe_id"],
+            regen_event_type="xml_regenerated",
+            source="api_export_xml",
+            actor_user_id=actor_user_id,
+            xml_paths=xml_paths,
         )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to record XML export metadata: {exc}")
@@ -3450,6 +3500,13 @@ def export_order_xml(order_id: str):
             actor_user_id=actor_user_id,
             event_data={"files": xml_paths},
         )
+        _record_xml_activity_for_regeneration(
+            order_id=order["safe_id"],
+            regen_event_type="xml_regenerated",
+            source="legacy_export_xml",
+            actor_user_id=actor_user_id,
+            xml_paths=xml_paths,
+        )
         _mark_order_validation_stale(
             order["safe_id"],
             actor_user_id=actor_user_id,
@@ -3564,6 +3621,14 @@ def order_detail(order_id: str) -> str:
                     event_type="xml_regenerated",
                     actor_user_id=actor_user_id,
                     event_data={"files": xml_paths},
+                )
+                _record_xml_activity_for_regeneration(
+                    order_id=safe_id,
+                    regen_event_type="xml_regenerated",
+                    source="legacy_order_detail_save",
+                    actor_user_id=actor_user_id,
+                    revision_id=revision_id,
+                    xml_paths=xml_paths,
                 )
             except Exception:  # noqa: BLE001
                 abort(500)

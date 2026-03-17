@@ -486,6 +486,16 @@ def process_new_email_followup(
         )
         for xp in xml_paths:
             print(f"[reply_tracker] Regenerated XML: {xp}")
+        try:
+            order_store.record_xml_activity_event(
+                order_id_snapshot=order_id,
+                event_type=order_store.XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                file_count=2,
+                source="reply_tracker_followup",
+                metadata={"files": [str(path) for path in xml_paths]},
+            )
+        except Exception as ledger_exc:
+            print(f"[reply_tracker] Failed to record XML activity ledger for order {order_id}: {ledger_exc}")
     except Exception as exc:
         print(f"[reply_tracker] XML regeneration failed for order {order_id}: {exc}")
 
@@ -598,6 +608,16 @@ def process_client_reply(
         )
         for xp in xml_paths:
             print(f"[reply_tracker] Regenerated XML: {xp}")
+        try:
+            order_store.record_xml_activity_event(
+                order_id_snapshot=order_id,
+                event_type=order_store.XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                file_count=2,
+                source="reply_tracker_reply",
+                metadata={"files": [str(path) for path in xml_paths]},
+            )
+        except Exception as ledger_exc:
+            print(f"[reply_tracker] Failed to record XML activity ledger for order {order_id}: {ledger_exc}")
     except Exception as exc:
         print(f"[reply_tracker] XML regeneration failed for order {order_id}: {exc}")
 
