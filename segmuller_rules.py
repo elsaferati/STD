@@ -23,7 +23,6 @@ _SEGMULLER_VENDOR_SECTION_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _SEGMULLER_REVIEW_ONLY_REASONS = {
-    "segmuller_missing_furnplan_pdf",
     "segmuller_no_staud_section",
 }
 
