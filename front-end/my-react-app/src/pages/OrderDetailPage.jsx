@@ -129,8 +129,6 @@ function CompareToolbar({
   manualCompare,
   activeBaselineKey,
   onBaselineChange,
-  onlyChanged,
-  onOnlyChangedChange,
 }) {
   if (!manualCompare) {
     return null;
@@ -146,41 +144,27 @@ function CompareToolbar({
   const counts = activeBaseline.counts || {};
   return (
     <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
-            {t("orderDetail.compareTitle")}
-          </span>
-          {availableBaselines.map((baselineKey) => {
-            const selected = baselineKey === activeBaselineKey;
-            return (
-              <button
-                key={baselineKey}
-                type="button"
-                onClick={() => onBaselineChange(baselineKey)}
-                className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
-                  selected
-                    ? "border-primary bg-primary text-white"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-primary/40 hover:text-primary"
-                }`}
-              >
-                {compareBaselineLabel(baselineKey, t)}
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          onClick={() => onOnlyChangedChange((current) => !current)}
-          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
-            onlyChanged
-              ? "border-amber-300 bg-amber-50 text-amber-800"
-              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-          }`}
-        >
-          <span className="material-icons text-sm">{onlyChanged ? "check_circle" : "radio_button_unchecked"}</span>
-          {t("orderDetail.compareOnlyChanged")}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+          {t("orderDetail.compareTitle")}
+        </span>
+        {availableBaselines.map((baselineKey) => {
+          const selected = baselineKey === activeBaselineKey;
+          return (
+            <button
+              key={baselineKey}
+              type="button"
+              onClick={() => onBaselineChange(baselineKey)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                selected
+                  ? "border-primary bg-primary text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-primary/40 hover:text-primary"
+              }`}
+            >
+              {compareBaselineLabel(baselineKey, t)}
+            </button>
+          );
+        })}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-600 border border-slate-200">
@@ -230,7 +214,6 @@ export function OrderDetailPage() {
   const [headerDraft, setHeaderDraft] = useState({});
   const [itemDraft, setItemDraft] = useState([]);
   const [compareBaselineKey, setCompareBaselineKey] = useState("original_extraction");
-  const [showOnlyChanged, setShowOnlyChanged] = useState(false);
 
   const loadOrder = useCallback(async () => {
     if (!orderId) {
@@ -299,7 +282,6 @@ export function OrderDetailPage() {
   useEffect(() => {
     if (!showCompareUI) {
       setCompareBaselineKey("original_extraction");
-      setShowOnlyChanged(false);
       return;
     }
     const preferredBaseline = "original_extraction";
@@ -307,10 +289,6 @@ export function OrderDetailPage() {
       availableCompareBaselines.includes(current) ? current : preferredBaseline
     ));
   }, [availableCompareBaselines, showCompareUI]);
-
-  useEffect(() => {
-    setShowOnlyChanged(false);
-  }, [order?.order_id, manualCompare?.current_revision_no, showCompareUI]);
 
   const activeCompareBaseline = useMemo(() => {
     if (!showCompareUI) {
@@ -360,17 +338,13 @@ export function OrderDetailPage() {
     const snapshot = Array.isArray(activeCompareBaseline?.item_snapshot)
       ? activeCompareBaseline.item_snapshot
       : (order?.items || []);
-    const rows = snapshot.map((item, baselineIndex) => ({
+    return snapshot.map((item, baselineIndex) => ({
       item,
       index: baselineIndex,
       baselineIndex,
       compareRow: baselineItemChangeMap.get(baselineIndex) || null,
     }));
-    if (!showOnlyChanged || !activeCompareBaseline) {
-      return rows;
-    }
-    return rows.filter((row) => Boolean(row.compareRow));
-  }, [activeCompareBaseline, baselineItemChangeMap, order?.items, showOnlyChanged]);
+  }, [activeCompareBaseline?.item_snapshot, baselineItemChangeMap, order?.items]);
   const editModeItemRows = useMemo(() => {
     return itemDraft.map((item, index) => ({
       item,
@@ -390,11 +364,8 @@ export function OrderDetailPage() {
     return baselineHeaderRows;
   }, [baselineHeaderRows, currentHeaderRows, isEditing, isModificationCompareView, showCompareUI]);
   const visibleHeaderRows = useMemo(() => {
-    if (isEditing || !showOnlyChanged || !activeCompareBaseline) {
-      return displayedHeaderRows;
-    }
-    return displayedHeaderRows.filter(([field]) => Boolean(headerChangeMap[field]));
-  }, [activeCompareBaseline, displayedHeaderRows, headerChangeMap, isEditing, showOnlyChanged]);
+    return displayedHeaderRows;
+  }, [displayedHeaderRows]);
   const visibleItemRows = useMemo(() => {
     if (isEditing) {
       return editModeItemRows;
@@ -411,10 +382,10 @@ export function OrderDetailPage() {
         item,
         index,
         compareRow: currentItemCompareMap.get(index) || null,
-      })).filter((row) => (!showOnlyChanged || !activeCompareBaseline ? true : Boolean(row.compareRow)));
+      }));
     }
     return baselineItemRows;
-  }, [activeCompareBaseline, baselineItemRows, currentItemCompareMap, editModeItemRows, isEditing, isModificationCompareView, order?.items, showCompareUI, showOnlyChanged]);
+  }, [baselineItemRows, currentItemCompareMap, editModeItemRows, isEditing, isModificationCompareView, order?.items, showCompareUI]);
   const visibleAddedRows = useMemo(() => {
     if (isEditing || !activeCompareBaseline || !showCompareUI) {
       return [];
@@ -422,19 +393,16 @@ export function OrderDetailPage() {
     if (isModificationCompareView) {
       return [];
     }
-    if (!showOnlyChanged) {
-      return addedCompareRows;
-    }
     return addedCompareRows;
-  }, [activeCompareBaseline, addedCompareRows, isEditing, isModificationCompareView, showCompareUI, showOnlyChanged]);
+  }, [activeCompareBaseline, addedCompareRows, isEditing, isModificationCompareView, showCompareUI]);
   const displayedItemCount = useMemo(() => {
     if (isEditing) {
       return itemDraft.length;
     }
     return visibleItemRows.length + visibleAddedRows.length;
   }, [isEditing, itemDraft.length, visibleAddedRows.length, visibleItemRows.length]);
-  const noChangedHeaderRows = !isEditing && showCompareUI && showOnlyChanged && activeCompareBaseline && visibleHeaderRows.length === 0;
-  const noChangedItemRows = !isEditing && showCompareUI && showOnlyChanged && activeCompareBaseline && visibleItemRows.length === 0 && visibleAddedRows.length === 0;
+  const noChangedHeaderRows = false;
+  const noChangedItemRows = false;
 
   const startEditing = async () => {
     if (!orderId || !order?.is_editable || startingEdit) {
@@ -832,8 +800,6 @@ export function OrderDetailPage() {
                   manualCompare={manualCompare}
                   activeBaselineKey={compareBaselineKey}
                   onBaselineChange={setCompareBaselineKey}
-                  onlyChanged={showOnlyChanged}
-                  onOnlyChangedChange={setShowOnlyChanged}
                 />
               ) : null}
               <div className="bg-slate-50 border-b border-slate-200">
@@ -871,44 +837,32 @@ export function OrderDetailPage() {
                             {index + 1}
                           </td>
                           <td className="px-4 py-2.5 font-medium text-slate-900">{fieldLabel(field, t)}</td>
-                          <td className={`px-4 py-2.5 ${showHeaderCompare ? "bg-amber-50/30" : ""}`}>
+                          <td className={`px-4 py-2.5 ${showHeaderCompare ? "bg-amber-100/80" : ""}`}>
                             {editable ? (
                               <div className="space-y-2">
                                 <input
                                   value={headerDraft[field] || ""}
                                   onChange={(event) => setHeaderDraft((current) => ({ ...current, [field]: event.target.value }))}
-                                  className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
+                                  className={`w-full border rounded px-2 py-1 text-sm ${
+                                    showHeaderCompare ? "border-amber-300 bg-amber-50" : "border-slate-200"
+                                  }`}
                                 />
                                 {showHeaderCompare ? (
-                                  <div className="border-l-2 border-amber-300 pl-3 py-0.5">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                                      {t("orderDetail.comparePreviousValue")}: {displayCompareValue(change.before)}
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-600">
-                                      {t("orderDetail.compareCurrentValue")}: {displayCompareValue(
-                                        Object.prototype.hasOwnProperty.call(headerDraft, field)
-                                          ? headerDraft[field]
-                                          : entryValue(order?.header?.[field]),
-                                      )}
-                                    </p>
+                                  <div className="flex justify-end">
+                                    <span className="rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                                      {t("orderDetail.compareEdited")}
+                                    </span>
                                   </div>
                                 ) : null}
                               </div>
                             ) : showHeaderCompare ? (
-                              <div className="border-l-2 border-amber-300 pl-3 py-0.5">
-                                <div className="flex items-center justify-between gap-3">
-                                  <span className="text-[11px] uppercase tracking-wide text-slate-500">
-                                    {showModificationView
-                                      ? `${t("orderDetail.comparePreviousValue")}: ${displayCompareValue(change.before)}`
-                                      : `${t("orderDetail.compareCurrentValue")}: ${displayCompareValue(change.after)}`}
-                                  </span>
-                                  <span className="rounded-full bg-amber-100/70 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-                                    {t("orderDetail.compareEdited")}
-                                  </span>
-                                </div>
-                                <p className="mt-1 text-sm font-medium text-slate-900">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-slate-900">
                                   {displayCompareValue(entryValue(entry))}
                                 </p>
+                                <span className="rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                                    {t("orderDetail.compareEdited")}
+                                </span>
                               </div>
                             ) : (
                               <span className="text-slate-700">{entryValue(entry) || "-"}</span>
@@ -935,8 +889,6 @@ export function OrderDetailPage() {
                   manualCompare={manualCompare}
                   activeBaselineKey={compareBaselineKey}
                   onBaselineChange={setCompareBaselineKey}
-                  onlyChanged={showOnlyChanged}
-                  onOnlyChangedChange={setShowOnlyChanged}
                 />
               ) : null}
               <div className="px-4 py-2.5 border-b border-slate-200 flex items-center justify-between bg-slate-50/60">
@@ -1001,7 +953,7 @@ export function OrderDetailPage() {
                           const fieldChange = compareRow?.field_changes?.[field] || null;
                           const showItemCompare = Boolean(fieldChange) && isModificationCompareView;
                           return (
-                          <td key={field} className={`px-4 py-2.5 ${showItemCompare ? "bg-amber-50/25" : ""}`}>
+                          <td key={field} className={`px-4 py-2.5 ${showItemCompare ? "bg-amber-100/80" : ""}`}>
                             {isEditing && editableItemFields.has(field) ? (
                               <div className="space-y-2">
                                 <input
@@ -1014,33 +966,26 @@ export function OrderDetailPage() {
                                     };
                                     setItemDraft(next);
                                   }}
-                                  className="w-full border border-slate-200 rounded px-2 py-1 text-sm"
+                                  className={`w-full border rounded px-2 py-1 text-sm ${
+                                    showItemCompare ? "border-amber-300 bg-amber-50" : "border-slate-200"
+                                  }`}
                                 />
                                 {showItemCompare ? (
-                                  <div className="border-l-2 border-amber-300 pl-3 py-0.5">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                                      {t("orderDetail.comparePreviousValue")}: {displayCompareValue(fieldChange.before)}
-                                    </p>
-                                    <p className="mt-1 text-xs text-slate-600">
-                                      {t("orderDetail.compareCurrentValue")}: {displayCompareValue(
-                                        Object.prototype.hasOwnProperty.call(itemDraft[index] || {}, field)
-                                          ? itemDraft[index]?.[field]
-                                          : "",
-                                      )}
-                                    </p>
+                                  <div className="flex justify-end">
+                                    <span className="rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                                      {t("orderDetail.compareEdited")}
+                                    </span>
                                   </div>
                                 ) : null}
                               </div>
                             ) : showItemCompare ? (
-                              <div className="border-l-2 border-amber-300 pl-3 py-0.5">
-                                <p className="text-[11px] uppercase tracking-wide text-slate-500">
-                                  {isModificationCompareView
-                                    ? `${t("orderDetail.comparePreviousValue")}: ${displayCompareValue(fieldChange.before)}`
-                                    : `${t("orderDetail.compareCurrentValue")}: ${displayCompareValue(fieldChange.after)}`}
-                                </p>
-                                <p className="mt-1 text-sm font-medium text-slate-900">
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-medium text-slate-900">
                                   {displayCompareValue(entryValue(item[field]))}
                                 </p>
+                                <span className="rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                                  {t("orderDetail.compareEdited")}
+                                </span>
                               </div>
                             ) : (
                               <span>{isEditing ? (item?.[field] || "-") : (entryValue(item[field]) || "-")}</span>

@@ -27,6 +27,14 @@ const XML_RANGE_PRESETS = [
   { id: "year", labelKey: "overview.rangeThisYear" },
 ];
 
+const XML_STATUS_FILTER_OPTIONS = [
+  { id: "ok", labelKey: "status.ok" },
+  { id: "waiting_for_reply", labelKey: "status.waiting_for_reply" },
+  { id: "human_in_the_loop", labelKey: "status.human_in_the_loop" },
+  { id: "post", labelKey: "status.post" },
+  { id: "failed", labelKey: "status.failed" },
+];
+
 const STATUS_CONFIG = [
   {
     key: "ok",
@@ -86,14 +94,38 @@ const STATUS_CONFIG = [
   },
 ];
 
-function MetricCard({ title, value, detail, icon, accentClass = "", iconClass = "text-primary bg-primary/10" }) {
+function MetricCard({
+  title,
+  value,
+  detail,
+  breakdown = [],
+  icon,
+  accentClass = "",
+  iconClass = "text-primary bg-primary/10",
+  note = "",
+  titleClassName = "",
+  valueClassName = "",
+  detailClassName = "",
+  noteClassName = "",
+}) {
   return (
     <div className={`bg-surface-light p-3 rounded-xl border border-slate-200 shadow-sm ${accentClass}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] text-slate-500 font-medium break-words">{title}</p>
-          <p className="text-2xl font-bold text-slate-900 mt-1.5">{value}</p>
-          <p className="text-[13px] text-slate-500 mt-1.5">{detail}</p>
+          <p className={`text-[13px] text-slate-500 font-medium break-words ${titleClassName}`}>{title}</p>
+          <p className={`text-2xl font-bold text-slate-900 mt-1.5 ${valueClassName}`}>{value}</p>
+          {breakdown.length ? (
+            <div className="mt-2 space-y-1 rounded-lg border border-slate-100 bg-slate-50/80 px-2.5 py-2">
+              {breakdown.map((item) => (
+                <div key={item.label} className="flex items-center justify-between gap-3 text-[12px]">
+                  <span className="text-slate-500">{item.label}</span>
+                  <span className="font-semibold text-slate-800">{item.value}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {detail ? <p className={`text-[13px] text-slate-500 mt-2 ${detailClassName}`}>{detail}</p> : null}
+          {note ? <p className={`text-[11px] text-slate-400 mt-1 ${noteClassName}`}>{note}</p> : null}
         </div>
         <span className={`material-icons shrink-0 p-2 rounded-xl text-lg ${iconClass}`}>{icon}</span>
       </div>
@@ -134,6 +166,14 @@ function buildYearOptions(count = 6) {
 function toNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasXmlEventActivity(bucket) {
+  return (bucket?.generated_events || bucket?.generated_orders) > 0 || (bucket?.regenerated_events || 0) > 0;
+}
+
+function hasVisibleXmlActivity(bucket, includeReplyOnly = true) {
+  return hasXmlEventActivity(bucket) || (includeReplyOnly && (bucket?.reply_emails_sent || 0) > 0);
 }
 
 function getBucketTotals(bucket) {
@@ -229,6 +269,8 @@ export function OverviewPage() {
   const [xmlIsMonthMenuOpen, setXmlIsMonthMenuOpen] = useState(false);
   const [xmlSelectedYear, setXmlSelectedYear] = useState(String(new Date().getFullYear()));
   const [xmlIsYearMenuOpen, setXmlIsYearMenuOpen] = useState(false);
+  const [xmlSelectedClient, setXmlSelectedClient] = useState("");
+  const [xmlSelectedStatus, setXmlSelectedStatus] = useState("");
   const monthMenuRef = useRef(null);
   const yearMenuRef = useRef(null);
   const xmlMonthMenuRef = useRef(null);
@@ -264,11 +306,13 @@ export function OverviewPage() {
           range: xmlRangePreset,
           month: xmlRangePreset === "custom_month" ? xmlSelectedMonth : null,
           year: xmlRangePreset === "year" ? xmlSelectedYear : null,
+          client: xmlSelectedClient || null,
+          status: xmlSelectedStatus || null,
         }),
       );
       setXmlActivity(payload);
     } catch { /* silent — section simply won't render */ }
-  }, [isSuperadmin, xmlRangePreset, xmlSelectedMonth, xmlSelectedYear]);
+  }, [isSuperadmin, xmlRangePreset, xmlSelectedMonth, xmlSelectedYear, xmlSelectedClient, xmlSelectedStatus]);
 
   useEffect(() => {
     loadXmlActivity();
@@ -364,14 +408,10 @@ export function OverviewPage() {
       : null;
   const effectiveSelectedDay = safeSelectedDay ?? latestActiveDay;
   const selectedBucket = effectiveSelectedDay?.sourceBucket || null;
-  const selectedTotals = effectiveSelectedDay || null;
   const bucketGranularity = overview?.range?.bucket_granularity || "day";
   const clientHourData = overview?.orders_by_client_hour || { clients: [], days: [] };
   const clientHourDays = clientHourData.days || [];
   const selectedClientDay = null;
-  const selectedLabel = selectedBucket
-    ? formatBucketLabel(selectedBucket, locale, bucketGranularity)
-    : "";
   const rangeLabel = formatRangeLabel(overview?.range, locale);
   const xmlRangeLabel = formatRangeLabel(xmlActivity?.range, locale);
   const chartRangeLabel = formatRangeLabel(
@@ -398,6 +438,22 @@ export function OverviewPage() {
   const isLongRangeTimeline = ["quarter", "half_year", "year"].includes(timelineView);
   const monthOptions = buildMonthOptions(locale);
   const yearOptions = buildYearOptions();
+  const xmlClientOptions = [
+    { id: "", label: t("overview.allClients") },
+    ...((xmlActivity?.clients || []).map((client) => ({
+      id: String(client?.id || ""),
+      label: String(client?.label || client?.id || ""),
+    }))),
+  ];
+  const xmlStatusOptions = [
+    { id: "", label: t("overview.allStatuses") },
+    ...XML_STATUS_FILTER_OPTIONS.map((status) => ({
+      id: status.id,
+      label: t(status.labelKey),
+    })),
+  ];
+  const xmlStatusFilterActive = Boolean(xmlSelectedStatus);
+  const hasXmlActivity = (xmlActivity?.by_day || []).some((day) => hasVisibleXmlActivity(day, !xmlStatusFilterActive));
 
   return (
     <AppShell active="overview">
@@ -636,15 +692,47 @@ export function OverviewPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="material-icons text-violet-600">shield</span>
-                  <h2 className="text-lg font-bold text-slate-900">XML Activity</h2>
+                  <h2 className="text-lg font-bold text-slate-900">{t("overview.xmlActivityTitle")}</h2>
                   <span className="text-[11px] uppercase tracking-widest text-violet-600 bg-violet-50 border border-violet-200 px-2 py-0.5 rounded-full">Superadmin</span>
                 </div>
                 <p className="text-[13px] text-slate-500 mt-1">{xmlRangeLabel}</p>
               </div>
               <div className="xl:max-w-[760px] w-full xl:w-auto">
                 <div className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-                    <span>{t("overview.filterTitle")}</span>
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                      <span>{t("overview.filterTitle")}</span>
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <label className="flex flex-col gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                        <span>{t("overview.clientFilterLabel")}</span>
+                        <select
+                          value={xmlSelectedClient}
+                          onChange={(event) => setXmlSelectedClient(event.target.value)}
+                          className="min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold normal-case tracking-normal text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        >
+                          {xmlClientOptions.map((option) => (
+                            <option key={option.id || "__all__"} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                        <span>{t("overview.statusFilterLabel")}</span>
+                        <select
+                          value={xmlSelectedStatus}
+                          onChange={(event) => setXmlSelectedStatus(event.target.value)}
+                          className="min-w-[180px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-[12px] font-semibold normal-case tracking-normal text-slate-700 shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        >
+                          {xmlStatusOptions.map((option) => (
+                            <option key={option.id || "__all_statuses__"} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {XML_RANGE_PRESETS.map((preset) => {
@@ -763,49 +851,106 @@ export function OverviewPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
               <MetricCard
-                title="XMLs Generated"
+                title={t("overview.xmlsGeneratedTitle")}
                 value={xmlActivity.summary.generated_files}
-                detail={`from ${xmlActivity.summary.generated_events || xmlActivity.summary.generated_orders || 0} generation events`}
+                breakdown={[
+                  {
+                    label: t("overview.xmlOrderInfoLabel"),
+                    value: xmlActivity.summary.orderinfo_files || 0,
+                  },
+                  {
+                    label: t("overview.xmlArticleInfoLabel"),
+                    value: xmlActivity.summary.articleinfo_files || 0,
+                  },
+                ]}
+                detail={t(
+                  "overview.xmlsGeneratedDetail",
+                  { count: xmlActivity.summary.generated_events || xmlActivity.summary.generated_orders || 0 },
+                  `from ${xmlActivity.summary.generated_events || xmlActivity.summary.generated_orders || 0} generation events`,
+                )}
                 icon="description"
                 accentClass="border-l-4 border-l-violet-500"
                 iconClass="text-violet-600 bg-violet-50"
               />
               <MetricCard
-                title="XMLs Regenerated"
+                title={t("overview.xmlsRegeneratedTitle")}
                 value={xmlActivity.summary.regenerated_files}
-                detail={`from ${xmlActivity.summary.regenerated_events} regeneration events`}
+                breakdown={[
+                  {
+                    label: t("overview.xmlOrderInfoLabel"),
+                    value: xmlActivity.summary.regenerated_orderinfo_files || 0,
+                  },
+                  {
+                    label: t("overview.xmlArticleInfoLabel"),
+                    value: xmlActivity.summary.regenerated_articleinfo_files || 0,
+                  },
+                ]}
+                detail={t(
+                  "overview.xmlsRegeneratedDetail",
+                  { count: xmlActivity.summary.regenerated_events || 0 },
+                  `from ${xmlActivity.summary.regenerated_events || 0} regeneration events`,
+                )}
                 icon="refresh"
                 accentClass="border-l-4 border-l-amber-500"
                 iconClass="text-amber-600 bg-amber-50"
               />
+              <MetricCard
+                title={t("overview.replyEmailsSentTitle")}
+                value={xmlActivity.summary.reply_emails_sent || 0}
+                detail={t(
+                  "overview.replyEmailsSentDetail",
+                  { count: xmlActivity.summary.reply_emails_sent || 0 },
+                  `${xmlActivity.summary.reply_emails_sent || 0} reply emails sent`,
+                )}
+                note={xmlStatusFilterActive ? t("overview.replyEmailsSentGlobalNote") : ""}
+                icon="forward_to_inbox"
+                accentClass="border-l-4 border-l-sky-500"
+                iconClass="text-sky-600 bg-sky-50"
+                titleClassName="text-sky-700"
+                valueClassName="text-sky-700"
+                detailClassName="text-sky-600"
+                noteClassName="text-sky-500"
+              />
             </div>
 
-            {xmlActivity.by_day.some((d) => (d.generated_events || d.generated_orders) > 0 || d.regenerated_events > 0) ? (
+            {hasXmlActivity ? (
               <div className="overflow-x-auto rounded-xl border border-slate-200">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-slate-500 text-[12px] uppercase tracking-wide">
+                  <thead className="text-[12px] uppercase tracking-wide">
                     <tr>
-                      <th className="px-4 py-2 text-left">Date</th>
-                      <th className="px-4 py-2 text-right">Generated (files)</th>
-                      <th className="px-4 py-2 text-right">→ OrderInfo XML</th>
-                      <th className="px-4 py-2 text-right">→ ArticleInfo XML</th>
-                      <th className="px-4 py-2 text-right">Regenerated (files)</th>
-                      <th className="px-4 py-2 text-right">Total</th>
+                      <th rowSpan={2} className="bg-slate-50 px-4 py-3 text-left text-slate-500 align-middle">{t("common.dateTime")}</th>
+                      <th colSpan={3} className="border-l border-violet-100 bg-violet-50 px-4 py-2 text-center font-semibold text-violet-700">{t("overview.xmlGeneratedGroupColumn")}</th>
+                      <th colSpan={3} className="border-l border-amber-100 bg-amber-50 px-4 py-2 text-center font-semibold text-amber-700">{t("overview.xmlRegeneratedGroupColumn")}</th>
+                      <th rowSpan={2} className="border-l border-slate-200 bg-slate-50 px-4 py-3 text-right text-slate-500 align-middle">{t("overview.xmlCombinedTotalColumn")}</th>
+                      <th rowSpan={2} className="border-l border-sky-100 bg-sky-50 px-4 py-3 text-right text-sky-700 align-middle font-semibold">{t("overview.replyEmailsSentColumn")}</th>
+                      <th rowSpan={2} className="bg-slate-50 px-4 py-3 text-right text-slate-500 align-middle">{t("overview.xmlGrandTotalColumn")}</th>
+                    </tr>
+                    <tr>
+                      <th className="border-l border-violet-100 bg-violet-50/70 px-4 py-2 text-right text-violet-700">{t("overview.xmlTotalColumn")}</th>
+                      <th className="bg-violet-50/70 px-4 py-2 text-right text-violet-700">{t("overview.xmlOrderInfoLabel")}</th>
+                      <th className="bg-violet-50/70 px-4 py-2 text-right text-violet-700">{t("overview.xmlArticleInfoLabel")}</th>
+                      <th className="border-l border-amber-100 bg-amber-50/70 px-4 py-2 text-right text-amber-700">{t("overview.xmlTotalColumn")}</th>
+                      <th className="bg-amber-50/70 px-4 py-2 text-right text-amber-700">{t("overview.xmlRegeneratedOrderInfoColumn")}</th>
+                      <th className="bg-amber-50/70 px-4 py-2 text-right text-amber-700">{t("overview.xmlRegeneratedArticleInfoColumn")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {xmlActivity.by_day
-                      .filter((d) => (d.generated_events || d.generated_orders) > 0 || d.regenerated_events > 0)
+                      .filter((d) => hasVisibleXmlActivity(d, !xmlStatusFilterActive))
                       .map((d) => (
                         <tr key={d.date} className="border-t border-slate-100 hover:bg-slate-50">
                           <td className="px-4 py-2 font-medium text-slate-700">{d.label}</td>
-                          <td className="px-4 py-2 text-right">{d.generated_files}</td>
-                          <td className="px-4 py-2 text-right text-slate-500">{d.orderinfo_files || 0}</td>
-                          <td className="px-4 py-2 text-right text-slate-500">{d.articleinfo_files || 0}</td>
-                          <td className="px-4 py-2 text-right">{d.regenerated_files}</td>
-                          <td className="px-4 py-2 text-right font-semibold">{d.generated_files + d.regenerated_files}</td>
+                          <td className="border-l border-violet-100 px-4 py-2 text-right font-medium text-violet-700">{d.generated_files}</td>
+                          <td className="px-4 py-2 text-right text-slate-600">{d.orderinfo_files || 0}</td>
+                          <td className="px-4 py-2 text-right text-slate-600">{d.articleinfo_files || 0}</td>
+                          <td className="border-l border-amber-100 px-4 py-2 text-right font-medium text-amber-700">{d.regenerated_files || 0}</td>
+                          <td className="px-4 py-2 text-right text-slate-600">{d.regenerated_orderinfo_files || 0}</td>
+                          <td className="px-4 py-2 text-right text-slate-600">{d.regenerated_articleinfo_files || 0}</td>
+                          <td className="border-l border-slate-200 px-4 py-2 text-right font-semibold text-slate-700">{d.generated_files + (d.regenerated_files || 0)}</td>
+                          <td className="border-l border-sky-100 px-4 py-2 text-right font-medium text-sky-700">{d.reply_emails_sent || 0}</td>
+                          <td className="px-4 py-2 text-right font-semibold">{d.generated_files + d.regenerated_files + (d.reply_emails_sent || 0)}</td>
                         </tr>
                       ))}
                   </tbody>
@@ -813,7 +958,7 @@ export function OverviewPage() {
               </div>
             ) : (
               <div className="min-h-[80px] flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-2xl">
-                No XML activity in this period
+                {t("overview.noXmlActivity")}
               </div>
             )}
           </section>

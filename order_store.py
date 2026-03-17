@@ -2511,18 +2511,57 @@ def query_xml_activity(
     chart_end: datetime,
     bucket_granularity: str = "day",
     local_timezone: str = "UTC",
+    client_branch: str | None = None,
+    statuses: set[str] | None = None,
 ) -> dict[str, Any]:
+    normalized_client_branch = None
+    if client_branch is not None:
+        normalized_client_branch = _normalize_extraction_branch(client_branch)
+    normalized_statuses: list[str] = []
+    if statuses:
+        normalized_statuses = sorted({normalize_status(status) for status in statuses})
+    xml_client_clause = ""
+    xml_client_params: list[Any] = []
+    reply_client_clause = ""
+    reply_client_params: list[Any] = []
+    xml_status_clause = ""
+    xml_status_params: list[Any] = []
+    if normalized_client_branch:
+        xml_client_clause = f" AND {_EXTRACTION_BRANCH_SQL} = %s"
+        xml_client_params.append(normalized_client_branch)
+        reply_client_clause = f" AND {_EXTRACTION_BRANCH_SQL} = %s"
+        reply_client_params.append(normalized_client_branch)
+    if normalized_statuses:
+        xml_status_clause = f" AND o.id IS NOT NULL AND {_STATUS_SQL} = ANY(%s)"
+        xml_status_params.append(normalized_statuses)
+
     summary = fetch_one(
-        """
+        f"""
         SELECT
           COUNT(*) FILTER (WHERE event_type = ANY(%s))::bigint AS generated_events,
           COALESCE(SUM(file_count) FILTER (WHERE event_type = ANY(%s)), 0)::bigint AS generated_files,
           COUNT(*) FILTER (WHERE event_type = ANY(%s))::bigint AS regenerated_events,
           COALESCE(SUM(file_count) FILTER (WHERE event_type = ANY(%s)), 0)::bigint AS regenerated_files,
           COUNT(*) FILTER (WHERE event_type = %s)::bigint AS orderinfo_files,
-          COUNT(*) FILTER (WHERE event_type = %s)::bigint AS articleinfo_files
-        FROM xml_activity_events
-        WHERE occurred_at >= %s AND occurred_at < %s
+          COUNT(*) FILTER (WHERE event_type = %s)::bigint AS articleinfo_files,
+          COUNT(*) FILTER (WHERE event_type IN (%s, %s))::bigint AS regenerated_orderinfo_files,
+          COUNT(*) FILTER (WHERE event_type IN (%s, %s))::bigint AS regenerated_articleinfo_files,
+          COALESCE((
+            SELECT COUNT(*)::bigint
+            FROM orders o
+            WHERE o.deleted_at IS NULL
+              AND o.reply_email_sent_at IS NOT NULL
+              AND o.reply_email_sent_at >= %s
+              AND o.reply_email_sent_at < %s
+              {reply_client_clause}
+          ), 0)::bigint AS reply_emails_sent
+        FROM xml_activity_events e
+        LEFT JOIN orders o
+          ON o.id::text = e.order_id_snapshot
+         AND o.deleted_at IS NULL
+        WHERE e.occurred_at >= %s AND e.occurred_at < %s
+          {xml_client_clause}
+          {xml_status_clause}
         """,
         [
             list(XML_ACTIVITY_GENERATED_EVENTS),
@@ -2531,30 +2570,78 @@ def query_xml_activity(
             list(XML_ACTIVITY_REGENERATED_EVENTS),
             XML_ACTIVITY_EVENT_GENERATED,
             XML_ACTIVITY_EVENT_GENERATED,
+            XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+            XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY,
+            XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+            XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY,
             range_start,
             range_end,
+            *reply_client_params,
+            range_start,
+            range_end,
+            *xml_client_params,
+            *xml_status_params,
         ],
     ) or {}
 
     if bucket_granularity == "month":
         bucket_rows = fetch_all(
-            """
+            f"""
             WITH month_buckets AS (
                 SELECT generate_series(%s::date, %s::date, interval '1 month')::date AS bucket_start
+            ),
+            xml_rows AS (
+                SELECT
+                  b.bucket_start,
+                  COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
+                  COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
+                  COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
+                  COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
+                  COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type IN (%s, %s))::bigint AS regenerated_orderinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type IN (%s, %s))::bigint AS regenerated_articleinfo_files
+                FROM month_buckets b
+                LEFT JOIN xml_activity_events e
+                  ON (e.occurred_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+                 AND (e.occurred_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+                LEFT JOIN orders o
+                  ON o.id::text = e.order_id_snapshot
+                 AND o.deleted_at IS NULL
+                WHERE 1 = 1
+                  {xml_client_clause}
+                  {xml_status_clause}
+                GROUP BY b.bucket_start
+            ),
+            reply_rows AS (
+                SELECT
+                  b.bucket_start,
+                  COUNT(o.id)::bigint AS reply_emails_sent
+                FROM month_buckets b
+                LEFT JOIN orders o
+                  ON o.deleted_at IS NULL
+                 AND o.reply_email_sent_at IS NOT NULL
+                 AND (o.reply_email_sent_at AT TIME ZONE %s) >= b.bucket_start::timestamp
+                 AND (o.reply_email_sent_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
+                 {reply_client_clause}
+                GROUP BY b.bucket_start
             )
             SELECT
               b.bucket_start,
-              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
-              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
-              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
-              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
-              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
-              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files
+              COALESCE(x.generated_events, 0)::bigint AS generated_events,
+              COALESCE(x.generated_files, 0)::bigint AS generated_files,
+              COALESCE(x.regenerated_events, 0)::bigint AS regenerated_events,
+              COALESCE(x.regenerated_files, 0)::bigint AS regenerated_files,
+              COALESCE(x.orderinfo_files, 0)::bigint AS orderinfo_files,
+              COALESCE(x.articleinfo_files, 0)::bigint AS articleinfo_files,
+              COALESCE(x.regenerated_orderinfo_files, 0)::bigint AS regenerated_orderinfo_files,
+              COALESCE(x.regenerated_articleinfo_files, 0)::bigint AS regenerated_articleinfo_files,
+              COALESCE(r.reply_emails_sent, 0)::bigint AS reply_emails_sent
             FROM month_buckets b
-            LEFT JOIN xml_activity_events e
-              ON (e.occurred_at AT TIME ZONE %s) >= b.bucket_start::timestamp
-             AND (e.occurred_at AT TIME ZONE %s) < (b.bucket_start::timestamp + interval '1 month')
-            GROUP BY b.bucket_start
+            LEFT JOIN xml_rows x
+              ON x.bucket_start = b.bucket_start
+            LEFT JOIN reply_rows r
+              ON r.bucket_start = b.bucket_start
             ORDER BY b.bucket_start
             """,
             [
@@ -2566,29 +2653,77 @@ def query_xml_activity(
                 list(XML_ACTIVITY_REGENERATED_EVENTS),
                 XML_ACTIVITY_EVENT_GENERATED,
                 XML_ACTIVITY_EVENT_GENERATED,
+                XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY,
+                XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY,
                 local_timezone,
                 local_timezone,
+                *xml_client_params,
+                *xml_status_params,
+                local_timezone,
+                local_timezone,
+                *reply_client_params,
             ],
         )
     else:
         bucket_rows = fetch_all(
-            """
+            f"""
             WITH day_buckets AS (
                 SELECT generate_series(%s::timestamptz, %s::timestamptz, interval '1 day') AS bucket_start
+            ),
+            xml_rows AS (
+                SELECT
+                  b.bucket_start,
+                  COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
+                  COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
+                  COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
+                  COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
+                  COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type IN (%s, %s))::bigint AS regenerated_orderinfo_files,
+                  COUNT(*) FILTER (WHERE e.event_type IN (%s, %s))::bigint AS regenerated_articleinfo_files
+                FROM day_buckets b
+                LEFT JOIN xml_activity_events e
+                  ON e.occurred_at >= b.bucket_start
+                 AND e.occurred_at < b.bucket_start + interval '1 day'
+                LEFT JOIN orders o
+                  ON o.id::text = e.order_id_snapshot
+                 AND o.deleted_at IS NULL
+                WHERE 1 = 1
+                  {xml_client_clause}
+                  {xml_status_clause}
+                GROUP BY b.bucket_start
+            ),
+            reply_rows AS (
+                SELECT
+                  b.bucket_start,
+                  COUNT(o.id)::bigint AS reply_emails_sent
+                FROM day_buckets b
+                LEFT JOIN orders o
+                  ON o.deleted_at IS NULL
+                 AND o.reply_email_sent_at IS NOT NULL
+                 AND o.reply_email_sent_at >= b.bucket_start
+                 AND o.reply_email_sent_at < b.bucket_start + interval '1 day'
+                 {reply_client_clause}
+                GROUP BY b.bucket_start
             )
             SELECT
               b.bucket_start,
-              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS generated_events,
-              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS generated_files,
-              COUNT(*) FILTER (WHERE e.event_type = ANY(%s))::bigint AS regenerated_events,
-              COALESCE(SUM(e.file_count) FILTER (WHERE e.event_type = ANY(%s)), 0)::bigint AS regenerated_files,
-              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS orderinfo_files,
-              COUNT(*) FILTER (WHERE e.event_type = %s)::bigint AS articleinfo_files
+              COALESCE(x.generated_events, 0)::bigint AS generated_events,
+              COALESCE(x.generated_files, 0)::bigint AS generated_files,
+              COALESCE(x.regenerated_events, 0)::bigint AS regenerated_events,
+              COALESCE(x.regenerated_files, 0)::bigint AS regenerated_files,
+              COALESCE(x.orderinfo_files, 0)::bigint AS orderinfo_files,
+              COALESCE(x.articleinfo_files, 0)::bigint AS articleinfo_files,
+              COALESCE(x.regenerated_orderinfo_files, 0)::bigint AS regenerated_orderinfo_files,
+              COALESCE(x.regenerated_articleinfo_files, 0)::bigint AS regenerated_articleinfo_files,
+              COALESCE(r.reply_emails_sent, 0)::bigint AS reply_emails_sent
             FROM day_buckets b
-            LEFT JOIN xml_activity_events e
-              ON e.occurred_at >= b.bucket_start
-             AND e.occurred_at < b.bucket_start + interval '1 day'
-            GROUP BY b.bucket_start
+            LEFT JOIN xml_rows x
+              ON x.bucket_start = b.bucket_start
+            LEFT JOIN reply_rows r
+              ON r.bucket_start = b.bucket_start
             ORDER BY b.bucket_start
             """,
             [
@@ -2600,6 +2735,13 @@ def query_xml_activity(
                 list(XML_ACTIVITY_REGENERATED_EVENTS),
                 XML_ACTIVITY_EVENT_GENERATED,
                 XML_ACTIVITY_EVENT_GENERATED,
+                XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                XML_ACTIVITY_EVENT_REGENERATED_ORDER_ONLY,
+                XML_ACTIVITY_EVENT_REGENERATED_BOTH,
+                XML_ACTIVITY_EVENT_REGENERATED_ARTICLE_ONLY,
+                *xml_client_params,
+                *xml_status_params,
+                *reply_client_params,
             ],
         )
 
@@ -2609,6 +2751,9 @@ def query_xml_activity(
     regenerated_files = int(summary.get("regenerated_files") or 0)
     orderinfo_files = int(summary.get("orderinfo_files") or 0)
     articleinfo_files = int(summary.get("articleinfo_files") or 0)
+    regenerated_orderinfo_files = int(summary.get("regenerated_orderinfo_files") or 0)
+    regenerated_articleinfo_files = int(summary.get("regenerated_articleinfo_files") or 0)
+    reply_emails_sent = int(summary.get("reply_emails_sent") or 0)
 
     return {
         "summary": {
@@ -2619,7 +2764,17 @@ def query_xml_activity(
             "regenerated_files": regenerated_files,
             "orderinfo_files": orderinfo_files,
             "articleinfo_files": articleinfo_files,
+            "regenerated_orderinfo_files": regenerated_orderinfo_files,
+            "regenerated_articleinfo_files": regenerated_articleinfo_files,
+            "reply_emails_sent": reply_emails_sent,
         },
+        "clients": [
+            {
+                "id": branch_id,
+                "label": BRANCHES[branch_id].label if branch_id in BRANCHES else "Unknown",
+            }
+            for branch_id in sorted(ALLOWED_EXTRACTION_BRANCHES)
+        ],
         "by_day": [
             {
                 "bucket_start": row.get("bucket_start"),
@@ -2630,6 +2785,9 @@ def query_xml_activity(
                 "regenerated_files": int(row.get("regenerated_files") or 0),
                 "orderinfo_files": int(row.get("orderinfo_files") or 0),
                 "articleinfo_files": int(row.get("articleinfo_files") or 0),
+                "regenerated_orderinfo_files": int(row.get("regenerated_orderinfo_files") or 0),
+                "regenerated_articleinfo_files": int(row.get("regenerated_articleinfo_files") or 0),
+                "reply_emails_sent": int(row.get("reply_emails_sent") or 0),
             }
             for row in bucket_rows
         ],

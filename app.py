@@ -2567,6 +2567,20 @@ def api_superadmin_xml_activity():
     overview_range, error_response = _parse_overview_range(now)
     if error_response is not None:
         return error_response
+    raw_client = _clean_form_value(request.args.get("client"))
+    selected_client = None
+    if raw_client:
+        normalized_client = raw_client.lower()
+        if normalized_client not in ALLOWED_CLIENT_FILTER_IDS:
+            return _api_error(400, "invalid_client", f"Invalid client value: {raw_client}")
+        selected_client = normalized_client
+    raw_status = _clean_form_value(request.args.get("status"))
+    selected_status = None
+    if raw_status:
+        normalized_status = raw_status.lower()
+        if normalized_status not in VALID_STATUSES:
+            return _api_error(400, "invalid_status", f"Invalid status value: {raw_status}")
+        selected_status = _normalize_status(normalized_status)
 
     try:
         activity = order_store.query_xml_activity(
@@ -2576,6 +2590,8 @@ def api_superadmin_xml_activity():
             chart_end=overview_range["chart_end"],
             bucket_granularity=overview_range["bucket_granularity"],
             local_timezone=_postgres_timezone_name(now.tzinfo),
+            client_branch=selected_client,
+            statuses={selected_status} if selected_status else None,
         )
     except Exception as exc:  # noqa: BLE001
         return _api_error(500, "db_error", f"Failed to load XML activity: {exc}")
@@ -2608,6 +2624,9 @@ def api_superadmin_xml_activity():
                 "regenerated_files": int(row.get("regenerated_files") or 0),
                 "orderinfo_files": int(row.get("orderinfo_files") or 0),
                 "articleinfo_files": int(row.get("articleinfo_files") or 0),
+                "regenerated_orderinfo_files": int(row.get("regenerated_orderinfo_files") or 0),
+                "regenerated_articleinfo_files": int(row.get("regenerated_articleinfo_files") or 0),
+                "reply_emails_sent": int(row.get("reply_emails_sent") or 0),
             }
         )
 
@@ -2624,6 +2643,7 @@ def api_superadmin_xml_activity():
                 "chart_start": overview_range["chart_range_start"].isoformat(),
                 "chart_end": overview_range["chart_range_end"].isoformat(),
                 "bucket_granularity": overview_range["bucket_granularity"],
+                "client": selected_client,
             },
             "summary": {
                 "generated_orders": int(summary.get("generated_orders") or 0),
@@ -2633,7 +2653,17 @@ def api_superadmin_xml_activity():
                 "regenerated_files": int(summary.get("regenerated_files") or 0),
                 "orderinfo_files": int(summary.get("orderinfo_files") or 0),
                 "articleinfo_files": int(summary.get("articleinfo_files") or 0),
+                "regenerated_orderinfo_files": int(summary.get("regenerated_orderinfo_files") or 0),
+                "regenerated_articleinfo_files": int(summary.get("regenerated_articleinfo_files") or 0),
+                "reply_emails_sent": int(summary.get("reply_emails_sent") or 0),
             },
+            "clients": [
+                {
+                    "id": str(client.get("id") or ""),
+                    "label": str(client.get("label") or client.get("id") or ""),
+                }
+                for client in (activity.get("clients") or [])
+            ],
             "by_day": by_day,
         }
     )
