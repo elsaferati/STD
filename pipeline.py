@@ -2859,20 +2859,24 @@ def _flag_segmuller_missing_layout_pdf(
         header = {}
         normalized["header"] = header
 
-    entry = header.get("human_review_needed")
-    if not isinstance(entry, dict):
-        entry = {"value": False, "source": "derived", "confidence": 1.0}
-        header["human_review_needed"] = entry
+    header["segmuller_furnplan_missing"] = {
+        "value": True,
+        "source": "derived",
+        "confidence": 1.0,
+    }
 
-    entry["value"] = True
-    entry["source"] = "derived"
-    entry["confidence"] = 1.0
-    entry["derived_from"] = "segmuller_missing_furnplan_pdf"
+    reply_entry = header.get("reply_needed")
+    if not isinstance(reply_entry, dict):
+        reply_entry = {"value": False, "source": "derived", "confidence": 1.0}
+        header["reply_needed"] = reply_entry
+    reply_entry["value"] = True
+    reply_entry["source"] = "derived"
+    reply_entry["confidence"] = 1.0
 
     warnings = _ensure_warning_list(normalized)
     warning = (
         "Segmuller order is missing the furnplan/sketch PDF companion; "
-        "forced human_review_needed=true."
+        "reply requested."
     )
     if warning not in warnings:
         warnings.append(warning)

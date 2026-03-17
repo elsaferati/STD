@@ -27,6 +27,13 @@ _FIELD_LABELS = {
 _FIELD_ORDER = ["lieferanschrift", "store_address", "modellnummer", "artikelnummer", "menge"]
 
 
+def _header_flag_true(header: dict[str, Any], key: str) -> bool:
+    entry = header.get(key)
+    if isinstance(entry, dict):
+        return entry.get("value") is True
+    return entry is True
+
+
 def _header_value(header: dict[str, Any], key: str) -> str:
     entry = header.get(key, {})
     if isinstance(entry, dict):
@@ -250,7 +257,16 @@ def compose_reply_needed_email(
         store = load_reply_templates(template_path)
         templates = store.get("templates") if isinstance(store.get("templates"), dict) else {}
         missing_fields = detect_missing_fields(normalized, warnings)
-        template_id = select_template_id(missing_fields, reply_cases)
+
+        # Furnplan handling
+        furnplan_missing = _header_flag_true(header, "segmuller_furnplan_missing")
+
+        if furnplan_missing and not missing_fields and not reply_cases:
+            # Only problem is furnplan — use the furnplan template directly
+            template_id = "missing_furnplan"
+        else:
+            template_id = select_template_id(missing_fields, reply_cases)
+
         template_data = templates.get(template_id)
         if not isinstance(template_data, dict):
             raise ValueError(f"Template '{template_id}' not found in {template_path}")
@@ -267,6 +283,17 @@ def compose_reply_needed_email(
         body = render_template(str(template_data.get("body", "")), placeholders).strip()
         if not subject or not body:
             raise ValueError(f"Template '{template_id}' rendered empty subject/body")
+
+        # If furnplan is missing AND other fields are also missing, inject furnplan sentence
+        if furnplan_missing and template_id != "missing_furnplan":
+            _FURNPLAN_SENTENCE = (
+                "Oder senden Sie uns die Bestellung zusammen mit dem Furnplan zu."
+            )
+            _CLOSING = "\n\nVielen Dank"
+            if _CLOSING in body:
+                body = body.replace(_CLOSING, f"\n{_FURNPLAN_SENTENCE}{_CLOSING}", 1)
+            else:
+                body += f"\n{_FURNPLAN_SENTENCE}"
 
         msg = EmailMessage()
         msg["To"] = to_addr

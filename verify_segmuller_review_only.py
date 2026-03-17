@@ -2,12 +2,13 @@ from normalize import normalize_output, refresh_missing_warnings
 from pipeline import _apply_segmuller_vendor_section_guard
 
 
-def test_segmuller_missing_layout_stays_review_only() -> None:
+def test_segmuller_missing_layout_triggers_reply() -> None:
     data = {
         "header": {
             "reply_needed": {"value": False, "source": "derived", "confidence": 1.0},
             "human_review_needed": {"value": False, "source": "derived", "confidence": 1.0},
             "post_case": {"value": False, "source": "derived", "confidence": 1.0},
+            "segmuller_furnplan_missing": {"value": True, "source": "derived", "confidence": 1.0},
         },
         "items": [
             {
@@ -33,27 +34,15 @@ def test_segmuller_missing_layout_stays_review_only() -> None:
     )
 
     assert normalized["status"] == "reply"
-    header = normalized["header"]
-    assert header["reply_needed"]["value"] is True
+    assert normalized["header"]["reply_needed"]["value"] is True
+    assert normalized["header"].get("human_review_needed", {}).get("value") is not True
 
-    header["human_review_needed"] = {
-        "value": True,
-        "source": "derived",
-        "confidence": 1.0,
-        "derived_from": "segmuller_missing_furnplan_pdf",
-    }
     normalized["extraction_branch"] = "segmuller"
-
     refresh_missing_warnings(normalized)
 
-    assert normalized["status"] == "human_in_the_loop"
-    assert normalized["header"]["reply_needed"]["value"] is False
-    warnings = normalized.get("warnings") or []
-    assert not any(
-        str(w).startswith("Reply needed: Missing critical item fields:")
-        for w in warnings
-    )
-    print("SUCCESS: Segmuller missing layout review path clears reply_needed and keeps human_in_the_loop.")
+    assert normalized["status"] == "reply"
+    assert normalized["header"]["reply_needed"]["value"] is True
+    print("SUCCESS: Segmuller missing furnplan triggers reply path, not human_in_the_loop.")
 
 
 def test_segmuller_no_staud_section_stays_review_only() -> None:
@@ -153,6 +142,6 @@ def test_segmuller_mixed_vendor_warning_without_review() -> None:
 
 
 if __name__ == "__main__":
-    test_segmuller_missing_layout_stays_review_only()
+    test_segmuller_missing_layout_triggers_reply()
     test_segmuller_no_staud_section_stays_review_only()
     test_segmuller_mixed_vendor_warning_without_review()

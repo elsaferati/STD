@@ -47,7 +47,7 @@
     },
     "missing_furnplan": {
       "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Furnplan fehlt",
-      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollständig bearbeiten können, benötigen wir noch den Furnplan:\n- Furnplan als Datei (PDF) oder Link\n- ggf. Zuordnung zu Positionen\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team"
+      "body": "Guten Tag,\n\nvielen Dank für Ihre Bestellung {{kommisionsnummer}}.\nDamit wir die Bestellung vollständig bearbeiten können, benötigen wir noch den Furnplan:\n- Furnplan als Datei (PDF)\n- ggf. Zuordnung zu Positionen\n\nVielen Dank für Ihre Unterstützung.\nFreundliche Grüße\nIhr Staud Team"
     },
     "unterlage_unleserlich": {
       "subject": "Rückfrage zu Ihrer Bestellung {{kommisionsnummer}} - Unterlage unleserlich",
